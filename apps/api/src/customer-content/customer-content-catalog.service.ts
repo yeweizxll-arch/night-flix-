@@ -111,17 +111,26 @@ export class CustomerContentCatalogService {
             )
             or (
               drama.owner_type = 'platform'
-              and exists (
-                select 1
-                from content_license_items as license_item
-                inner join content_licenses as license
-                  on license.id = license_item.license_id
-                  and license.tenant_id = license_item.tenant_id
-                where license_item.tenant_id = ${tenantId}
-                  and license_item.drama_id = drama.id
-                  and license.status in ('scheduled', 'active')
-                  and license.starts_at <= statement_timestamp()
-                  and license.expires_at > statement_timestamp()
+              and (
+                exists (
+                  select 1
+                  from tenant_public_drama_publications as publication
+                  where publication.tenant_id = ${tenantId}
+                    and publication.drama_id = drama.id
+                    and publication.status = 'published'
+                )
+                or exists (
+                  select 1
+                  from content_license_items as license_item
+                  inner join content_licenses as license
+                    on license.id = license_item.license_id
+                    and license.tenant_id = license_item.tenant_id
+                  where license_item.tenant_id = ${tenantId}
+                    and license_item.drama_id = drama.id
+                    and license.status in ('scheduled', 'active')
+                    and license.starts_at <= statement_timestamp()
+                    and license.expires_at > statement_timestamp()
+                )
               )
             )
           )
@@ -245,17 +254,26 @@ export class CustomerContentCatalogService {
             (drama.owner_type = 'tenant' and drama.owner_tenant_id = ${tenantId})
             or (
               drama.owner_type = 'platform'
-              and exists (
-                select 1
-                from content_license_items as license_item
-                inner join content_licenses as license
-                  on license.id = license_item.license_id
-                  and license.tenant_id = license_item.tenant_id
-                where license_item.tenant_id = ${tenantId}
-                  and license_item.drama_id = drama.id
-                  and license.status in ('scheduled', 'active')
-                  and license.starts_at <= statement_timestamp()
-                  and license.expires_at > statement_timestamp()
+              and (
+                exists (
+                  select 1
+                  from tenant_public_drama_publications as publication
+                  where publication.tenant_id = ${tenantId}
+                    and publication.drama_id = drama.id
+                    and publication.status = 'published'
+                )
+                or exists (
+                  select 1
+                  from content_license_items as license_item
+                  inner join content_licenses as license
+                    on license.id = license_item.license_id
+                    and license.tenant_id = license_item.tenant_id
+                  where license_item.tenant_id = ${tenantId}
+                    and license_item.drama_id = drama.id
+                    and license.status in ('scheduled', 'active')
+                    and license.starts_at <= statement_timestamp()
+                    and license.expires_at > statement_timestamp()
+                )
               )
             )
           )
@@ -275,6 +293,13 @@ export class CustomerContentCatalogService {
         preview_seconds: number;
         points_amount: string | number | bigint | null;
         title: string;
+        tracks: Array<{
+          isDefault: boolean;
+          label: string;
+          locale: string;
+          mediaAssetId: string;
+          type: 'dubbing' | 'subtitle';
+        }>;
       }>>`
         select
           episode.id,
@@ -290,6 +315,17 @@ export class CustomerContentCatalogService {
               and point_price.status = 'active'
           ) as points_amount,
           episode.media_asset_id,
+          coalesce((
+            select jsonb_agg(jsonb_build_object(
+              'isDefault', track.is_default,
+              'label', track.label,
+              'locale', track.locale,
+              'mediaAssetId', track.media_asset_id,
+              'type', track.track_type
+            ) order by track.track_type, track.is_default desc, track.locale)
+            from episode_media_tracks as track
+            where track.episode_id = episode.id and track.status = 'active'
+          ), '[]'::jsonb) as tracks,
           translation.locale,
           translation.title
         from episodes as episode
@@ -333,6 +369,7 @@ export class CustomerContentCatalogService {
             : { pointsAmount: amountNumber(episode.points_amount) }),
           previewSeconds: episode.preview_seconds,
           title: episode.title,
+          tracks: episode.tracks,
         })),
       };
     });
@@ -362,8 +399,14 @@ export class CustomerContentCatalogService {
     tenantId: string,
     dramaId: string,
   ): Promise<void> {
-    const licenses = await transaction<{ id: string }[]>`
-      select license.id
+    const licenses = await transaction<{ id: string; source: string }[]>`
+      select publication.id, 'public_pool'::text as source
+      from tenant_public_drama_publications as publication
+      where publication.tenant_id = ${tenantId}
+        and publication.drama_id = ${dramaId}
+        and publication.status = 'published'
+      union all
+      select license.id, 'legacy_license'::text as source
       from content_licenses as license
       where license.tenant_id = ${tenantId}
         and license.status in ('scheduled', 'active')
@@ -372,23 +415,22 @@ export class CustomerContentCatalogService {
         and exists (
           select 1 from content_license_items as item
           where item.tenant_id = license.tenant_id
-            and item.license_id = license.id
-            and item.drama_id = ${dramaId}
+            and item.license_id = license.id and item.drama_id = ${dramaId}
         )
-      order by license.id
+      order by source, id
       limit 1
-      for share of license
     `;
     const license = licenses[0];
     if (!license) throw new NotFoundException('Published drama is unavailable');
-    const items = await transaction<{ id: string }[]>`
-      select item.id from content_license_items as item
-      where item.tenant_id = ${tenantId}
-        and item.license_id = ${license.id}
-        and item.drama_id = ${dramaId}
-      for share of item
-    `;
-    if (!items[0]) throw new NotFoundException('Published drama is unavailable');
+    if (license.source === 'legacy_license') {
+      const items = await transaction<{ id: string }[]>`
+        select item.id from content_license_items as item
+        where item.tenant_id = ${tenantId}
+          and item.license_id = ${license.id} and item.drama_id = ${dramaId}
+        for share of item
+      `;
+      if (!items[0]) throw new NotFoundException('Published drama is unavailable');
+    }
   }
 }
 

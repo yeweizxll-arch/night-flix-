@@ -29,6 +29,15 @@ export interface CustomerEpisodeCatalogItem {
   pointsAmount?: number;
   previewSeconds: number;
   title: string;
+  tracks: CustomerEpisodeMediaTrack[];
+}
+
+export interface CustomerEpisodeMediaTrack {
+  isDefault: boolean;
+  label: string;
+  locale: string;
+  mediaAssetId: string;
+  type: 'dubbing' | 'subtitle';
 }
 
 export interface CustomerDramaCatalogDetail extends CustomerDramaCatalogItem {

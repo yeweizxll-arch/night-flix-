@@ -32,6 +32,7 @@ import { CustomerManagementModule } from './customer-management';
 import { PlaybackModule } from './playback/playback.module';
 import { PlatformContentLibraryModule } from './platform-content-library/platform-content-library.module';
 import { PrivacyModule } from './privacy';
+import { PublicDramaPoolModule } from './public-drama-pool/public-drama-pool.module';
 import { ReferralModule } from './referrals/referral.module';
 import { StorageModule } from './storage';
 import { TenantContextMiddleware } from './tenancy/tenant-context.middleware';
@@ -58,6 +59,7 @@ import { TenancyModule } from './tenancy/tenancy.module';
     PlaybackModule,
     PlatformContentLibraryModule,
     PrivacyModule,
+    PublicDramaPoolModule,
     ReferralModule,
     StorageModule,
     AccessManagementModule,

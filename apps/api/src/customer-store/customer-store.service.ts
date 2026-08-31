@@ -94,34 +94,61 @@ export class CustomerStoreService {
         theme_json: unknown;
       }>>`
         select
-          coalesce(site_name, name) as site_name,
-          default_locale,
-          theme_json,
-          logo_media_asset_id,
-          icon_media_asset_id
-        from tenants
-        where id = ${tenantId}
-          and status = 'active'
-          and expires_at > statement_timestamp()
-          and platform_site_enabled
-          and user_site_enabled
+          coalesce(tenant.site_name, tenant.name) as site_name,
+          tenant.default_locale,
+          tenant.theme_json,
+          tenant.logo_media_asset_id,
+          tenant.icon_media_asset_id
+        from tenants as tenant
+        where tenant.id = ${tenantId}
+          and tenant.status = 'active'
+          and tenant.expires_at > statement_timestamp()
+          and tenant.platform_site_enabled
+          and tenant.user_site_enabled
         for share
       `;
       const tenant = rows[0];
       if (!tenant) throw customerSiteUnavailable();
+      const runtimeRows = await transaction<Array<{
+        admob_json: unknown;
+        allowed_countries: string[];
+        deep_link_host: string | null;
+        feature_flags_json: unknown;
+        store_products_json: unknown;
+        supported_locales: string[];
+      }>>`
+        select supported_locales, allowed_countries, deep_link_host,
+          feature_flags_json, admob_json, store_products_json
+        from tenant_app_runtime_configs where tenant_id = ${tenantId}
+      `;
+      const runtime = runtimeRows[0] ?? {
+        admob_json: {},
+        allowed_countries: [],
+        deep_link_host: null,
+        feature_flags_json: {},
+        store_products_json: {},
+        supported_locales: [...CUSTOMER_CONTENT_LOCALES],
+      };
       return {
         capabilities: {
+          admob: Object.keys(safeObject(runtime.admob_json)).length > 0,
           commerceCatalog: true,
           customerAuthentication: true,
           entitlements: true,
+          inAppPurchases: Object.keys(safeObject(runtime.store_products_json)).length > 0,
           pointsWallet: true,
         },
+        admob: safeObject(runtime.admob_json),
+        allowedCountries: runtime.allowed_countries,
         defaultLocale: tenant.default_locale,
+        deepLinkHost: runtime.deep_link_host ?? undefined,
+        featureFlags: safeObject(runtime.feature_flags_json),
         iconMediaAssetId: tenant.icon_media_asset_id ?? undefined,
         logoMediaAssetId: tenant.logo_media_asset_id ?? undefined,
         onlineOnly: true,
         siteName: tenant.site_name,
-        supportedLocales: [...CUSTOMER_CONTENT_LOCALES],
+        storeProducts: safeObject(runtime.store_products_json),
+        supportedLocales: runtime.supported_locales,
         theme: safeTheme(tenant.theme_json),
       };
     });
@@ -832,6 +859,12 @@ function safeTheme(value: unknown) {
       || theme.colorMode === 'system' ? theme.colorMode : fallback.colorMode,
     primaryColor: color(theme.primaryColor) ?? fallback.primaryColor,
   };
+}
+
+function safeObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
 }
 
 function color(value: unknown): string | undefined {

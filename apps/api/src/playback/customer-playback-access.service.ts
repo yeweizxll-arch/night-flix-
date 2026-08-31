@@ -25,6 +25,7 @@ interface PlaybackTargetRow {
   episode_id: string;
   media_asset_id: string;
   owner_type: 'platform' | 'tenant';
+  publication_status: 'approved' | 'published' | 'unpublished' | null;
   preview_media_asset_id: string | null;
   preview_seconds: number;
 }
@@ -63,6 +64,13 @@ export class CustomerPlaybackAccessService {
         episode.preview_seconds,
         episode.media_asset_id,
         episode.preview_media_asset_id
+        ,(
+          select publication.status
+          from tenant_public_drama_publications as publication
+          where publication.tenant_id = ${principal.tenantId}
+            and publication.drama_id = drama.id
+          limit 1
+        ) as publication_status
       from episodes as episode
       inner join dramas as drama on drama.id = episode.drama_id
       inner join media_assets as media on media.id = episode.media_asset_id
@@ -125,7 +133,9 @@ export class CustomerPlaybackAccessService {
     }
 
     let entitled = false;
-    if (prices.length > 0 || pointPrices.length > 0) {
+    const requiresPermanentPurchase = target.owner_type === 'platform'
+      && target.publication_status === 'unpublished';
+    if (prices.length > 0 || pointPrices.length > 0 || requiresPermanentPurchase) {
       const entitlements = await transaction<{ id: string }[]>`
         select entitlement.id
         from entitlements as entitlement
@@ -138,14 +148,19 @@ export class CustomerPlaybackAccessService {
             or entitlement.expires_at > statement_timestamp()
           )
           and (
-            entitlement.entitlement_type = 'membership'
+            (
+              ${requiresPermanentPurchase} = false
+              and entitlement.entitlement_type = 'membership'
+            )
             or (
               entitlement.entitlement_type = 'drama'
               and entitlement.product_id = ${target.drama_id}
+              and (${requiresPermanentPurchase} = false or entitlement.expires_at is null)
             )
             or (
               entitlement.entitlement_type = 'episode'
               and entitlement.product_id = ${target.episode_id}
+              and (${requiresPermanentPurchase} = false or entitlement.expires_at is null)
             )
           )
         order by entitlement.id
@@ -155,7 +170,8 @@ export class CustomerPlaybackAccessService {
       entitled = Boolean(entitlements[0]);
     }
 
-    const access: CustomerPlaybackAccess = (prices.length === 0 && pointPrices.length === 0) || entitled
+    const access: CustomerPlaybackAccess = (!requiresPermanentPurchase
+      && prices.length === 0 && pointPrices.length === 0) || entitled
       ? 'full'
       : target.preview_seconds > 0
         ? 'preview'
@@ -202,35 +218,38 @@ export class CustomerPlaybackAccessService {
     tenantId: string,
     dramaId: string,
   ): Promise<void> {
-    const licenses = await transaction<{ id: string }[]>`
-      select license.id
+    const licenses = await transaction<{ id: string; source: string }[]>`
+      select publication.id, 'public_pool'::text as source
+      from tenant_public_drama_publications as publication
+      where publication.tenant_id = ${tenantId}
+        and publication.drama_id = ${dramaId}
+        and publication.status in ('published', 'unpublished')
+      union all
+      select license.id, 'legacy_license'::text as source
       from content_licenses as license
       where license.tenant_id = ${tenantId}
         and license.status in ('scheduled', 'active')
         and license.starts_at <= statement_timestamp()
         and license.expires_at > statement_timestamp()
         and exists (
-          select 1
-          from content_license_items as item
+          select 1 from content_license_items as item
           where item.tenant_id = license.tenant_id
-            and item.license_id = license.id
-            and item.drama_id = ${dramaId}
+            and item.license_id = license.id and item.drama_id = ${dramaId}
         )
-      order by license.id
+      order by source, id
       limit 1
-      for share of license
     `;
     const license = licenses[0];
     if (!license) throw new NotFoundException('Published episode is unavailable');
-    const items = await transaction<{ id: string }[]>`
-      select item.id
-      from content_license_items as item
-      where item.tenant_id = ${tenantId}
-        and item.license_id = ${license.id}
-        and item.drama_id = ${dramaId}
-      for share of item
-    `;
-    if (!items[0]) throw new NotFoundException('Published episode is unavailable');
+    if (license.source === 'legacy_license') {
+      const items = await transaction<{ id: string }[]>`
+        select item.id from content_license_items as item
+        where item.tenant_id = ${tenantId}
+          and item.license_id = ${license.id} and item.drama_id = ${dramaId}
+        for share of item
+      `;
+      if (!items[0]) throw new NotFoundException('Published episode is unavailable');
+    }
   }
 }
 

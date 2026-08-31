@@ -43,9 +43,14 @@ interface DramaRow {
   created_at: Date;
   deleted_at: Date | null;
   id: string;
+  public_release_locked_at: Date | null;
+  public_revision: number | null;
   release_at: Date | null;
   restore_until: Date | null;
   status: PlatformDramaRecord['status'];
+  shanchuang_creator_id: string | null;
+  shanchuang_work_id: string | null;
+  supersedes_drama_id: string | null;
   tag_ids: string[];
   total_episodes: number;
   translations: DramaTranslationInput[];
@@ -98,7 +103,9 @@ export class PlatformContentLibraryService {
           drama.id, drama.code::text as code, drama.status, drama.release_at,
           drama.unpublish_at, drama.cover_file_id, drama.category_id,
           drama.total_episodes, drama.deleted_at, drama.restore_until,
-          drama.version, drama.created_at,
+          drama.version, drama.created_at, drama.shanchuang_work_id,
+          drama.shanchuang_creator_id, drama.public_revision,
+          drama.supersedes_drama_id, drama.public_release_locked_at,
           coalesce((
             select jsonb_agg(jsonb_build_object(
               'locale', t.locale, 'title', t.title, 'summary', t.summary,
@@ -161,16 +168,36 @@ export class PlatformContentLibraryService {
       await this.assertCategory(transaction, input.categoryId);
       await this.assertCover(transaction, input.coverMediaAssetId);
       await this.assertTags(transaction, input.tagIds);
+      if (input.supersedesDramaId) {
+        const previous = await transaction<{ id: string }[]>`
+          select id from dramas
+          where id = ${input.supersedesDramaId}
+            and owner_type = 'platform' and owner_tenant_id is null
+            and shanchuang_work_id = ${input.shanchuangWorkId ?? null}
+            and public_revision = ${(input.publicRevision ?? 0) - 1}
+            and public_release_locked_at is not null
+          for share
+        `;
+        if (!previous[0]) {
+          throw new BadRequestException('supersedesDramaId must be the released previous revision');
+        }
+      } else if (input.publicRevision !== undefined && input.publicRevision !== 1) {
+        throw new BadRequestException('A public revision after 1 must supersede its previous revision');
+      }
       const id = uuidV7();
       try {
         await transaction`
           insert into dramas (
             id, owner_type, owner_tenant_id, code, release_at, unpublish_at,
-            cover_file_id, category_id, source_type, created_by
+            cover_file_id, category_id, source_type, created_by,
+            shanchuang_work_id, shanchuang_creator_id, public_revision,
+            supersedes_drama_id
           ) values (
             ${id}, 'platform', null, ${input.code}, ${input.releaseAt ?? null},
             ${input.unpublishAt ?? null}, ${input.coverMediaAssetId ?? null},
-            ${input.categoryId ?? null}, 'upload', ${metadata.actorId}
+            ${input.categoryId ?? null}, 'upload', ${metadata.actorId},
+            ${input.shanchuangWorkId ?? null}, ${input.shanchuangCreatorId ?? null},
+            ${input.publicRevision ?? null}, ${input.supersedesDramaId ?? null}
           )
         `;
       } catch (error) {
@@ -336,13 +363,18 @@ export class PlatformContentLibraryService {
         routeKey: 'platform.content_library.episode.update',
       });
       if (command.cached) return command.cached;
-      const parents = await transaction<Array<{ status: string }>>`
-        select status from dramas where id = ${dramaId}
+      const parents = await transaction<Array<{
+        public_release_locked_at: Date | null; status: string;
+      }>>`
+        select status, public_release_locked_at from dramas where id = ${dramaId}
           and owner_type = 'platform' and owner_tenant_id is null
           and deleted_at is null
         for update
       `;
       if (!parents[0]) throw new NotFoundException('Platform drama not found');
+      if (parents[0].public_release_locked_at) {
+        throw new ConflictException('Released public drama is immutable; create a new revision');
+      }
       if (!['draft', 'unpublished', 'rejected'].includes(parents[0].status)) {
         throw new ConflictException('Unpublish the platform drama before editing episodes');
       }
@@ -1029,6 +1061,9 @@ export class PlatformContentLibraryService {
     if (drama.version !== expectedVersion) {
       throw new ConflictException('Platform drama changed concurrently');
     }
+    if (drama.public_release_locked_at) {
+      throw new ConflictException('Released public drama is immutable; create a new revision');
+    }
     if (!['draft', 'unpublished', 'rejected'].includes(drama.status)) {
       throw new ConflictException('Unpublish the platform drama before editing it');
     }
@@ -1041,7 +1076,9 @@ export class PlatformContentLibraryService {
         drama.id, drama.code::text as code, drama.status, drama.release_at,
         drama.unpublish_at, drama.cover_file_id, drama.category_id,
         drama.total_episodes, drama.deleted_at, drama.restore_until,
-        drama.version, drama.created_at,
+        drama.version, drama.created_at, drama.shanchuang_work_id,
+        drama.shanchuang_creator_id, drama.public_revision,
+        drama.supersedes_drama_id, drama.public_release_locked_at,
         coalesce((select jsonb_agg(jsonb_build_object(
           'locale', t.locale, 'title', t.title, 'summary', t.summary,
           'searchKeywords', t.search_keywords
@@ -1066,7 +1103,9 @@ export class PlatformContentLibraryService {
         drama.id, drama.code::text as code, drama.status, drama.release_at,
         drama.unpublish_at, drama.cover_file_id, drama.category_id,
         drama.total_episodes, drama.deleted_at, drama.restore_until,
-        drama.version, drama.created_at,
+        drama.version, drama.created_at, drama.shanchuang_work_id,
+        drama.shanchuang_creator_id, drama.public_revision,
+        drama.supersedes_drama_id, drama.public_release_locked_at,
         coalesce((select jsonb_agg(jsonb_build_object(
           'locale', t.locale, 'title', t.title, 'summary', t.summary,
           'searchKeywords', t.search_keywords
@@ -1520,7 +1559,8 @@ function validateCreateDrama(value: CreatePlatformDramaInput) {
   const record = inputRecord(value);
   assertOnlyKeys(record, [
     'code', 'categoryId', 'coverMediaAssetId', 'releaseAt', 'tagIds',
-    'translations', 'unpublishAt',
+    'translations', 'unpublishAt', 'shanchuangCreatorId', 'shanchuangWorkId',
+    'publicRevision', 'supersedesDramaId',
   ]);
   const code = codeValue(record.code, 'code');
   const translations = dramaTranslations(record.translations);
@@ -1530,7 +1570,28 @@ function validateCreateDrama(value: CreatePlatformDramaInput) {
   const categoryId = optionalUuid(record.categoryId, 'categoryId');
   const coverMediaAssetId = optionalUuid(record.coverMediaAssetId, 'coverMediaAssetId');
   const tagIds = uuidArray(record.tagIds, 'tagIds', 50, []);
-  return { categoryId, code, coverMediaAssetId, releaseAt, tagIds, translations, unpublishAt };
+  const shanchuangCreatorId = record.shanchuangCreatorId === undefined
+    ? undefined : stringValue(record.shanchuangCreatorId, 'shanchuangCreatorId', 1, 200);
+  const shanchuangWorkId = record.shanchuangWorkId === undefined
+    ? undefined : stringValue(record.shanchuangWorkId, 'shanchuangWorkId', 1, 200);
+  const publicRevision = record.publicRevision === undefined
+    ? undefined : integerValue(record.publicRevision, 'publicRevision', 1, 1_000_000);
+  const supersedesDramaId = optionalUuid(record.supersedesDramaId, 'supersedesDramaId');
+  const sourceFields = [shanchuangCreatorId, shanchuangWorkId, publicRevision];
+  if (sourceFields.some((field) => field !== undefined)
+      && sourceFields.some((field) => field === undefined)) {
+    throw new BadRequestException(
+      'shanchuangWorkId, shanchuangCreatorId and publicRevision must be provided together',
+    );
+  }
+  if (supersedesDramaId && !shanchuangWorkId) {
+    throw new BadRequestException('supersedesDramaId requires Shanchuang source identifiers');
+  }
+  return {
+    categoryId, code, coverMediaAssetId, publicRevision, releaseAt,
+    shanchuangCreatorId, shanchuangWorkId, supersedesDramaId,
+    tagIds, translations, unpublishAt,
+  };
 }
 
 function validateUpdateDrama(value: UpdatePlatformDramaInput) {
@@ -1735,9 +1796,14 @@ function mapDrama(row: DramaRow): PlatformDramaRecord {
     createdAt: row.created_at.toISOString(),
     deletedAt: iso(row.deleted_at),
     id: row.id,
+    publicReleaseLockedAt: iso(row.public_release_locked_at),
+    publicRevision: row.public_revision ?? undefined,
     releaseAt: iso(row.release_at),
     restoreUntil: iso(row.restore_until),
     status: row.status,
+    shanchuangCreatorId: row.shanchuang_creator_id ?? undefined,
+    shanchuangWorkId: row.shanchuang_work_id ?? undefined,
+    supersedesDramaId: row.supersedes_drama_id ?? undefined,
     tagIds: row.tag_ids,
     totalEpisodes: row.total_episodes,
     translations: row.translations,

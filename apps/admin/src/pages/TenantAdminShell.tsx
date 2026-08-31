@@ -3,6 +3,7 @@ import {
   CloudServerOutlined,
   CreditCardOutlined,
   FileTextOutlined,
+  VideoCameraOutlined,
   FileProtectOutlined,
   OrderedListOutlined,
   SafetyOutlined,
@@ -46,6 +47,7 @@ import { AnalyticsDashboardPage } from './AnalyticsDashboardPage';
 import { CustomerManagementPage } from './CustomerManagementPage';
 import { TenantCommunicationSettingsPage } from './TenantCommunicationSettingsPage';
 import { TenantLegalPrivacyPage } from './TenantLegalPrivacyPage';
+import { PublicDramaPoolPage } from './PublicDramaPoolPage';
 
 const { Content, Header, Sider } = Layout;
 
@@ -89,6 +91,9 @@ export function ScopedAdminShell({ principal }: { principal: AuthPrincipal }) {
         : null,
       canReadContent
         ? { icon: <FileTextOutlined />, key: 'content', label: '内容管理' }
+        : null,
+      canReadContent
+        ? { icon: <VideoCameraOutlined />, key: 'public-pool', label: '公共剧池与 App' }
         : null,
       canReadStorage
         ? { icon: <CloudServerOutlined />, key: 'storage', label: '对象存储' }
@@ -164,6 +169,7 @@ export function ScopedAdminShell({ principal }: { principal: AuthPrincipal }) {
     const allowedPages = new Map<string, boolean>([
       ['dashboard', canReadAnalytics],
       ['content', canReadContent],
+      ['public-pool', canReadContent],
       ['storage', canReadStorage],
       ['site-settings', canReadSite],
       ['community', canReadInteractions],
@@ -242,6 +248,8 @@ export function ScopedAdminShell({ principal }: { principal: AuthPrincipal }) {
             />
           ) : effectivePage === 'content' ? (
             <TenantContentListPage />
+          ) : effectivePage === 'public-pool' ? (
+            <PublicDramaPoolPage />
           ) : effectivePage === 'storage' ? (
             <StorageProviderPage
               apiBase="/api/v1/tenant/storage/providers"

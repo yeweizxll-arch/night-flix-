@@ -1,0 +1,40 @@
+name: shanchuang_drama
+description: Shanchuang multi-tenant short-drama Android/iOS client.
+publish_to: none
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.13.2
+
+dependencies:
+  cupertino_icons: ^1.0.8
+  firebase_core: ^4.14.0
+  firebase_messaging: ^16.6.0
+  flutter:
+    sdk: flutter
+  google_mobile_ads: ^9.1.0
+  google_sign_in: ^7.2.0
+  http: ^1.6.0
+  in_app_purchase: ^3.3.0
+  shared_preferences: ^2.5.5
+  sign_in_with_apple: ^8.2.0
+  video_player: ^2.14.0
+
+dev_dependencies:
+  flutter_launcher_icons: ^0.14.4
+  flutter_lints: ^6.0.0
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/brand/app-icon-master.png
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: assets/brand/app-icon-master.png
+  adaptive_icon_background: "#080911"
+  adaptive_icon_foreground: assets/brand/app-icon-master.png
+  remove_alpha_ios: true

@@ -1,13 +1,14 @@
 # 短剧 SaaS
 
-面向 20～30 个商家的多租户短剧平台。项目采用全新服务端和全新后台；用户提供的旧源码包仅用于理解业务，不复制其中的加密后端、固定远程依赖、凭据或历史用户数据。
+面向多代理商的海外短剧平台。保留原 NestJS、PostgreSQL、Redis、多租户和管理后台业务基础，正式移动端改为 Flutter；参考 App 只用于复刻可见产品行为，不复制反编译代码和素材。
 
 ## 当前目录
 
 - `apps/api`：NestJS 服务端，优先实现租户隔离、认证、权限、内容、交易和审计。
 - `apps/admin`：总后台与商家后台共用的 React 前端，菜单和数据范围由权限控制。
-- `apps/h5`：连接真实 Customer API 的用户端 H5，按已验证商家域名加载白标配置。
-- `apps/mobile`：Capacitor 原生壳固定模板；内部 Android APK/iOS Simulator 构建由独立构建机在临时工作区生成。
+- `apps/flutter_app`：正式 Android/iOS 客户端，支持租户启动配置、竖滑刷剧、剧场、选集、试看锁集、金币商店、历史、收藏和个人中心。
+- `apps/h5`：保留为接口和旧业务逻辑参考，不再作为正式移动端。
+- `apps/mobile`：旧 Capacitor 测试壳，已停止作为正式客户端继续开发。
 - `packages/contracts`：跨应用共享的权限、角色和接口契约。
 - `docs`：产品范围、架构、领域设计、后台信息架构和部署方案。
 
@@ -20,6 +21,13 @@ pnpm dev
 
 API 默认监听 `http://localhost:3000`，后台默认监听 `http://localhost:5173`，H5 默认监听
 `http://localhost:5174`。H5 本地联调还需设置 `VITE_H5_TENANT_HOST` 为数据库中已经验证的商家域名。
+
+Flutter 使用代理商已验证的 API 域名作为构建参数；不传时启动无版权素材的本地演示数据：
+
+```bash
+cd apps/flutter_app
+flutter run --dart-define=API_BASE_URL=https://drama.agent.example
+```
 
 异步任务必须使用独立进程持续运行；它负责 Outbox、内容排期与导入、通知与验证码投递、
 邀请佣金结算和隐私擦除，不能只启动 HTTP API：

@@ -33,6 +33,10 @@ export interface CreatePlatformDramaInput {
   code: string;
   coverMediaAssetId?: string;
   releaseAt?: string;
+  shanchuangCreatorId?: string;
+  shanchuangWorkId?: string;
+  publicRevision?: number;
+  supersedesDramaId?: string;
   tagIds?: string[];
   translations: DramaTranslationInput[];
   unpublishAt?: string;
@@ -125,6 +129,11 @@ export interface PlatformDramaRecord {
   episodes?: PlatformEpisodeRecord[];
   id: string;
   releaseAt?: string;
+  publicReleaseLockedAt?: string;
+  publicRevision?: number;
+  shanchuangCreatorId?: string;
+  shanchuangWorkId?: string;
+  supersedesDramaId?: string;
   restoreUntil?: string;
   status:
     | 'approved'

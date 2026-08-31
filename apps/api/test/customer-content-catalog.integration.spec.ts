@@ -262,6 +262,7 @@ describe('anonymous customer content catalog', () => {
       previewSeconds: 12,
       pointsAmount: 50,
       title: '第1話',
+      tracks: [],
     }]);
     expect(JSON.stringify(detail)).not.toContain('secret-storage');
     expect(JSON.stringify(detail)).not.toContain('never-return');

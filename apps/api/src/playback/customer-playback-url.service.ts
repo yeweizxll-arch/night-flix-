@@ -110,7 +110,10 @@ export class CustomerPlaybackUrlService {
             and media.storage_provider_id is not null
             and media.object_key is not null
             and media.source_url is null
-            and media.mime_type in ('video/mp4', 'video/quicktime', 'video/webm')
+            and media.mime_type in (
+              'video/mp4', 'video/quicktime', 'video/webm',
+              'application/vnd.apple.mpegurl', 'application/x-mpegurl'
+            )
             and provider.provider = 's3'
             and provider.status = 'active'
             and (
