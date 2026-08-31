@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Drama SaaS Test</string>
+    <string name="title_activity_main">Drama SaaS Test</string>
+    <string name="package_name">com.drama.saas.test</string>
+    <string name="custom_url_scheme">com.drama.saas.test</string>
+</resources>

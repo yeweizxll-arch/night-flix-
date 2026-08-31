@@ -1,0 +1,43 @@
+{
+  "name": "@drama/api",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "admin:bootstrap": "tsx src/cli/bootstrap-super-admin.ts",
+    "prebuild": "pnpm --filter @drama/contracts build",
+    "build": "tsc -p tsconfig.build.json",
+    "db:migrate": "tsx src/cli/migrate.ts",
+    "dev": "tsx watch src/main.ts",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "permissions:sync": "tsx src/cli/sync-permissions.ts",
+    "start": "node dist/main.js",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "worker": "tsx src/cli/run-worker.ts",
+    "worker:app-build": "tsx src/cli/run-app-build-worker.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1115.0",
+    "@aws-sdk/s3-request-presigner": "^3.1115.0",
+    "@drama/contracts": "workspace:*",
+    "@fastify/cookie": "^11.0.2",
+    "@nestjs/common": "^11.2.1",
+    "@nestjs/core": "^11.2.1",
+    "@nestjs/platform-fastify": "^11.2.1",
+    "fastify": "^5.11.3",
+    "postgres": "^3.4.7",
+    "redis": "^6.2.1",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
+    "sharp": "0.35.3",
+    "stripe": "22.4.0"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.5",
+    "@nestjs/testing": "^11.2.1",
+    "@types/node": "^24.3.0",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}

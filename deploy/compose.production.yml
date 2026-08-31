@@ -1,0 +1,148 @@
+name: drama-saas
+
+x-api-environment: &api-environment
+  NODE_ENV: production
+  PORT: 3000
+  TRUST_PROXY: "1"
+  DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+  DATABASE_MIGRATION_URL: ${DATABASE_MIGRATION_URL:?set DATABASE_MIGRATION_URL}
+  PLATFORM_DATABASE_URL: ${PLATFORM_DATABASE_URL:?set PLATFORM_DATABASE_URL}
+  TENANT_RESOLVER_DATABASE_URL: ${TENANT_RESOLVER_DATABASE_URL:?set TENANT_RESOLVER_DATABASE_URL}
+  DATABASE_POOL_MAX: ${DATABASE_POOL_MAX:-10}
+  DATABASE_SSL: verify-full
+  DATABASE_SSL_CA_BASE64: ${DATABASE_SSL_CA_BASE64:?set DATABASE_SSL_CA_BASE64}
+  REDIS_URL: ${REDIS_URL:?set REDIS_URL}
+  RATE_LIMIT_KEY_SECRET: ${RATE_LIMIT_KEY_SECRET:?set RATE_LIMIT_KEY_SECRET}
+  PLATFORM_ADMIN_HOSTS: ${PLATFORM_ADMIN_HOSTS:?set PLATFORM_ADMIN_HOSTS}
+  PLATFORM_TENANT_BASE_DOMAIN: ${PLATFORM_TENANT_BASE_DOMAIN:?set PLATFORM_TENANT_BASE_DOMAIN}
+  CUSTOMER_OTP_HMAC_SECRET: ${CUSTOMER_OTP_HMAC_SECRET:?set CUSTOMER_OTP_HMAC_SECRET}
+  CUSTOMER_OTP_EXPOSE_CODE: "false"
+  CUSTOMER_UNIVERSAL_OTP_ENABLED: ${CUSTOMER_UNIVERSAL_OTP_ENABLED:-false}
+  ALLOW_INSECURE_OTP: ${ALLOW_INSECURE_OTP:-false}
+  STORAGE_CREDENTIAL_MASTER_KEYS: ${STORAGE_CREDENTIAL_MASTER_KEYS:?set STORAGE_CREDENTIAL_MASTER_KEYS}
+  STORAGE_ACTIVE_KEY_VERSION: ${STORAGE_ACTIVE_KEY_VERSION:?set STORAGE_ACTIVE_KEY_VERSION}
+  STORAGE_ENDPOINT_HOST_ALLOWLIST: ${STORAGE_ENDPOINT_HOST_ALLOWLIST:-}
+  FINANCE_PAYOUT_MASTER_KEYS: ${FINANCE_PAYOUT_MASTER_KEYS:?set FINANCE_PAYOUT_MASTER_KEYS}
+  FINANCE_PAYOUT_ACTIVE_KEY_VERSION: ${FINANCE_PAYOUT_ACTIVE_KEY_VERSION:?set FINANCE_PAYOUT_ACTIVE_KEY_VERSION}
+  PAYMENT_MASTER_KEYS: ${PAYMENT_MASTER_KEYS:?set PAYMENT_MASTER_KEYS}
+  PAYMENT_ACTIVE_KEY_VERSION: ${PAYMENT_ACTIVE_KEY_VERSION:?set PAYMENT_ACTIVE_KEY_VERSION}
+  NOTIFICATION_MASTER_KEYS: ${NOTIFICATION_MASTER_KEYS:?set NOTIFICATION_MASTER_KEYS}
+  NOTIFICATION_ACTIVE_KEY_VERSION: ${NOTIFICATION_ACTIVE_KEY_VERSION:?set NOTIFICATION_ACTIVE_KEY_VERSION}
+  COMMUNICATION_MASTER_KEYS: ${COMMUNICATION_MASTER_KEYS:?set COMMUNICATION_MASTER_KEYS}
+  COMMUNICATION_ACTIVE_KEY_VERSION: ${COMMUNICATION_ACTIVE_KEY_VERSION:?set COMMUNICATION_ACTIVE_KEY_VERSION}
+  OUTBOX_BATCH_SIZE: ${OUTBOX_BATCH_SIZE:-50}
+  OUTBOX_STREAM_KEY: ${OUTBOX_STREAM_KEY:-drama:events}
+  SCHEDULE_BATCH_SIZE: ${SCHEDULE_BATCH_SIZE:-50}
+  WORKER_POLL_INTERVAL_MS: ${WORKER_POLL_INTERVAL_MS:-500}
+  APP_BUILD_WORKER_ENABLED: "false"
+  APP_BUILD_EXECUTOR: disabled
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: api
+    image: ${DRAMA_API_IMAGE:-drama-saas-api:local}
+    restart: unless-stopped
+    environment: *api-environment
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/api/v1/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+    networks: [internal]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+
+  worker:
+    image: ${DRAMA_API_IMAGE:-drama-saas-api:local}
+    restart: unless-stopped
+    command: ["node", "dist/cli/run-worker.js"]
+    environment:
+      <<: *api-environment
+      WORKER_ID: ${WORKER_ID:-single-server-worker-1}
+    depends_on:
+      api:
+        condition: service_healthy
+    networks: [internal]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+
+  platform-admin:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: web
+    image: ${DRAMA_WEB_IMAGE:-drama-saas-web:local}
+    restart: unless-stopped
+    environment:
+      STATIC_ROOT: /srv/platform-admin
+      API_ORIGIN: http://api:3000
+      NGINX_ENVSUBST_FILTER: STATIC_ROOT|API_ORIGIN
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${PLATFORM_ADMIN_PORT:-8081}:8080"
+    networks: [internal]
+    security_opt: [no-new-privileges:true]
+
+  tenant-admin:
+    image: ${DRAMA_WEB_IMAGE:-drama-saas-web:local}
+    restart: unless-stopped
+    environment:
+      STATIC_ROOT: /srv/tenant-admin
+      API_ORIGIN: http://api:3000
+      NGINX_ENVSUBST_FILTER: STATIC_ROOT|API_ORIGIN
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${TENANT_ADMIN_PORT:-8082}:8080"
+    networks: [internal]
+    security_opt: [no-new-privileges:true]
+
+  h5:
+    image: ${DRAMA_WEB_IMAGE:-drama-saas-web:local}
+    restart: unless-stopped
+    environment:
+      STATIC_ROOT: /srv/h5
+      API_ORIGIN: http://api:3000
+      NGINX_ENVSUBST_FILTER: STATIC_ROOT|API_ORIGIN
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${H5_PORT:-8083}:8080"
+    networks: [internal]
+    security_opt: [no-new-privileges:true]
+
+  migrate:
+    image: ${DRAMA_API_IMAGE:-drama-saas-api:local}
+    profiles: [tools]
+    command: ["node", "dist/cli/migrate.js"]
+    environment: *api-environment
+    networks: [internal]
+    security_opt: [no-new-privileges:true]
+
+  permissions-sync:
+    image: ${DRAMA_API_IMAGE:-drama-saas-api:local}
+    profiles: [tools]
+    command: ["node", "dist/cli/sync-permissions.js"]
+    environment: *api-environment
+    networks: [internal]
+    security_opt: [no-new-privileges:true]
+
+networks:
+  internal:
+    driver: bridge
