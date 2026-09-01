@@ -143,17 +143,25 @@ export class PlaybackService {
             (owner_type = 'tenant' and owner_tenant_id = ${principal.tenantId})
             or (
               owner_type = 'platform'
-              and exists (
-                select 1
-                from content_license_items as license_item
-                inner join content_licenses as license
-                  on license.id = license_item.license_id
-                  and license.tenant_id = license_item.tenant_id
-                where license_item.tenant_id = ${principal.tenantId}
-                  and license_item.drama_id = dramas.id
-                  and license.status in ('scheduled', 'active')
-                  and license.starts_at <= statement_timestamp()
-                  and license.expires_at > statement_timestamp()
+              and (
+                exists (
+                  select 1 from tenant_public_drama_publications as publication
+                  where publication.tenant_id = ${principal.tenantId}
+                    and publication.drama_id = dramas.id
+                    and publication.status = 'published'
+                )
+                or exists (
+                  select 1
+                  from content_license_items as license_item
+                  inner join content_licenses as license
+                    on license.id = license_item.license_id
+                    and license.tenant_id = license_item.tenant_id
+                  where license_item.tenant_id = ${principal.tenantId}
+                    and license_item.drama_id = dramas.id
+                    and license.status in ('scheduled', 'active')
+                    and license.starts_at <= statement_timestamp()
+                    and license.expires_at > statement_timestamp()
+                )
               )
             )
           )
@@ -253,17 +261,25 @@ export class PlaybackService {
             )
             or (
               drama.owner_type = 'platform'
-              and exists (
-                select 1
-                from content_license_items as license_item
-                inner join content_licenses as license
-                  on license.id = license_item.license_id
-                  and license.tenant_id = license_item.tenant_id
-                where license_item.tenant_id = ${principal.tenantId}
-                  and license_item.drama_id = drama.id
-                  and license.status in ('scheduled', 'active')
-                  and license.starts_at <= statement_timestamp()
-                  and license.expires_at > statement_timestamp()
+              and (
+                exists (
+                  select 1 from tenant_public_drama_publications as publication
+                  where publication.tenant_id = ${principal.tenantId}
+                    and publication.drama_id = drama.id
+                    and publication.status = 'published'
+                )
+                or exists (
+                  select 1
+                  from content_license_items as license_item
+                  inner join content_licenses as license
+                    on license.id = license_item.license_id
+                    and license.tenant_id = license_item.tenant_id
+                  where license_item.tenant_id = ${principal.tenantId}
+                    and license_item.drama_id = drama.id
+                    and license.status in ('scheduled', 'active')
+                    and license.starts_at <= statement_timestamp()
+                    and license.expires_at > statement_timestamp()
+                )
               )
             )
           )

@@ -17,6 +17,7 @@ dependencies:
   http: ^1.6.0
   in_app_purchase: ^3.3.0
   shared_preferences: ^2.5.5
+  share_plus: ^13.3.0
   sign_in_with_apple: ^8.2.0
   video_player: ^2.14.0
 

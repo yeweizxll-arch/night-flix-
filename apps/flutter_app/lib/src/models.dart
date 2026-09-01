@@ -2,6 +2,7 @@ class AppRuntimeConfig {
   const AppRuntimeConfig({
     required this.admob,
     required this.defaultLocale,
+    required this.deepLinkHost,
     required this.featureFlags,
     required this.siteName,
     required this.storeProducts,
@@ -10,17 +11,19 @@ class AppRuntimeConfig {
 
   final Map<String, dynamic> admob;
   final String defaultLocale;
+  final String? deepLinkHost;
   final Map<String, dynamic> featureFlags;
   final String siteName;
   final Map<String, dynamic> storeProducts;
   final List<String> supportedLocales;
 
-  bool get admobEnabled => admob['enabled'] == true;
+  bool get admobEnabled => admob.isNotEmpty && admob['enabled'] != false;
 
   factory AppRuntimeConfig.fromJson(Map<String, dynamic> json) =>
       AppRuntimeConfig(
         admob: Map<String, dynamic>.from(json['admob'] as Map? ?? const {}),
         defaultLocale: json['defaultLocale'] as String? ?? 'en-US',
+        deepLinkHost: json['deepLinkHost'] as String?,
         featureFlags: Map<String, dynamic>.from(
           json['featureFlags'] as Map? ?? const {},
         ),
@@ -36,6 +39,7 @@ class AppRuntimeConfig {
   static const demo = AppRuntimeConfig(
     admob: {},
     defaultLocale: 'en-US',
+    deepLinkHost: null,
     featureFlags: {},
     siteName: 'Shanchuang Drama',
     storeProducts: {},
@@ -104,6 +108,8 @@ class Episode {
   bool get locked =>
       access == 'locked' || (pointsAmount != null && playbackUrl == null);
 
+  bool get preview => access == 'preview';
+
   factory Episode.fromJson(Map<String, dynamic> json) => Episode(
     id: json['id'] as String,
     number: json['episodeNo'] as int? ?? 1,
@@ -123,6 +129,83 @@ class Episode {
     playbackUrl: json['url'] as String?,
     access: json['access'] as String? ?? 'full',
   );
+}
+
+class DramaInteractionSummary {
+  const DramaInteractionSummary({
+    required this.commentCount,
+    required this.favoriteCount,
+    required this.isFavorite,
+    required this.isLiked,
+    required this.likeCount,
+  });
+
+  final int commentCount;
+  final int favoriteCount;
+  final bool isFavorite;
+  final bool isLiked;
+  final int likeCount;
+
+  factory DramaInteractionSummary.fromJson(Map<String, dynamic> json) =>
+      DramaInteractionSummary(
+        commentCount: (json['commentCount'] as num?)?.toInt() ?? 0,
+        favoriteCount: (json['favoriteCount'] as num?)?.toInt() ?? 0,
+        isFavorite: json['isFavorite'] == true,
+        isLiked: json['isLiked'] == true,
+        likeCount: (json['likeCount'] as num?)?.toInt() ?? 0,
+      );
+
+  DramaInteractionSummary copyWith({bool? isFavorite, bool? isLiked}) =>
+      DramaInteractionSummary(
+        commentCount: commentCount,
+        favoriteCount: favoriteCount,
+        isFavorite: isFavorite ?? this.isFavorite,
+        isLiked: isLiked ?? this.isLiked,
+        likeCount: likeCount,
+      );
+}
+
+class DramaComment {
+  const DramaComment({
+    required this.id,
+    required this.body,
+    required this.createdAt,
+    this.username,
+  });
+  final String id;
+  final String body;
+  final DateTime createdAt;
+  final String? username;
+
+  factory DramaComment.fromJson(Map<String, dynamic> json) => DramaComment(
+    id: json['id'] as String,
+    body: json['body'] as String? ?? '',
+    createdAt:
+        DateTime.tryParse(json['createdAt'] as String? ?? '') ??
+        DateTime.fromMillisecondsSinceEpoch(0),
+    username: json['username'] as String?,
+  );
+}
+
+class RewardedUnlockChallenge {
+  const RewardedUnlockChallenge({
+    required this.alreadyUnlocked,
+    required this.status,
+    this.adUnitId,
+    this.challengeId,
+  });
+  final String? adUnitId;
+  final bool alreadyUnlocked;
+  final String? challengeId;
+  final String status;
+
+  factory RewardedUnlockChallenge.fromJson(Map<String, dynamic> json) =>
+      RewardedUnlockChallenge(
+        adUnitId: json['adUnitId'] as String?,
+        alreadyUnlocked: json['alreadyUnlocked'] == true,
+        challengeId: json['challengeId'] as String?,
+        status: json['status'] as String? ?? 'pending',
+      );
 }
 
 class UserSession {

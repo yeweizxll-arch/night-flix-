@@ -34,6 +34,7 @@ import { PlatformContentLibraryModule } from './platform-content-library/platfor
 import { PrivacyModule } from './privacy';
 import { PublicDramaPoolModule } from './public-drama-pool/public-drama-pool.module';
 import { ReferralModule } from './referrals/referral.module';
+import { RewardedUnlockModule } from './rewarded-unlocks/rewarded-unlock.module';
 import { StorageModule } from './storage';
 import { TenantContextMiddleware } from './tenancy/tenant-context.middleware';
 import { TenancyModule } from './tenancy/tenancy.module';
@@ -61,6 +62,7 @@ import { TenancyModule } from './tenancy/tenancy.module';
     PrivacyModule,
     PublicDramaPoolModule,
     ReferralModule,
+    RewardedUnlockModule,
     StorageModule,
     AccessManagementModule,
     AppBuildModule,

@@ -1,5 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:in_app_purchase/in_app_purchase.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:video_player/video_player.dart';
 
 import 'drama_repository.dart';
@@ -162,7 +166,15 @@ class _DramaPageState extends State<DramaPage> {
   Drama? detail;
   Episode? episode;
   VideoPlayerController? video;
+  VideoPlayerController? preloadedVideo;
+  String? preloadedEpisodeId;
+  DramaInteractionSummary? summary;
   bool loading = false;
+  bool switching = false;
+  bool previewEnded = false;
+  bool completedHandled = false;
+  String? playbackError;
+  double speed = 1;
 
   @override
   void initState() {
@@ -184,6 +196,13 @@ class _DramaPageState extends State<DramaPage> {
       if (!mounted) return;
       detail = loaded;
       episode = loaded.episodes.firstOrNull;
+      if (widget.controller.session != null) {
+        try {
+          summary = await widget.controller.loadInteractions(loaded.id);
+        } catch (_) {
+          // Playback remains available if engagement counters fail to load.
+        }
+      }
       if (widget.active) await _play();
     } catch (_) {
       // Catalog copy remains useful when a detail request temporarily fails.
@@ -195,44 +214,128 @@ class _DramaPageState extends State<DramaPage> {
   Future<void> _play() async {
     final selected = episode;
     if (selected == null || widget.controller.session == null) return;
+    if (mounted) {
+      setState(() {
+        switching = true;
+        playbackError = null;
+        previewEnded = false;
+        completedHandled = false;
+      });
+    }
     try {
       final playable = await widget.controller.loadPlayback(selected);
       if (!mounted || playable.playbackUrl == null) return;
       episode = playable;
       await video?.dispose();
-      final next = VideoPlayerController.networkUrl(
+      final next = preloadedEpisodeId == playable.id && preloadedVideo != null
+          ? preloadedVideo!
+          : VideoPlayerController.networkUrl(Uri.parse(playable.playbackUrl!));
+      if (preloadedEpisodeId == playable.id) {
+        preloadedVideo = null;
+        preloadedEpisodeId = null;
+      }
+      video = next;
+      if (!next.value.isInitialized) await next.initialize();
+      await next.setLooping(false);
+      await next.setPlaybackSpeed(speed);
+      next.addListener(_videoListener);
+      await next.play();
+      unawaited(_preloadNext());
+      if (mounted) setState(() {});
+    } catch (cause) {
+      if (mounted) setState(() => playbackError = cause.toString());
+    } finally {
+      if (mounted) setState(() => switching = false);
+    }
+  }
+
+  void _videoListener() {
+    final current = video;
+    if (current == null || completedHandled || !current.value.isInitialized) {
+      return;
+    }
+    final duration = current.value.duration;
+    if (duration <= Duration.zero ||
+        current.value.position < duration - const Duration(milliseconds: 250)) {
+      return;
+    }
+    completedHandled = true;
+    if (episode?.preview == true) {
+      if (mounted) setState(() => previewEnded = true);
+    } else {
+      _advanceEpisode();
+    }
+  }
+
+  Future<void> _preloadNext() async {
+    final drama = detail;
+    final selected = episode;
+    if (drama == null ||
+        selected == null ||
+        widget.controller.session == null) {
+      return;
+    }
+    final index = drama.episodes.indexWhere((item) => item.id == selected.id);
+    final nextEpisode = drama.episodes.elementAtOrNull(index + 1);
+    await preloadedVideo?.dispose();
+    preloadedVideo = null;
+    preloadedEpisodeId = null;
+    if (nextEpisode == null) return;
+    try {
+      final playable = await widget.controller.loadPlayback(nextEpisode);
+      if (!mounted || playable.playbackUrl == null) return;
+      final controller = VideoPlayerController.networkUrl(
         Uri.parse(playable.playbackUrl!),
       );
-      video = next;
-      await next.initialize();
-      await next.setLooping(false);
-      await next.play();
-      if (mounted) setState(() {});
+      await controller.initialize();
+      if (!mounted || episode?.id != selected.id) {
+        await controller.dispose();
+        return;
+      }
+      preloadedVideo = controller;
+      preloadedEpisodeId = playable.id;
     } catch (_) {
-      if (mounted) setState(() {});
+      // A locked or temporarily unavailable next episode should not interrupt playback.
     }
+  }
+
+  Future<void> _advanceEpisode() async {
+    final drama = detail;
+    final selected = episode;
+    if (drama == null || selected == null) return;
+    final index = drama.episodes.indexWhere((item) => item.id == selected.id);
+    final next = drama.episodes.elementAtOrNull(index + 1);
+    if (next == null) return;
+    episode = next;
+    await _play();
   }
 
   @override
   void dispose() {
     video?.dispose();
+    preloadedVideo?.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final drama = detail ?? widget.drama;
+    final engagement = widget.controller.interactions[drama.id] ?? summary;
     return Stack(
       fit: StackFit.expand,
       children: [
         _Backdrop(palette: drama.palette),
         if (video?.value.isInitialized == true)
-          FittedBox(
-            fit: BoxFit.cover,
-            child: SizedBox(
-              width: video!.value.size.width,
-              height: video!.value.size.height,
-              child: VideoPlayer(video!),
+          GestureDetector(
+            onTap: () =>
+                video!.value.isPlaying ? video!.pause() : video!.play(),
+            child: FittedBox(
+              fit: BoxFit.cover,
+              child: SizedBox(
+                width: video!.value.size.width,
+                height: video!.value.size.height,
+                child: VideoPlayer(video!),
+              ),
             ),
           ),
         const DecoratedBox(
@@ -306,9 +409,20 @@ class _DramaPageState extends State<DramaPage> {
                     Column(
                       children: [
                         _action(
-                          Icons.favorite_border,
-                          '12.8K',
-                          () => _requireLogin(context, 'Like'),
+                          engagement?.isLiked == true
+                              ? Icons.favorite
+                              : Icons.favorite_border,
+                          _compactCount(engagement?.likeCount ?? 0),
+                          () async {
+                            if (!await _requireLogin(context, 'Like')) return;
+                            try {
+                              await widget.controller.toggleLike(drama.id);
+                            } catch (cause) {
+                              if (context.mounted) {
+                                _message(context, cause.toString());
+                              }
+                            }
+                          },
                         ),
                         _action(
                           widget.controller.favorites.contains(drama.id)
@@ -317,18 +431,30 @@ class _DramaPageState extends State<DramaPage> {
                           'Save',
                           () async {
                             if (!await _requireLogin(context, 'Save')) return;
-                            await widget.controller.toggleFavorite(drama.id);
+                            try {
+                              await widget.controller.toggleFavorite(drama.id);
+                            } catch (cause) {
+                              if (context.mounted) {
+                                _message(context, cause.toString());
+                              }
+                            }
                           },
                         ),
                         _action(
                           Icons.chat_bubble_outline,
-                          '428',
-                          () => _requireLogin(context, 'Comment'),
+                          _compactCount(engagement?.commentCount ?? 0),
+                          () async {
+                            if (!await _requireLogin(context, 'Comment')) {
+                              return;
+                            }
+                            if (!context.mounted) return;
+                            await _showComments(context, drama);
+                          },
                         ),
                         _action(
                           Icons.share_outlined,
                           'Share',
-                          () => _message(context, 'Deep link copied'),
+                          () => _share(context, drama),
                         ),
                       ],
                     ),
@@ -343,17 +469,47 @@ class _DramaPageState extends State<DramaPage> {
             ),
           ),
         ),
-        if (episode?.locked == true)
+        Positioned(
+          top: MediaQuery.paddingOf(context).top + 58,
+          right: 12,
+          child: PopupMenuButton<double>(
+            tooltip: 'Playback speed',
+            initialValue: speed,
+            onSelected: (value) async {
+              speed = value;
+              await video?.setPlaybackSpeed(value);
+              if (mounted) setState(() {});
+            },
+            itemBuilder: (_) => const [1.0, 1.25, 1.5, 2.0]
+                .map(
+                  (value) =>
+                      PopupMenuItem(value: value, child: Text('${value}x')),
+                )
+                .toList(),
+            child: Chip(label: Text('${speed}x')),
+          ),
+        ),
+        if (switching) const Center(child: CircularProgressIndicator()),
+        if (playbackError != null)
+          Center(
+            child: FilledButton.tonalIcon(
+              onPressed: _play,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Retry playback'),
+            ),
+          ),
+        if (episode?.locked == true || previewEnded)
           Center(
             child: _UnlockCard(
               points: episode?.pointsAmount ?? drama.pointsAmount ?? 0,
-              unlock: () async {
+              buy: () async {
                 final authenticated = await _requireLogin(context, 'Unlock');
                 if (!context.mounted) return;
                 if (authenticated) {
                   _message(context, 'Purchase options loaded');
                 }
               },
+              watchAd: () => _watchAdUnlock(context),
             ),
           ),
         if (widget.controller.session == null &&
@@ -377,6 +533,181 @@ class _DramaPageState extends State<DramaPage> {
       context,
       widget.controller,
       reason: '$action requires an account',
+    );
+  }
+
+  Future<void> _watchAdUnlock(BuildContext context) async {
+    final selected = episode;
+    if (selected == null || !await _requireLogin(context, 'Watch ad')) return;
+    if (!context.mounted) return;
+    try {
+      final challenge = await widget.controller.createRewardedChallenge(
+        selected.id,
+      );
+      if (challenge.alreadyUnlocked) {
+        await _play();
+        return;
+      }
+      final challengeId = challenge.challengeId;
+      final adUnitId = challenge.adUnitId;
+      if (challengeId == null || adUnitId == null) {
+        throw const ApiException('Rewarded ad is unavailable', 409);
+      }
+      RewardedAd.load(
+        adUnitId: adUnitId,
+        request: const AdRequest(),
+        rewardedAdLoadCallback: RewardedAdLoadCallback(
+          onAdLoaded: (ad) {
+            ad.setServerSideOptions(
+              ServerSideVerificationOptions(customData: challengeId),
+            );
+            ad.fullScreenContentCallback = FullScreenContentCallback(
+              onAdDismissedFullScreenContent: (ad) => ad.dispose(),
+              onAdFailedToShowFullScreenContent: (ad, error) {
+                ad.dispose();
+                if (mounted) {
+                  _message(this.context, 'The ad could not be shown');
+                }
+              },
+            );
+            ad.show(
+              onUserEarnedReward: (_, _) async {
+                if (mounted) {
+                  _message(this.context, 'Confirming episode unlock…');
+                }
+                final granted = await widget.controller.waitForReward(
+                  challengeId,
+                );
+                if (!mounted) return;
+                if (granted) {
+                  await _play();
+                } else {
+                  _message(
+                    this.context,
+                    'Reward confirmation is delayed. Try again shortly.',
+                  );
+                }
+              },
+            );
+          },
+          onAdFailedToLoad: (error) {
+            if (mounted) _message(this.context, 'Rewarded ad is unavailable');
+          },
+        ),
+      );
+    } catch (cause) {
+      if (mounted) _message(this.context, cause.toString());
+    }
+  }
+
+  Future<void> _showComments(BuildContext context, Drama drama) async {
+    final input = TextEditingController();
+    List<DramaComment> comments;
+    try {
+      comments = await widget.controller.comments(drama.id);
+    } catch (cause) {
+      input.dispose();
+      if (context.mounted) _message(context, cause.toString());
+      return;
+    }
+    if (!context.mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setSheetState) => Padding(
+          padding: EdgeInsets.fromLTRB(
+            18,
+            8,
+            18,
+            MediaQuery.viewInsetsOf(context).bottom + 12,
+          ),
+          child: SizedBox(
+            height: MediaQuery.sizeOf(context).height * .68,
+            child: Column(
+              children: [
+                Text(
+                  'Comments · ${comments.length}',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+                const SizedBox(height: 10),
+                Expanded(
+                  child: comments.isEmpty
+                      ? const Center(child: Text('Be the first to comment'))
+                      : ListView.builder(
+                          itemCount: comments.length,
+                          itemBuilder: (_, index) {
+                            final comment = comments[index];
+                            return ListTile(
+                              leading: const CircleAvatar(
+                                child: Icon(Icons.person),
+                              ),
+                              title: Text(comment.username ?? 'Viewer'),
+                              subtitle: Text(comment.body),
+                            );
+                          },
+                        ),
+                ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: input,
+                        maxLength: 2000,
+                        decoration: const InputDecoration(
+                          hintText: 'Add a comment',
+                          counterText: '',
+                        ),
+                      ),
+                    ),
+                    IconButton.filled(
+                      icon: const Icon(Icons.send),
+                      onPressed: () async {
+                        final body = input.text.trim();
+                        if (body.isEmpty) return;
+                        try {
+                          final created = await widget.controller.createComment(
+                            drama.id,
+                            body,
+                          );
+                          input.clear();
+                          setSheetState(
+                            () => comments = [...comments, created],
+                          );
+                          summary = await widget.controller.loadInteractions(
+                            drama.id,
+                          );
+                        } catch (cause) {
+                          if (context.mounted) {
+                            _message(context, cause.toString());
+                          }
+                        }
+                      },
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    input.dispose();
+  }
+
+  Future<void> _share(BuildContext context, Drama drama) async {
+    final host = widget.controller.config.deepLinkHost;
+    final link = host == null ? '' : ' https://$host/dramas/${drama.id}';
+    final box = context.findRenderObject() as RenderBox?;
+    await SharePlus.instance.share(
+      ShareParams(
+        title: drama.title,
+        text: '${drama.title}$link',
+        sharePositionOrigin: box == null
+            ? null
+            : box.localToGlobal(Offset.zero) & box.size,
+      ),
     );
   }
 
@@ -415,8 +746,6 @@ class _DramaPageState extends State<DramaPage> {
                       onPressed: () {
                         if (item != null) {
                           episode = item;
-                          video?.dispose();
-                          video = null;
                           _play();
                         }
                         Navigator.pop(context);
@@ -896,9 +1225,14 @@ class _Backdrop extends StatelessWidget {
 }
 
 class _UnlockCard extends StatelessWidget {
-  const _UnlockCard({required this.points, required this.unlock});
+  const _UnlockCard({
+    required this.points,
+    required this.buy,
+    required this.watchAd,
+  });
   final int points;
-  final VoidCallback unlock;
+  final VoidCallback buy;
+  final VoidCallback watchAd;
   @override
   Widget build(BuildContext context) => Container(
     width: 270,
@@ -926,7 +1260,21 @@ class _UnlockCard extends StatelessWidget {
         const SizedBox(height: 16),
         SizedBox(
           width: double.infinity,
-          child: FilledButton(onPressed: unlock, child: const Text('Unlock')),
+          child: FilledButton.icon(
+            onPressed: watchAd,
+            icon: const Icon(Icons.play_circle_fill),
+            label: const Text('Watch ad · unlock 1 episode'),
+          ),
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton(
+            onPressed: buy,
+            child: Text(
+              points > 0 ? 'Unlock for $points coins' : 'Purchase options',
+            ),
+          ),
         ),
       ],
     ),
@@ -1196,6 +1544,12 @@ void _message(BuildContext context, String value) =>
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(value), behavior: SnackBarBehavior.floating),
     );
+
+String _compactCount(int value) {
+  if (value >= 1000000) return '${(value / 1000000).toStringAsFixed(1)}M';
+  if (value >= 1000) return '${(value / 1000).toStringAsFixed(1)}K';
+  return '$value';
+}
 
 extension _SafeList<T> on List<T> {
   T? get firstOrNull => isEmpty ? null : first;

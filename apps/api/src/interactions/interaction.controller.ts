@@ -54,6 +54,37 @@ export class CustomerInteractionController {
     return this.interactions.listComments(await this.principal(request), query);
   }
 
+  @Get('dramas/:dramaId/summary')
+  @PublicEndpoint()
+  async dramaSummary(
+    @Param('dramaId') dramaId: string,
+    @Req() request: FastifyRequest,
+  ) {
+    return this.interactions.dramaSummary(await this.principal(request), dramaId);
+  }
+
+  @Post('dramas/:dramaId/like')
+  @PublicEndpoint()
+  async addLike(
+    @Param('dramaId') dramaId: string,
+    @Req() request: FastifyRequest,
+  ) {
+    return this.interactions.setDramaLike(
+      await this.principal(request), dramaId, true, uuidV7(),
+    );
+  }
+
+  @Delete('dramas/:dramaId/like')
+  @PublicEndpoint()
+  async removeLike(
+    @Param('dramaId') dramaId: string,
+    @Req() request: FastifyRequest,
+  ) {
+    return this.interactions.setDramaLike(
+      await this.principal(request), dramaId, false, uuidV7(),
+    );
+  }
+
   @Post('comments')
   @PublicEndpoint()
   async createComment(

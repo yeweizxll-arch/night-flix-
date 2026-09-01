@@ -69,6 +69,14 @@ export interface InteractionReportResponse {
   targetType: InteractionTargetType;
 }
 
+export interface DramaInteractionSummaryResponse {
+  commentCount: number;
+  favoriteCount: number;
+  isFavorite: boolean;
+  isLiked: boolean;
+  likeCount: number;
+}
+
 export interface SensitiveWordResponse {
   createdAt: string;
   id: string;

@@ -52,6 +52,128 @@ class DramaRepository {
     return episode.withPlayback(json);
   }
 
+  Future<DramaInteractionSummary> interactionSummary(
+    String dramaId,
+    String accessToken,
+  ) async {
+    if (demoMode) {
+      return const DramaInteractionSummary(
+        commentCount: 0,
+        favoriteCount: 0,
+        isFavorite: false,
+        isLiked: false,
+        likeCount: 0,
+      );
+    }
+    return DramaInteractionSummary.fromJson(
+      await _get(
+        '/api/v1/customer/interactions/dramas/$dramaId/summary',
+        accessToken: accessToken,
+      ),
+    );
+  }
+
+  Future<DramaInteractionSummary> setLike(
+    String dramaId,
+    String accessToken,
+    bool liked,
+  ) async => DramaInteractionSummary.fromJson(
+    await _request(
+      Uri.parse(
+        '$apiBaseUrl/api/v1/customer/interactions/dramas/$dramaId/like',
+      ),
+      method: liked ? 'POST' : 'DELETE',
+      accessToken: accessToken,
+    ),
+  );
+
+  Future<void> setFavorite(
+    String dramaId,
+    String accessToken,
+    bool favorite,
+  ) async {
+    if (demoMode) return;
+    await _request(
+      Uri.parse('$apiBaseUrl/api/v1/customer/playback/favorites/$dramaId'),
+      method: favorite ? 'POST' : 'DELETE',
+      accessToken: accessToken,
+    );
+  }
+
+  Future<List<DramaComment>> comments(
+    String dramaId,
+    String accessToken,
+  ) async {
+    if (demoMode) return const [];
+    final uri = Uri.parse('$apiBaseUrl/api/v1/customer/interactions/comments')
+        .replace(queryParameters: {'dramaId': dramaId, 'pageSize': '50'});
+    final json = await _request(uri, accessToken: accessToken);
+    return (json['items'] as List? ?? const [])
+        .map(
+          (item) =>
+              DramaComment.fromJson(Map<String, dynamic>.from(item as Map)),
+        )
+        .toList();
+  }
+
+  Future<DramaComment> createComment(
+    String dramaId,
+    String body,
+    String accessToken,
+  ) async {
+    if (demoMode) {
+      return DramaComment(
+        id: 'demo-${DateTime.now().microsecondsSinceEpoch}',
+        body: body,
+        createdAt: DateTime.now(),
+        username: 'Demo viewer',
+      );
+    }
+    final json = await _request(
+      Uri.parse('$apiBaseUrl/api/v1/customer/interactions/comments'),
+      method: 'POST',
+      payload: {'dramaId': dramaId, 'body': body},
+      accessToken: accessToken,
+      extraHeaders: {
+        'Idempotency-Key': 'comment-${DateTime.now().microsecondsSinceEpoch}',
+      },
+    );
+    return DramaComment.fromJson(json);
+  }
+
+  Future<RewardedUnlockChallenge> createRewardedChallenge(
+    String episodeId,
+    String accessToken,
+  ) async {
+    if (demoMode) {
+      return const RewardedUnlockChallenge(
+        alreadyUnlocked: true,
+        status: 'granted',
+      );
+    }
+    return RewardedUnlockChallenge.fromJson(
+      await _request(
+        Uri.parse(
+          '$apiBaseUrl/api/v1/customer/rewarded-unlocks/episodes/$episodeId/challenges',
+        ),
+        method: 'POST',
+        payload: {
+          'platform': Platform.isIOS ? 'ios' : 'android',
+          'placementKey': 'episode_unlock',
+        },
+        accessToken: accessToken,
+      ),
+    );
+  }
+
+  Future<String> rewardedStatus(String challengeId, String accessToken) async =>
+      (await _get(
+            '/api/v1/customer/rewarded-unlocks/$challengeId',
+            accessToken: accessToken,
+          ))['status']
+          as String? ??
+      'pending';
+
   Future<UserSession> login(String email, String password) async {
     if (demoMode) {
       return UserSession(
@@ -87,24 +209,24 @@ class DramaRepository {
     String method = 'GET',
     Map<String, dynamic>? payload,
     String? accessToken,
+    Map<String, String>? extraHeaders,
   }) async {
     final headers = <String, String>{'Accept': 'application/json'};
+    if (extraHeaders != null) headers.addAll(extraHeaders);
     if (payload != null) headers['Content-Type'] = 'application/json';
     if (accessToken != null) headers['Authorization'] = 'Bearer $accessToken';
-    final response = method == 'POST'
-        ? await http
-              .post(uri, headers: headers, body: jsonEncode(payload))
-              .timeout(const Duration(seconds: 15))
-        : await http
-              .get(uri, headers: headers)
-              .timeout(const Duration(seconds: 15));
-    final decoded = response.body.isEmpty
+    final request = http.Request(method, uri);
+    request.headers.addAll(headers);
+    if (payload != null) request.body = jsonEncode(payload);
+    final streamed = await request.send().timeout(const Duration(seconds: 15));
+    final resolved = await http.Response.fromStream(streamed);
+    final decoded = resolved.body.isEmpty
         ? <String, dynamic>{}
-        : Map<String, dynamic>.from(jsonDecode(response.body) as Map);
-    if (response.statusCode < 200 || response.statusCode >= 300) {
+        : Map<String, dynamic>.from(jsonDecode(resolved.body) as Map);
+    if (resolved.statusCode < 200 || resolved.statusCode >= 300) {
       throw ApiException(
         decoded['message']?.toString() ?? 'Request failed',
-        response.statusCode,
+        resolved.statusCode,
       );
     }
     return decoded;
@@ -131,6 +253,7 @@ class AppController extends ChangeNotifier {
   String? error;
   final Set<String> favorites = {};
   final List<String> history = [];
+  final Map<String, DramaInteractionSummary> interactions = {};
 
   Future<void> initialize() async {
     try {
@@ -186,6 +309,46 @@ class AppController extends ChangeNotifier {
     return repository.playback(episode, session!.accessToken);
   }
 
+  Future<DramaInteractionSummary> loadInteractions(String dramaId) async {
+    if (session == null) {
+      return interactions[dramaId] ??
+          const DramaInteractionSummary(
+            commentCount: 0,
+            favoriteCount: 0,
+            isFavorite: false,
+            isLiked: false,
+            likeCount: 0,
+          );
+    }
+    final summary = await repository.interactionSummary(
+      dramaId,
+      session!.accessToken,
+    );
+    interactions[dramaId] = summary;
+    if (summary.isFavorite) favorites.add(dramaId);
+    notifyListeners();
+    return summary;
+  }
+
+  Future<void> toggleLike(String dramaId) async {
+    final current = interactions[dramaId];
+    final nextLiked = !(current?.isLiked ?? false);
+    if (session == null) throw const ApiException('Sign in to like', 401);
+    final summary = repository.demoMode
+        ? (current ??
+                  const DramaInteractionSummary(
+                    commentCount: 0,
+                    favoriteCount: 0,
+                    isFavorite: false,
+                    isLiked: false,
+                    likeCount: 0,
+                  ))
+              .copyWith(isLiked: nextLiked)
+        : await repository.setLike(dramaId, session!.accessToken, nextLiked);
+    interactions[dramaId] = summary;
+    notifyListeners();
+  }
+
   Future<void> login(String email, String password) async {
     session = await repository.login(email, password);
     notifyListeners();
@@ -197,14 +360,45 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> toggleFavorite(String dramaId) async {
-    favorites.contains(dramaId)
-        ? favorites.remove(dramaId)
-        : favorites.add(dramaId);
+    final favorite = !favorites.contains(dramaId);
+    if (session != null) {
+      await repository.setFavorite(dramaId, session!.accessToken, favorite);
+    }
+    favorite ? favorites.add(dramaId) : favorites.remove(dramaId);
     await (await SharedPreferences.getInstance()).setStringList(
       'favorites',
       favorites.toList(),
     );
     notifyListeners();
+  }
+
+  Future<List<DramaComment>> comments(String dramaId) {
+    if (session == null) throw const ApiException('Sign in to comment', 401);
+    return repository.comments(dramaId, session!.accessToken);
+  }
+
+  Future<DramaComment> createComment(String dramaId, String body) {
+    if (session == null) throw const ApiException('Sign in to comment', 401);
+    return repository.createComment(dramaId, body, session!.accessToken);
+  }
+
+  Future<RewardedUnlockChallenge> createRewardedChallenge(String episodeId) {
+    if (session == null) throw const ApiException('Sign in to unlock', 401);
+    return repository.createRewardedChallenge(episodeId, session!.accessToken);
+  }
+
+  Future<bool> waitForReward(String challengeId) async {
+    if (session == null) return false;
+    for (var attempt = 0; attempt < 8; attempt += 1) {
+      final status = await repository.rewardedStatus(
+        challengeId,
+        session!.accessToken,
+      );
+      if (status == 'granted') return true;
+      if (status == 'expired') return false;
+      await Future<void>.delayed(const Duration(seconds: 1));
+    }
+    return false;
   }
 
   Future<void> markWatched(String dramaId) async {

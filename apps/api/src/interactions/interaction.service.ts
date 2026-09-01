@@ -21,6 +21,7 @@ import type {
   CreateCommentInput,
   CreateInteractionReportInput,
   CreateSensitiveWordInput,
+  DramaInteractionSummaryResponse,
   InteractionCommandMetadata,
   InteractionItemResponse,
   InteractionReportResponse,
@@ -84,6 +85,109 @@ export class InteractionService {
     @Inject(InteractionRateLimiterService)
     private readonly rateLimiter: InteractionRateLimiterService,
   ) {}
+
+  async dramaSummary(
+    principal: CustomerPrincipal,
+    dramaId: string,
+  ): Promise<DramaInteractionSummaryResponse> {
+    this.assertPrincipal(principal);
+    assertUuid(dramaId, 'dramaId');
+    return this.database.inTenantContext(principal.tenantId, async (transaction) => {
+      await this.requireCustomerSite(transaction, principal);
+      await this.requirePublishedContent(transaction, principal.tenantId, dramaId, undefined);
+      const rows = await transaction<Array<{
+        comment_count: number;
+        favorite_count: number;
+        is_favorite: boolean;
+        is_liked: boolean;
+        like_count: number;
+      }>>`
+        select
+          (select count(*)::integer from interaction_comments
+            where tenant_id = ${principal.tenantId} and drama_id = ${dramaId}
+              and status = 'visible') as comment_count,
+          (select count(*)::integer from customer_favorites
+            where tenant_id = ${principal.tenantId} and drama_id = ${dramaId})
+            as favorite_count,
+          exists (select 1 from customer_favorites
+            where tenant_id = ${principal.tenantId}
+              and account_id = ${principal.accountId} and drama_id = ${dramaId})
+            as is_favorite,
+          exists (select 1 from customer_drama_likes
+            where tenant_id = ${principal.tenantId}
+              and account_id = ${principal.accountId} and drama_id = ${dramaId})
+            as is_liked,
+          (select count(*)::integer from customer_drama_likes
+            where tenant_id = ${principal.tenantId} and drama_id = ${dramaId})
+            as like_count
+      `;
+      const row = requiredRow(rows[0], 'Interaction summary is unavailable');
+      return mapDramaSummary(row);
+    });
+  }
+
+  async setDramaLike(
+    principal: CustomerPrincipal,
+    dramaId: string,
+    liked: boolean,
+    requestId: string,
+  ): Promise<DramaInteractionSummaryResponse> {
+    this.assertPrincipal(principal);
+    assertUuid(dramaId, 'dramaId');
+    return this.database.inTenantContext(principal.tenantId, async (transaction) => {
+      await this.requireCustomerSite(transaction, principal);
+      await this.requirePublishedContent(transaction, principal.tenantId, dramaId, undefined);
+      const changed = liked
+        ? await transaction<{ drama_id: string }[]>`
+            insert into customer_drama_likes (tenant_id, account_id, drama_id)
+            values (${principal.tenantId}, ${principal.accountId}, ${dramaId})
+            on conflict do nothing returning drama_id
+          `
+        : await transaction<{ drama_id: string }[]>`
+            delete from customer_drama_likes
+            where tenant_id = ${principal.tenantId}
+              and account_id = ${principal.accountId} and drama_id = ${dramaId}
+            returning drama_id
+          `;
+      if (changed[0]) {
+        const eventId = uuidV7();
+        await transaction`
+          insert into outbox_events (
+            id, scope_type, tenant_id, event_key, idempotency_key,
+            aggregate_type, aggregate_id, event_type, payload_json
+          ) values (
+            ${eventId}, 'tenant', ${principal.tenantId}, ${`event:${eventId}`},
+            ${`${requestId}:${liked ? 'liked' : 'unliked'}`}, 'drama', ${dramaId},
+            ${liked ? 'CustomerDramaLiked' : 'CustomerDramaUnliked'},
+            ${transaction.json(toJsonValue({
+              accountId: principal.accountId, dramaId, tenantId: principal.tenantId,
+            }))}
+          )
+        `;
+      }
+      const rows = await transaction<Array<{
+        comment_count: number; favorite_count: number; is_favorite: boolean;
+        is_liked: boolean; like_count: number;
+      }>>`
+        select
+          (select count(*)::integer from interaction_comments
+            where tenant_id = ${principal.tenantId} and drama_id = ${dramaId}
+              and status = 'visible') as comment_count,
+          (select count(*)::integer from customer_favorites
+            where tenant_id = ${principal.tenantId} and drama_id = ${dramaId})
+            as favorite_count,
+          exists (select 1 from customer_favorites
+            where tenant_id = ${principal.tenantId}
+              and account_id = ${principal.accountId} and drama_id = ${dramaId})
+            as is_favorite,
+          ${liked}::boolean as is_liked,
+          (select count(*)::integer from customer_drama_likes
+            where tenant_id = ${principal.tenantId} and drama_id = ${dramaId})
+            as like_count
+      `;
+      return mapDramaSummary(requiredRow(rows[0], 'Interaction summary is unavailable'));
+    });
+  }
 
   async listComments(
     principal: CustomerPrincipal,
@@ -883,16 +987,24 @@ export class InteractionService {
           (drama.owner_type = 'tenant' and drama.owner_tenant_id = ${tenantId})
           or (
             drama.owner_type = 'platform'
-            and exists (
-              select 1
-              from content_license_items as item
-              inner join content_licenses as license
-                on license.id = item.license_id and license.tenant_id = item.tenant_id
-              where item.tenant_id = ${tenantId}
-                and item.drama_id = drama.id
-                and license.status in ('scheduled', 'active')
-                and license.starts_at <= statement_timestamp()
-                and license.expires_at > statement_timestamp()
+            and (
+              exists (
+                select 1 from tenant_public_drama_publications as publication
+                where publication.tenant_id = ${tenantId}
+                  and publication.drama_id = drama.id
+                  and publication.status = 'published'
+              )
+              or exists (
+                select 1
+                from content_license_items as item
+                inner join content_licenses as license
+                  on license.id = item.license_id and license.tenant_id = item.tenant_id
+                where item.tenant_id = ${tenantId}
+                  and item.drama_id = drama.id
+                  and license.status in ('scheduled', 'active')
+                  and license.starts_at <= statement_timestamp()
+                  and license.expires_at > statement_timestamp()
+              )
             )
           )
         )
@@ -914,7 +1026,16 @@ export class InteractionService {
         order by license.id limit 1
         for share of license, item
       `;
-      if (!licenses[0]) throw new NotFoundException('Published content is unavailable');
+      if (!licenses[0]) {
+        const publications = await transaction<{ id: string }[]>`
+          select id from tenant_public_drama_publications
+          where tenant_id = ${tenantId} and drama_id = ${dramaId}
+            and status = 'published' for share
+        `;
+        if (!publications[0]) {
+          throw new NotFoundException('Published content is unavailable');
+        }
+      }
     }
     if (!episodeId) return undefined;
     const episodes = await transaction<{ duration_seconds: number }[]>`
@@ -1382,6 +1503,22 @@ function mapInteraction(row: InteractionRow): InteractionItemResponse {
     positionMs: row.position_ms,
     status: row.status,
     username: row.username,
+  };
+}
+
+function mapDramaSummary(row: {
+  comment_count: number;
+  favorite_count: number;
+  is_favorite: boolean;
+  is_liked: boolean;
+  like_count: number;
+}): DramaInteractionSummaryResponse {
+  return {
+    commentCount: row.comment_count,
+    favoriteCount: row.favorite_count,
+    isFavorite: row.is_favorite,
+    isLiked: row.is_liked,
+    likeCount: row.like_count,
   };
 }
 
