@@ -48,7 +48,7 @@ class AppRuntimeConfig {
       );
 
   static const demo = AppRuntimeConfig(
-    admob: {},
+    admob: {'enabled': true},
     capabilities: {},
     defaultLocale: 'en-US',
     deepLinkHost: null,

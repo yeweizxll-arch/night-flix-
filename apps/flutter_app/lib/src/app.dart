@@ -233,7 +233,11 @@ class _DramaPageState extends State<DramaPage> {
 
   Future<void> _play({Duration? resumeAt}) async {
     final selected = episode;
-    if (selected == null || widget.controller.session == null) return;
+    if (selected == null ||
+        (widget.controller.session == null &&
+            !widget.controller.repository.demoMode)) {
+      return;
+    }
     if (mounted) {
       setState(() {
         switching = true;
@@ -275,10 +279,7 @@ class _DramaPageState extends State<DramaPage> {
       }
       final next = usePreloaded
           ? preloadedVideo!
-          : VideoPlayerController.networkUrl(
-              Uri.parse(playable.playbackUrl!),
-              closedCaptionFile: captions,
-            );
+          : _videoController(playable.playbackUrl!, captions: captions);
       if (preloadedEpisodeId == playable.id) {
         preloadedVideo = null;
         preloadedEpisodeId = null;
@@ -373,7 +374,8 @@ class _DramaPageState extends State<DramaPage> {
     final selected = episode;
     if (drama == null ||
         selected == null ||
-        widget.controller.session == null) {
+        (widget.controller.session == null &&
+            !widget.controller.repository.demoMode)) {
       return;
     }
     final index = drama.episodes.indexWhere((item) => item.id == selected.id);
@@ -385,9 +387,7 @@ class _DramaPageState extends State<DramaPage> {
     try {
       final playable = await widget.controller.loadPlayback(nextEpisode);
       if (!mounted || playable.playbackUrl == null) return;
-      final controller = VideoPlayerController.networkUrl(
-        Uri.parse(playable.playbackUrl!),
-      );
+      final controller = _videoController(playable.playbackUrl!);
       await controller.initialize();
       if (!mounted || episode?.id != selected.id) {
         await controller.dispose();
@@ -398,6 +398,23 @@ class _DramaPageState extends State<DramaPage> {
     } catch (_) {
       // A locked or temporarily unavailable next episode should not interrupt playback.
     }
+  }
+
+  VideoPlayerController _videoController(
+    String url, {
+    Future<ClosedCaptionFile>? captions,
+  }) {
+    const assetPrefix = 'asset://';
+    if (url.startsWith(assetPrefix)) {
+      return VideoPlayerController.asset(
+        url.substring(assetPrefix.length),
+        closedCaptionFile: captions,
+      );
+    }
+    return VideoPlayerController.networkUrl(
+      Uri.parse(url),
+      closedCaptionFile: captions,
+    );
   }
 
   Future<void> _advanceEpisode() async {
@@ -1675,8 +1692,12 @@ Future<bool> _showLogin(
   AppController controller, {
   String? reason,
 }) async {
-  final email = TextEditingController();
-  final password = TextEditingController();
+  final email = TextEditingController(
+    text: controller.repository.demoMode ? 'demo@nightflix.test' : '',
+  );
+  final password = TextEditingController(
+    text: controller.repository.demoMode ? 'Demo123!' : '',
+  );
   String? error;
   final result = await showModalBottomSheet<bool>(
     context: context,
@@ -1699,8 +1720,10 @@ Future<bool> _showLogin(
               style: const TextStyle(fontSize: 23, fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 8),
-            const Text(
-              'Your purchases, favorites and history stay with you.',
+            Text(
+              controller.repository.demoMode
+                  ? 'Demo account is ready. Tap continue to test likes, comments and unlocking.'
+                  : 'Your purchases, favorites and history stay with you.',
               style: TextStyle(color: Colors.white60),
             ),
             const SizedBox(height: 18),

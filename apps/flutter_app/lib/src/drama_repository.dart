@@ -12,6 +12,7 @@ class DramaRepository {
     : apiBaseUrl = apiBaseUrl.replaceAll(RegExp(r'/$'), '');
 
   final String apiBaseUrl;
+  final Set<String> _demoUnlockedEpisodes = {};
   bool get demoMode => apiBaseUrl.isEmpty;
 
   Future<AppRuntimeConfig> bootstrap() async => demoMode
@@ -50,7 +51,13 @@ class DramaRepository {
   }
 
   Future<Episode> playback(Episode episode, String accessToken) async {
-    if (demoMode) return episode;
+    if (demoMode) {
+      if (!episode.locked || _demoUnlockedEpisodes.contains(episode.id)) {
+        final url = episode.playbackUrl ?? _demoPlaybackUrls[episode.id];
+        return episode.withPlayback({'url': url, 'access': 'full'});
+      }
+      return episode;
+    }
     final json = await _get(
       '/api/v1/customer/playback/episodes/${episode.id}/url',
       accessToken: accessToken,
@@ -179,9 +186,13 @@ class DramaRepository {
     String accessToken,
   ) async {
     if (demoMode) {
-      return const RewardedUnlockChallenge(
-        alreadyUnlocked: true,
-        status: 'granted',
+      return RewardedUnlockChallenge(
+        adUnitId: Platform.isIOS
+            ? 'ca-app-pub-3940256099942544/1712485313'
+            : 'ca-app-pub-3940256099942544/5224354917',
+        alreadyUnlocked: false,
+        challengeId: 'demo:$episodeId',
+        status: 'pending',
       );
     }
     return RewardedUnlockChallenge.fromJson(
@@ -204,7 +215,10 @@ class DramaRepository {
     String targetId,
     String accessToken,
   ) async {
-    if (demoMode) return;
+    if (demoMode) {
+      if (targetType == 'episode') _demoUnlockedEpisodes.add(targetId);
+      return;
+    }
     await _request(
       Uri.parse(
         '$apiBaseUrl/api/v1/customer/commerce/point-unlocks/$targetType/$targetId',
@@ -250,13 +264,18 @@ class DramaRepository {
     );
   }
 
-  Future<String> rewardedStatus(String challengeId, String accessToken) async =>
-      (await _get(
-            '/api/v1/customer/rewarded-unlocks/$challengeId',
-            accessToken: accessToken,
-          ))['status']
-          as String? ??
-      'pending';
+  Future<String> rewardedStatus(String challengeId, String accessToken) async {
+    if (demoMode && challengeId.startsWith('demo:')) {
+      _demoUnlockedEpisodes.add(challengeId.substring('demo:'.length));
+      return 'granted';
+    }
+    return (await _get(
+              '/api/v1/customer/rewarded-unlocks/$challengeId',
+              accessToken: accessToken,
+            ))['status']
+            as String? ??
+        'pending';
+  }
 
   Future<UserSession> login(String email, String password) async {
     if (demoMode) {
@@ -402,10 +421,10 @@ class AppController extends ChangeNotifier {
   }
 
   Future<Episode> loadPlayback(Episode episode) async {
-    if (session == null) {
+    if (session == null && !repository.demoMode) {
       throw const ApiException('Sign in to continue watching', 401);
     }
-    return repository.playback(episode, session!.accessToken);
+    return repository.playback(episode, session?.accessToken ?? 'demo');
   }
 
   Future<DramaInteractionSummary> loadInteractions(String dramaId) async {
@@ -546,7 +565,7 @@ const _demoDramas = [
   Drama(
     id: 'demo-1',
     title: 'The Last Contract',
-    totalEpisodes: 42,
+    totalEpisodes: 3,
     palette: 0,
     summary: 'She signed a marriage contract to save her family, then discovered the stranger was the heir everyone feared.',
     episodes: [
@@ -554,15 +573,32 @@ const _demoDramas = [
         id: 'demo-1-1',
         number: 1,
         title: 'The Agreement',
-        durationSeconds: 78,
-        previewSeconds: 78,
+        durationSeconds: 8,
+        previewSeconds: 8,
+        playbackUrl: 'asset://assets/demo/contract.mp4',
+      ),
+      Episode(
+        id: 'demo-1-2',
+        number: 2,
+        title: 'The Hidden Name',
+        durationSeconds: 8,
+        previewSeconds: 8,
+        playbackUrl: 'asset://assets/demo/revenge.mp4',
+      ),
+      Episode(
+        id: 'demo-1-3',
+        number: 3,
+        title: 'Terms Changed',
+        durationSeconds: 8,
+        previewSeconds: 8,
+        playbackUrl: 'asset://assets/demo/secret-ceo.mp4',
       ),
     ],
   ),
   Drama(
     id: 'demo-2',
     title: 'Reborn for Revenge',
-    totalEpisodes: 56,
+    totalEpisodes: 2,
     palette: 1,
     summary: 'A second chance turns betrayal into a carefully planned return.',
     episodes: [
@@ -570,15 +606,24 @@ const _demoDramas = [
         id: 'demo-2-1',
         number: 1,
         title: 'Back to That Night',
-        durationSeconds: 82,
-        previewSeconds: 82,
+        durationSeconds: 8,
+        previewSeconds: 8,
+        playbackUrl: 'asset://assets/demo/revenge.mp4',
+      ),
+      Episode(
+        id: 'demo-2-2',
+        number: 2,
+        title: 'The First Move',
+        durationSeconds: 8,
+        previewSeconds: 8,
+        playbackUrl: 'asset://assets/demo/contract.mp4',
       ),
     ],
   ),
   Drama(
     id: 'demo-3',
     title: 'My Secret CEO',
-    totalEpisodes: 36,
+    totalEpisodes: 3,
     palette: 2,
     summary: 'An ordinary first day at work becomes a secret neither of them can reveal.',
     episodes: [
@@ -586,10 +631,33 @@ const _demoDramas = [
         id: 'demo-3-1',
         number: 1,
         title: 'First Day',
-        durationSeconds: 69,
-        previewSeconds: 30,
+        durationSeconds: 8,
+        previewSeconds: 8,
+        playbackUrl: 'asset://assets/demo/secret-ceo.mp4',
+      ),
+      Episode(
+        id: 'demo-3-2',
+        number: 2,
+        title: 'Behind the Office Door',
+        durationSeconds: 8,
+        previewSeconds: 0,
         pointsAmount: 5,
+        access: 'locked',
+      ),
+      Episode(
+        id: 'demo-3-3',
+        number: 3,
+        title: 'The Secret Meeting',
+        durationSeconds: 8,
+        previewSeconds: 0,
+        pointsAmount: 5,
+        access: 'locked',
       ),
     ],
   ),
 ];
+
+const _demoPlaybackUrls = {
+  'demo-3-2': 'asset://assets/demo/contract.mp4',
+  'demo-3-3': 'asset://assets/demo/revenge.mp4',
+};

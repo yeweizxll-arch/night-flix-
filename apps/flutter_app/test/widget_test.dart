@@ -47,6 +47,23 @@ void main() {
     expect(controller.session, isNull);
   });
 
+  test('demo episodes provide local playback and unlock state', () async {
+    final repository = DramaRepository(apiBaseUrl: '');
+    final dramas = await repository.dramas();
+    final free = await repository.playback(dramas.first.episodes.first, '');
+    expect(free.playbackUrl, startsWith('asset://assets/demo/'));
+
+    final locked = dramas.last.episodes[1];
+    expect((await repository.playback(locked, '')).playbackUrl, isNull);
+    final challenge = await repository.createRewardedChallenge(locked.id, '');
+    expect(challenge.adUnitId, isNotEmpty);
+    expect(
+      await repository.rewardedStatus(challenge.challengeId!, ''),
+      'granted',
+    );
+    expect((await repository.playback(locked, '')).playbackUrl, isNotNull);
+  });
+
   testWidgets('profile sign-in opens the account gate', (tester) async {
     SharedPreferences.setMockInitialValues({});
     final controller = AppController(DramaRepository(apiBaseUrl: ''));
@@ -74,6 +91,10 @@ void main() {
     await tester.drag(find.byType(PageView), const Offset(0, -700));
     await tester.pumpAndSettle();
     await tester.drag(find.byType(PageView), const Offset(0, -700));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Episodes'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('2'));
     await tester.pumpAndSettle();
     expect(find.text('Watch ad · unlock 1 episode'), findsOneWidget);
   });

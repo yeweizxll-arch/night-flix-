@@ -9,7 +9,7 @@ flutter pub get
 flutter run --dart-define=API_BASE_URL=https://verified-agent-domain.example
 ```
 
-省略 `API_BASE_URL` 时使用内置的无版权演示卡片，不发起生产请求。Android/iOS 工程内的 AdMob App ID 是 Google 官方测试 ID，代理商正式构建前必须替换。总后台的内部测试构建任务直接复制本 Flutter 工程，不再使用旧 Capacitor 壳。
+省略 `API_BASE_URL` 时使用内置的 Night Flix 测试剧目和本地竖屏视频，不发起业务 API 请求；演示登录页已预填测试账号，锁集使用 Google 官方测试广告位。Android/iOS 工程内的 AdMob App ID 是 Google 官方测试 ID，代理商正式构建前必须替换。总后台的内部测试构建任务直接复制本 Flutter 工程，不再使用旧 Capacitor 壳。
 
 ## 已接入的服务端接口
 

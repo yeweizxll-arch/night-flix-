@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:night_flix/src/app.dart';
 import 'package:night_flix/src/drama_repository.dart';
+import 'package:night_flix/src/models.dart';
 
 void main() {
   testWidgets('vertical feed visual regression', (tester) async {
@@ -14,7 +15,7 @@ void main() {
       tester.view.resetDevicePixelRatio();
     });
     SharedPreferences.setMockInitialValues({});
-    final controller = AppController(DramaRepository(apiBaseUrl: ''));
+    final controller = AppController(_LayoutOnlyDemoRepository());
     await controller.initialize();
     await tester.pumpWidget(DramaApp(controller: controller));
     await tester.pumpAndSettle();
@@ -23,4 +24,21 @@ void main() {
       matchesGoldenFile('goldens/vertical-feed.png'),
     );
   });
+}
+
+class _LayoutOnlyDemoRepository extends DramaRepository {
+  _LayoutOnlyDemoRepository() : super(apiBaseUrl: '');
+
+  @override
+  Future<Episode> playback(Episode episode, String accessToken) async =>
+      Episode(
+        id: episode.id,
+        number: episode.number,
+        title: episode.title,
+        durationSeconds: episode.durationSeconds,
+        previewSeconds: episode.previewSeconds,
+        pointsAmount: episode.pointsAmount,
+        access: episode.access,
+        tracks: episode.tracks,
+      );
 }
