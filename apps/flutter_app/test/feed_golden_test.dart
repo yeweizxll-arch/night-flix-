@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:shanchuang_drama/src/app.dart';
-import 'package:shanchuang_drama/src/drama_repository.dart';
+import 'package:night_flix/src/app.dart';
+import 'package:night_flix/src/drama_repository.dart';
 
 void main() {
   testWidgets('vertical feed visual regression', (tester) async {

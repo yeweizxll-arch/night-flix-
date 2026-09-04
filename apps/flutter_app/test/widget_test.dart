@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:shanchuang_drama/src/app.dart';
-import 'package:shanchuang_drama/src/drama_repository.dart';
-import 'package:shanchuang_drama/src/models.dart';
+import 'package:night_flix/src/app.dart';
+import 'package:night_flix/src/drama_repository.dart';
+import 'package:night_flix/src/models.dart';
 
 void main() {
   test('runtime configuration safely falls back to app defaults', () {
@@ -12,6 +12,7 @@ void main() {
     expect(config.siteName, 'Agent One');
     expect(config.defaultLocale, 'en-US');
     expect(config.admobEnabled, isFalse);
+    expect(config.inAppPurchasesEnabled, isFalse);
   });
 
   test('interaction and rewarded unlock responses retain server state', () {
@@ -58,6 +59,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Welcome back'), findsOneWidget);
     expect(find.text('Continue with email'), findsOneWidget);
+    expect(find.text('Continue with Google'), findsNothing);
+    expect(find.text('Continue with Apple'), findsNothing);
   });
 
   testWidgets('locked episodes offer direct one-episode ad unlock', (

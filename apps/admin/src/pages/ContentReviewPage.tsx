@@ -224,7 +224,7 @@ export function ContentReviewPage() {
         <div>
           <Typography.Title level={2}>内容审核中心</Typography.Title>
           <Typography.Text type="secondary">
-            审核商家提交的短剧内容，所有决定均使用当前版本提交。
+            审核代理商提交的短剧内容，所有决定均使用当前版本提交。
           </Typography.Text>
         </div>
         <Button loading={loading} onClick={() => void load(data.page, data.pageSize)}>
@@ -262,7 +262,7 @@ export function ContentReviewPage() {
           },
           {
             dataIndex: 'tenantName',
-            title: '提交商家',
+            title: '提交代理商',
             render: (tenantName: string, item) => (
               <Space direction="vertical" size={0}>
                 <Typography.Text>{tenantName}</Typography.Text>
@@ -351,8 +351,8 @@ export function ContentReviewPage() {
           <>
             <Descriptions bordered column={{ xs: 1, sm: 2 }} size="small">
               <Descriptions.Item label="短剧代码">{selected.dramaCode}</Descriptions.Item>
-              <Descriptions.Item label="商家">{selected.tenantName}</Descriptions.Item>
-              <Descriptions.Item label="商家 ID">
+              <Descriptions.Item label="代理商">{selected.tenantName}</Descriptions.Item>
+              <Descriptions.Item label="代理商 ID">
                 <Typography.Text copyable>{selected.tenantId}</Typography.Text>
               </Descriptions.Item>
               <Descriptions.Item label="审核单 ID">
@@ -408,7 +408,7 @@ export function ContentReviewPage() {
         title="驳回内容"
       >
         <Typography.Paragraph type="secondary">
-          请说明「{rejectTarget?.dramaCode}」未通过审核的原因，商家修改后可重新提交。
+          请说明「{rejectTarget?.dramaCode}」未通过审核的原因，代理商修改后可重新提交。
         </Typography.Paragraph>
         <Form<RejectFormValues>
           form={rejectForm}

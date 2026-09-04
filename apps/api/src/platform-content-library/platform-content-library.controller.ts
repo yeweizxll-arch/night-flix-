@@ -30,6 +30,7 @@ import type {
   PlatformContentMutationMetadata,
   UpdatePlatformDramaInput,
   UpdatePlatformEpisodeInput,
+  UpsertPlatformEpisodeTrackInput,
   UpdatePlatformTaxonomyInput,
 } from './platform-content-library.types';
 
@@ -98,6 +99,35 @@ export class PlatformContentLibraryController {
       episodeId,
       input,
       mutationMetadata(principal, request),
+    );
+  }
+
+  @Post('dramas/:dramaId/episodes/:episodeId/tracks')
+  @RequirePermissions({ mode: 'write', permissions: ['platform.content.manage'], scope: 'platform' })
+  upsertEpisodeTrack(
+    @Param('dramaId') dramaId: string,
+    @Param('episodeId') episodeId: string,
+    @Body() input: UpsertPlatformEpisodeTrackInput,
+    @CurrentPrincipal() principal: AccessPrincipal,
+    @Req() request: FastifyRequest,
+  ) {
+    return this.library.upsertEpisodeTrack(
+      dramaId, episodeId, input, mutationMetadata(principal, request),
+    );
+  }
+
+  @Delete('dramas/:dramaId/episodes/:episodeId/tracks/:trackId')
+  @RequirePermissions({ mode: 'write', permissions: ['platform.content.manage'], scope: 'platform' })
+  disableEpisodeTrack(
+    @Param('dramaId') dramaId: string,
+    @Param('episodeId') episodeId: string,
+    @Param('trackId') trackId: string,
+    @Body() input: ExpectedVersionInput,
+    @CurrentPrincipal() principal: AccessPrincipal,
+    @Req() request: FastifyRequest,
+  ) {
+    return this.library.disableEpisodeTrack(
+      dramaId, episodeId, trackId, input, mutationMetadata(principal, request),
     );
   }
 

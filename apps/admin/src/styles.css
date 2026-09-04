@@ -25,22 +25,89 @@ body {
 
 .login-page {
   align-items: center;
-  background:
-    radial-gradient(circle at 15% 20%, rgba(99, 102, 241, 0.18), transparent 32%),
-    radial-gradient(circle at 85% 80%, rgba(139, 92, 246, 0.15), transparent 35%),
-    #f4f6fb;
+  background: linear-gradient(135deg, #0b1220 0%, #111b34 100%);
   display: flex;
   justify-content: center;
   min-height: 100vh;
-  padding: 24px;
+  padding: 48px;
+}
+
+.login-shell {
+  align-items: center;
+  display: grid;
+  gap: 88px;
+  grid-template-columns: minmax(0, 1fr) 430px;
+  max-width: 1120px;
+  width: 100%;
+}
+
+.login-introduction {
+  color: #fff;
+  max-width: 570px;
+}
+
+.login-brand-inverse {
+  margin-bottom: 72px;
+}
+
+.login-brand-inverse .ant-typography {
+  color: #fff;
+}
+
+.login-introduction-copy h1 {
+  color: #fff;
+  font-size: clamp(38px, 5vw, 58px);
+  letter-spacing: -0.04em;
+  line-height: 1.12;
+  margin-bottom: 22px !important;
+}
+
+.login-introduction-copy .ant-typography {
+  color: #aebbd1;
+  font-size: 17px;
+  line-height: 1.8;
+  max-width: 520px;
+}
+
+.login-capabilities {
+  display: grid;
+  gap: 14px;
+  margin-top: 38px;
+}
+
+.login-capability {
+  align-items: center;
+  color: #dbe5f5;
+  display: flex;
+  font-size: 15px;
+  gap: 12px;
+}
+
+.login-capability .anticon {
+  color: #8b7cf6;
 }
 
 .login-card {
-  border-radius: 16px;
-  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.12);
-  max-width: 420px;
-  padding: 14px;
+  border-radius: 18px;
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.3);
+  padding: 18px;
   width: 100%;
+}
+
+.login-card h2 {
+  font-size: 28px;
+  margin: 18px 0 4px !important;
+}
+
+.login-card-description {
+  margin-bottom: 28px !important;
+}
+
+.login-scope-tag {
+  border-radius: 999px;
+  font-weight: 600;
+  margin: 0;
+  padding: 3px 10px;
 }
 
 .login-brand {
@@ -58,12 +125,33 @@ body {
   margin-bottom: 20px;
 }
 
+.login-security-note {
+  align-items: center;
+  color: #8a94a6;
+  display: flex;
+  font-size: 12px;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 24px;
+}
+
 .app-shell {
   min-height: 100vh;
 }
 
+.app-shell > .ant-layout {
+  min-width: 0;
+}
+
 .app-sider {
-  background: #0f172a !important;
+  background: #101828 !important;
+}
+
+.app-sider .ant-layout-sider-children {
+  height: 100vh;
+  overflow-y: auto;
+  position: sticky;
+  top: 0;
 }
 
 .brand-block {
@@ -71,8 +159,8 @@ body {
   color: white;
   display: flex;
   gap: 12px;
-  height: 76px;
-  padding: 0 22px;
+  height: 82px;
+  padding: 0 20px;
 }
 
 .brand-mark {
@@ -80,7 +168,7 @@ body {
   background: linear-gradient(135deg, #6366f1, #8b5cf6);
   border-radius: 12px;
   display: flex;
-  font-size: 18px;
+  font-size: 14px;
   font-weight: 800;
   height: 38px;
   justify-content: center;
@@ -88,8 +176,9 @@ body {
 }
 
 .brand-name {
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 700;
+  letter-spacing: -0.01em;
 }
 
 .brand-caption {
@@ -101,30 +190,95 @@ body {
 .app-menu {
   background: transparent !important;
   border-inline-end: 0 !important;
-  padding: 10px;
+  padding: 4px 10px 24px;
+}
+
+.app-menu.ant-menu-dark .ant-menu-item,
+.app-menu.ant-menu-dark .ant-menu-submenu-title {
+  margin-block: 4px;
+}
+
+.app-menu.ant-menu-dark .ant-menu-item-selected {
+  background: #4f46e5;
+  box-shadow: 0 8px 18px rgba(79, 70, 229, 0.22);
+}
+
+.navigation-caption {
+  color: #667085;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  padding: 8px 24px 6px;
+  text-transform: uppercase;
 }
 
 .app-header {
   align-items: center;
-  background: rgba(255, 255, 255, 0.92);
-  border-bottom: 1px solid #e8edf4;
+  background: rgba(255, 255, 255, 0.96);
+  border-bottom: 1px solid #e4e7ec;
   display: flex;
-  justify-content: flex-end;
-  padding: 0 28px;
+  height: 72px;
+  justify-content: space-between;
+  line-height: normal;
+  padding: 0 30px;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.app-header-context {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+}
+
+.header-eyebrow {
+  color: #98a2b3;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  margin-bottom: 3px;
+}
+
+.header-page-title {
+  color: #101828;
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.mobile-menu-button {
+  display: none;
+}
+
+.account-avatar {
+  background: #ede9fe;
+  color: #5b4fc7;
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .app-content {
+  background: #f5f7fa;
   margin: 0 auto;
   max-width: 1600px;
-  padding: 28px;
+  min-width: 0;
+  padding: 30px;
   width: 100%;
+}
+
+.app-content > .ant-card,
+.app-content .ant-space-item > .ant-card,
+.app-content .ant-col > .ant-card {
+  border-color: #e4e7ec;
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.03);
 }
 
 .page-heading {
   align-items: flex-start;
   display: flex;
   justify-content: space-between;
-  margin-bottom: 24px;
+  margin-bottom: 22px;
 }
 
 .page-heading h2,
@@ -132,8 +286,58 @@ body {
   margin: 0 !important;
 }
 
+.page-heading h2 {
+  color: #101828;
+  font-size: 27px !important;
+  letter-spacing: -0.025em;
+}
+
 .page-alert {
   margin-bottom: 16px;
+}
+
+.page-filter-card {
+  margin-bottom: 6px;
+}
+
+.analytics-metric-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.analytics-metric-grid-tenant {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.dashboard-metric-card {
+  border-top: 3px solid #7c6cf2 !important;
+  min-width: 0;
+}
+
+.dashboard-metric-card .ant-card-body {
+  padding: 20px;
+}
+
+.dashboard-metric-card .ant-statistic-title {
+  color: #667085;
+  font-size: 13px;
+  margin-bottom: 10px;
+}
+
+.dashboard-metric-card .ant-statistic-content {
+  color: #101828;
+  font-size: 27px;
+  font-weight: 650;
+  letter-spacing: -0.025em;
+  line-height: 1.2;
+  margin-bottom: 10px;
+}
+
+.dashboard-metric-card .ant-typography {
+  display: block;
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .audit-filter-card {
@@ -277,13 +481,86 @@ body {
   margin-top: 8px !important;
 }
 
-@media (max-width: 720px) {
+@media (max-width: 1200px) {
+  .analytics-metric-grid,
+  .analytics-metric-grid-tenant {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 960px) {
   .app-sider {
     display: none;
   }
 
+  .mobile-menu-button {
+    display: inline-flex;
+  }
+
+  .mobile-navigation-drawer .ant-drawer-body {
+    background: #101828;
+    color: #fff;
+  }
+
+  .mobile-navigation-drawer .app-menu {
+    min-height: calc(100vh - 120px);
+  }
+}
+
+@media (max-width: 840px) {
+  .login-page {
+    align-items: flex-start;
+    padding: 40px 20px;
+  }
+
+  .login-shell {
+    gap: 12px;
+    grid-template-columns: 1fr;
+    margin: 0 auto;
+    max-width: 440px;
+  }
+
+  .login-introduction {
+    padding: 0 8px 10px;
+  }
+
+  .login-brand-inverse {
+    margin-bottom: 0;
+  }
+
+  .login-introduction-copy,
+  .login-capabilities {
+    display: none;
+  }
+}
+
+@media (max-width: 720px) {
+  .app-header {
+    padding: 0 16px;
+  }
+
+  .account-name,
+  .environment-tag {
+    display: none;
+  }
+
   .app-content {
-    padding: 18px;
+    padding: 20px 16px;
+  }
+
+  .page-filter-card .ant-space {
+    display: grid;
+    grid-template-columns: 1fr;
+    width: 100%;
+  }
+
+  .page-filter-card label,
+  .page-filter-card .ant-input,
+  .page-filter-card .ant-select,
+  .page-filter-card .ant-btn {
+    max-width: none;
+    min-width: 0 !important;
+    width: 100% !important;
   }
 
   .two-column-form {
@@ -295,6 +572,8 @@ body {
   }
 
   .page-heading {
+    align-items: stretch;
+    flex-direction: column;
     gap: 16px;
   }
 

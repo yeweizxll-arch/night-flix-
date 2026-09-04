@@ -415,7 +415,7 @@ function safeRequestError(reason: unknown, fallback: string): string {
   if (!(reason instanceof ApiError)) return fallback;
   if (reason.status === 400) return '输入格式不正确，请核对当前渠道的字段';
   if (reason.status === 401) return '登录状态已失效，请重新登录';
-  if (reason.status === 403) return '当前账号无权操作，或商家状态不可用';
+  if (reason.status === 403) return '当前账号无权操作，或代理商状态不可用';
   if (reason.status === 404) return '通信配置不存在，请刷新后重试';
   if (reason.status === 409) return '配置版本已变化，页面将刷新，请重新操作';
   if (reason.status === 429) return '测试请求过于频繁，请稍后再试';

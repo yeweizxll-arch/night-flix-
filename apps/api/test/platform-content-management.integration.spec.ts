@@ -26,6 +26,7 @@ const tenantCoverId = '018f2f45-7f5e-7e70-b17f-f6e773590107';
 const previewVideoId = '018f2f45-7f5e-7e70-b17f-f6e773590108';
 const tenantVideoId = '018f2f45-7f5e-7e70-b17f-f6e773590109';
 const previewProviderId = '018f2f45-7f5e-7e70-b17f-f6e77359010a';
+const subtitleId = '018f2f45-7f5e-7e70-b17f-f6e77359010b';
 
 function transactionTag(transaction: Transaction): DatabaseTransaction {
   const tag = async (strings: TemplateStringsArray, ...values: unknown[]) => {
@@ -106,6 +107,10 @@ describe('platform content management PostgreSQL workflow', () => {
         '${tenantVideoId}', 'tenant', '${tenantId}', 'video', '${tenantProviderId}',
         'tenant/episode.mp4', 'video/mp4', 2000, 'sha256:${'e'.repeat(64)}',
         'ready', 'ready'
+      ), (
+        '${subtitleId}', 'platform', null, 'file', '${platformProviderId}',
+        'platform/episode-en.vtt', 'text/vtt', 300, 'sha256:${'f'.repeat(64)}',
+        'ready', 'not_required'
       );
     `);
     const databaseService = {
@@ -161,9 +166,21 @@ describe('platform content management PostgreSQL workflow', () => {
       previewSeconds: 15,
       translations: [{ locale: 'en-US', title: 'Episode One' }],
     }, metadata('platform-episode-create-0001'));
+    const track = await library.upsertEpisodeTrack(drama.id, episode.id, {
+      expectedDramaVersion: episode.dramaVersion,
+      isDefault: true,
+      label: 'English',
+      locale: 'en',
+      mediaAssetId: subtitleId,
+      type: 'subtitle',
+    }, metadata('platform-episode-track-upsert-0001'));
+    const detail = await library.getDrama(drama.id);
+    expect(detail.episodes?.[0]?.tracks).toEqual([expect.objectContaining({
+      id: track.id, isDefault: true, label: 'English', locale: 'en', status: 'active',
+    })]);
     const published = await library.publishDrama(
       drama.id,
-      { expectedVersion: episode.dramaVersion },
+      { expectedVersion: track.dramaVersion },
       metadata('platform-drama-publish-0001'),
     );
     expect(published.status).toBe('published');

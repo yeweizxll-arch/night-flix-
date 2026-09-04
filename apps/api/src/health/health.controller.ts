@@ -8,6 +8,7 @@ import {
 import { DatabaseService } from '../database/database.service';
 import { PublicEndpoint } from '../auth/public-endpoint.decorator';
 import { RedisService } from '../redis/redis.service';
+import { resolveApiServiceRole, serviceName } from '../runtime/api-service-role';
 
 @Controller('health')
 @PublicEndpoint()
@@ -22,7 +23,7 @@ export class HealthController {
   @Get()
   getLiveness(): { service: string; status: 'ok'; timestamp: string } {
     return {
-      service: 'drama-saas-api',
+      service: serviceName(resolveApiServiceRole()),
       status: 'ok',
       timestamp: new Date().toISOString(),
     };
@@ -52,7 +53,7 @@ export class HealthController {
 
     return {
       checks: { database: 'ok', redis: 'ok' },
-      service: 'drama-saas-api',
+      service: serviceName(resolveApiServiceRole()),
       status: 'ready',
       timestamp: new Date().toISOString(),
     };

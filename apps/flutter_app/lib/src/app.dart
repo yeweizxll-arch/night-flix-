@@ -13,50 +13,64 @@ const _ink = Color(0xff080911);
 const _purple = Color(0xff7558ff);
 const _pink = Color(0xffff4d8d);
 
+Color _themeColor(dynamic value, Color fallback) {
+  if (value is! String || !RegExp(r'^#[0-9a-fA-F]{6}$').hasMatch(value)) {
+    return fallback;
+  }
+  return Color(0xff000000 | int.parse(value.substring(1), radix: 16));
+}
+
 class DramaApp extends StatelessWidget {
   const DramaApp({super.key, required this.controller});
   final AppController controller;
 
   @override
-  Widget build(BuildContext context) => MaterialApp(
-    title: controller.config.siteName,
-    debugShowCheckedModeBanner: false,
-    theme: ThemeData(
-      brightness: Brightness.dark,
-      scaffoldBackgroundColor: _ink,
-      colorScheme: const ColorScheme.dark(
-        primary: _purple,
-        secondary: _pink,
-        surface: Color(0xff141622),
-      ),
-      fontFamily: 'SF Pro Display',
-      navigationBarTheme: const NavigationBarThemeData(
-        backgroundColor: Color(0xee0c0d14),
-        indicatorColor: Color(0x337558ff),
-        height: 68,
-        labelTextStyle: WidgetStatePropertyAll(
-          TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+  Widget build(BuildContext context) {
+    final primary = _themeColor(
+      controller.config.theme['primaryColor'],
+      _purple,
+    );
+    final accent = _themeColor(controller.config.theme['accentColor'], _pink);
+    return MaterialApp(
+      title: controller.config.siteName,
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        brightness: Brightness.dark,
+        scaffoldBackgroundColor: _ink,
+        colorScheme: ColorScheme.dark(
+          primary: primary,
+          secondary: accent,
+          surface: const Color(0xff141622),
         ),
-      ),
-      inputDecorationTheme: InputDecorationTheme(
-        filled: true,
-        fillColor: const Color(0xff1b1d2a),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: BorderSide.none,
+        fontFamily: 'SF Pro Display',
+        navigationBarTheme: const NavigationBarThemeData(
+          backgroundColor: Color(0xee0c0d14),
+          indicatorColor: Color(0x337558ff),
+          height: 68,
+          labelTextStyle: WidgetStatePropertyAll(
+            TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+          ),
         ),
+        inputDecorationTheme: InputDecorationTheme(
+          filled: true,
+          fillColor: const Color(0xff1b1d2a),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: BorderSide.none,
+          ),
+        ),
+        useMaterial3: true,
       ),
-      useMaterial3: true,
-    ),
-    home: ListenableBuilder(
-      listenable: controller,
-      builder: (context, _) => controller.loading && controller.dramas.isEmpty
-          ? const _LaunchScreen()
-          : controller.error != null && controller.dramas.isEmpty
-          ? _ErrorScreen(message: controller.error!, retry: controller.retry)
-          : AppShell(controller: controller),
-    ),
-  );
+      home: ListenableBuilder(
+        listenable: controller,
+        builder: (context, _) => controller.loading && controller.dramas.isEmpty
+            ? const _LaunchScreen()
+            : controller.error != null && controller.dramas.isEmpty
+            ? _ErrorScreen(message: controller.error!, retry: controller.retry)
+            : AppShell(controller: controller),
+      ),
+    );
+  }
 }
 
 class AppShell extends StatefulWidget {
@@ -167,7 +181,10 @@ class _DramaPageState extends State<DramaPage> {
   Episode? episode;
   VideoPlayerController? video;
   VideoPlayerController? preloadedVideo;
+  VideoPlayerController? dubbingAudio;
   String? preloadedEpisodeId;
+  EpisodeTrack? subtitleTrack;
+  EpisodeTrack? dubbingTrack;
   DramaInteractionSummary? summary;
   bool loading = false;
   bool switching = false;
@@ -175,6 +192,9 @@ class _DramaPageState extends State<DramaPage> {
   bool completedHandled = false;
   String? playbackError;
   double speed = 1;
+  String captionText = '';
+  bool syncingDubbing = false;
+  DateTime lastDubbingSync = DateTime.fromMillisecondsSinceEpoch(0);
 
   @override
   void initState() {
@@ -211,7 +231,7 @@ class _DramaPageState extends State<DramaPage> {
     }
   }
 
-  Future<void> _play() async {
+  Future<void> _play({Duration? resumeAt}) async {
     final selected = episode;
     if (selected == null || widget.controller.session == null) return;
     if (mounted) {
@@ -226,10 +246,39 @@ class _DramaPageState extends State<DramaPage> {
       final playable = await widget.controller.loadPlayback(selected);
       if (!mounted || playable.playbackUrl == null) return;
       episode = playable;
+      subtitleTrack = _availableTrack(playable, subtitleTrack, 'subtitle');
+      dubbingTrack = _availableTrack(playable, dubbingTrack, 'dubbing');
+      Future<ClosedCaptionFile>? captions;
+      if (subtitleTrack != null) {
+        try {
+          final signed = await widget.controller.loadPlaybackTrack(
+            playable,
+            subtitleTrack!,
+          );
+          captions = widget.controller.repository
+              .downloadTrackText(signed.url)
+              .then<ClosedCaptionFile>(WebVTTCaptionFile.new);
+        } catch (cause) {
+          subtitleTrack = null;
+          if (mounted) _message(context, 'Subtitle unavailable: $cause');
+        }
+      }
       await video?.dispose();
-      final next = preloadedEpisodeId == playable.id && preloadedVideo != null
+      await dubbingAudio?.dispose();
+      dubbingAudio = null;
+      final usePreloaded =
+          subtitleTrack == null &&
+          preloadedEpisodeId == playable.id &&
+          preloadedVideo != null;
+      if (!usePreloaded && preloadedEpisodeId == playable.id) {
+        await preloadedVideo?.dispose();
+      }
+      final next = usePreloaded
           ? preloadedVideo!
-          : VideoPlayerController.networkUrl(Uri.parse(playable.playbackUrl!));
+          : VideoPlayerController.networkUrl(
+              Uri.parse(playable.playbackUrl!),
+              closedCaptionFile: captions,
+            );
       if (preloadedEpisodeId == playable.id) {
         preloadedVideo = null;
         preloadedEpisodeId = null;
@@ -238,8 +287,31 @@ class _DramaPageState extends State<DramaPage> {
       if (!next.value.isInitialized) await next.initialize();
       await next.setLooping(false);
       await next.setPlaybackSpeed(speed);
+      if (resumeAt != null) await next.seekTo(resumeAt);
       next.addListener(_videoListener);
+      if (dubbingTrack != null) {
+        try {
+          final signed = await widget.controller.loadPlaybackTrack(
+            playable,
+            dubbingTrack!,
+          );
+          final audio = VideoPlayerController.networkUrl(Uri.parse(signed.url));
+          await audio.initialize();
+          await audio.setLooping(false);
+          await audio.setPlaybackSpeed(speed);
+          await audio.seekTo(next.value.position);
+          await next.setVolume(0);
+          dubbingAudio = audio;
+        } catch (cause) {
+          dubbingTrack = null;
+          await next.setVolume(1);
+          if (mounted) _message(context, 'Dubbing unavailable: $cause');
+        }
+      } else {
+        await next.setVolume(1);
+      }
       await next.play();
+      await dubbingAudio?.play();
       unawaited(_preloadNext());
       if (mounted) setState(() {});
     } catch (cause) {
@@ -251,9 +323,15 @@ class _DramaPageState extends State<DramaPage> {
 
   void _videoListener() {
     final current = video;
-    if (current == null || completedHandled || !current.value.isInitialized) {
+    if (current == null || !current.value.isInitialized) {
       return;
     }
+    final nextCaption = current.value.caption.text;
+    if (nextCaption != captionText && mounted) {
+      setState(() => captionText = nextCaption);
+    }
+    _syncDubbing(current);
+    if (completedHandled) return;
     final duration = current.value.duration;
     if (duration <= Duration.zero ||
         current.value.position < duration - const Duration(milliseconds: 250)) {
@@ -265,6 +343,29 @@ class _DramaPageState extends State<DramaPage> {
     } else {
       _advanceEpisode();
     }
+  }
+
+  void _syncDubbing(VideoPlayerController current) {
+    final audio = dubbingAudio;
+    if (audio == null || syncingDubbing || !audio.value.isInitialized) return;
+    final now = DateTime.now();
+    if (now.difference(lastDubbingSync) < const Duration(milliseconds: 750)) {
+      return;
+    }
+    lastDubbingSync = now;
+    final drift = (audio.value.position - current.value.position).abs();
+    syncingDubbing = true;
+    Future<void>(() async {
+      if (drift > const Duration(milliseconds: 300)) {
+        await audio.seekTo(current.value.position);
+      }
+      if (current.value.isPlaying && !audio.value.isPlaying) {
+        await audio.play();
+      }
+      if (!current.value.isPlaying && audio.value.isPlaying) {
+        await audio.pause();
+      }
+    }).whenComplete(() => syncingDubbing = false);
   }
 
   Future<void> _preloadNext() async {
@@ -307,6 +408,8 @@ class _DramaPageState extends State<DramaPage> {
     final next = drama.episodes.elementAtOrNull(index + 1);
     if (next == null) return;
     episode = next;
+    subtitleTrack = null;
+    dubbingTrack = null;
     await _play();
   }
 
@@ -314,6 +417,7 @@ class _DramaPageState extends State<DramaPage> {
   void dispose() {
     video?.dispose();
     preloadedVideo?.dispose();
+    dubbingAudio?.dispose();
     super.dispose();
   }
 
@@ -324,11 +428,10 @@ class _DramaPageState extends State<DramaPage> {
     return Stack(
       fit: StackFit.expand,
       children: [
-        _Backdrop(palette: drama.palette),
+        _CoverImage(controller: widget.controller, drama: drama),
         if (video?.value.isInitialized == true)
           GestureDetector(
-            onTap: () =>
-                video!.value.isPlaying ? video!.pause() : video!.play(),
+            onTap: _togglePlayback,
             child: FittedBox(
               fit: BoxFit.cover,
               child: SizedBox(
@@ -348,6 +451,21 @@ class _DramaPageState extends State<DramaPage> {
             ),
           ),
         ),
+        if (captionText.isNotEmpty)
+          Positioned(
+            left: 28,
+            right: 28,
+            bottom: 168,
+            child: ClosedCaption(
+              text: captionText,
+              textStyle: const TextStyle(
+                color: Colors.white,
+                fontSize: 17,
+                fontWeight: FontWeight.w600,
+                backgroundColor: Color(0x99000000),
+              ),
+            ),
+          ),
         SafeArea(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(18, 8, 12, 90),
@@ -489,6 +607,17 @@ class _DramaPageState extends State<DramaPage> {
             child: Chip(label: Text('${speed}x')),
           ),
         ),
+        Positioned(
+          top: MediaQuery.paddingOf(context).top + 58,
+          right: 78,
+          child: IconButton.filledTonal(
+            tooltip: 'Subtitles and dubbing',
+            onPressed: episode?.tracks.isEmpty == false
+                ? () => _showTracks(context)
+                : null,
+            icon: const Icon(Icons.translate),
+          ),
+        ),
         if (switching) const Center(child: CircularProgressIndicator()),
         if (playbackError != null)
           Center(
@@ -506,7 +635,23 @@ class _DramaPageState extends State<DramaPage> {
                 final authenticated = await _requireLogin(context, 'Unlock');
                 if (!context.mounted) return;
                 if (authenticated) {
-                  _message(context, 'Purchase options loaded');
+                  try {
+                    final selected = episode;
+                    if (selected == null) return;
+                    final targetType = selected.pointsAmount != null
+                        ? 'episode'
+                        : 'drama';
+                    final targetId = targetType == 'episode'
+                        ? selected.id
+                        : drama.id;
+                    await widget.controller.unlockWithPoints(
+                      targetType,
+                      targetId,
+                    );
+                    await _play();
+                  } catch (cause) {
+                    if (context.mounted) _message(context, cause.toString());
+                  }
                 }
               },
               watchAd: () => _watchAdUnlock(context),
@@ -525,6 +670,57 @@ class _DramaPageState extends State<DramaPage> {
           ),
       ],
     );
+  }
+
+  Future<void> _togglePlayback() async {
+    final current = video;
+    if (current == null) return;
+    if (current.value.isPlaying) {
+      await current.pause();
+      await dubbingAudio?.pause();
+    } else {
+      await current.play();
+      await dubbingAudio?.play();
+    }
+  }
+
+  EpisodeTrack? _availableTrack(
+    Episode value,
+    EpisodeTrack? current,
+    String type,
+  ) {
+    final candidates = value.tracks
+        .where((track) => track.type == type)
+        .toList();
+    if (current != null) {
+      final selected = candidates
+          .where((track) => track.id == current.id)
+          .firstOrNull;
+      if (selected != null) return selected;
+    }
+    return candidates.where((track) => track.isDefault).firstOrNull;
+  }
+
+  Future<void> _showTracks(BuildContext context) async {
+    final selected = episode;
+    if (selected == null) return;
+    final result =
+        await showModalBottomSheet<
+          ({EpisodeTrack? dubbing, EpisodeTrack? subtitle})
+        >(
+          context: context,
+          showDragHandle: true,
+          builder: (context) => _TrackPicker(
+            dubbing: dubbingTrack,
+            episode: selected,
+            subtitle: subtitleTrack,
+          ),
+        );
+    if (result == null || !mounted) return;
+    final position = video?.value.position;
+    subtitleTrack = result.subtitle;
+    dubbingTrack = result.dubbing;
+    await _play(resumeAt: position);
   }
 
   Future<bool> _requireLogin(BuildContext context, String action) async {
@@ -777,6 +973,98 @@ class _DramaPageState extends State<DramaPage> {
   );
 }
 
+class _TrackPicker extends StatefulWidget {
+  const _TrackPicker({
+    required this.dubbing,
+    required this.episode,
+    required this.subtitle,
+  });
+  final EpisodeTrack? dubbing;
+  final Episode episode;
+  final EpisodeTrack? subtitle;
+
+  @override
+  State<_TrackPicker> createState() => _TrackPickerState();
+}
+
+class _TrackPickerState extends State<_TrackPicker> {
+  EpisodeTrack? dubbing;
+  EpisodeTrack? subtitle;
+
+  @override
+  void initState() {
+    super.initState();
+    dubbing = widget.dubbing;
+    subtitle = widget.subtitle;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final subtitles = widget.episode.tracks.where((track) => track.isSubtitle);
+    final dubbings = widget.episode.tracks.where((track) => track.isDubbing);
+    return SafeArea(
+      child: ListView(
+        shrinkWrap: true,
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+        children: [
+          Text('Subtitles', style: Theme.of(context).textTheme.titleLarge),
+          RadioGroup<String?>(
+            groupValue: subtitle?.id,
+            onChanged: (id) => setState(() {
+              subtitle = id == null
+                  ? null
+                  : subtitles.firstWhere((track) => track.id == id);
+            }),
+            child: Column(
+              children: [
+                const RadioListTile<String?>(title: Text('Off'), value: null),
+                ...subtitles.map(
+                  (track) => RadioListTile<String?>(
+                    title: Text(track.label),
+                    subtitle: Text(track.locale),
+                    value: track.id,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 32),
+          Text('Dubbing', style: Theme.of(context).textTheme.titleLarge),
+          RadioGroup<String?>(
+            groupValue: dubbing?.id,
+            onChanged: (id) => setState(() {
+              dubbing = id == null
+                  ? null
+                  : dubbings.firstWhere((track) => track.id == id);
+            }),
+            child: Column(
+              children: [
+                const RadioListTile<String?>(
+                  title: Text('Original audio'),
+                  value: null,
+                ),
+                ...dubbings.map(
+                  (track) => RadioListTile<String?>(
+                    title: Text(track.label),
+                    subtitle: Text(track.locale),
+                    value: track.id,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          FilledButton(
+            onPressed: () =>
+                Navigator.pop(context, (dubbing: dubbing, subtitle: subtitle)),
+            child: const Text('Apply'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class TheaterScreen extends StatelessWidget {
   const TheaterScreen({super.key, required this.controller});
   final AppController controller;
@@ -829,7 +1117,7 @@ class TheaterScreen extends StatelessWidget {
                   Expanded(
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(16),
-                      child: _Backdrop(palette: drama.palette),
+                      child: _CoverImage(controller: controller, drama: drama),
                     ),
                   ),
                   const SizedBox(height: 9),
@@ -871,45 +1159,46 @@ class _RewardsScreenState extends State<RewardsScreen> {
           style: TextStyle(fontSize: 32, fontWeight: FontWeight.w800),
         ),
         const SizedBox(height: 18),
-        Container(
-          padding: const EdgeInsets.all(22),
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(colors: [_purple, _pink]),
-            borderRadius: BorderRadius.circular(22),
-          ),
-          child: const Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Daily bonus',
-                style: TextStyle(fontSize: 14, color: Colors.white70),
-              ),
-              SizedBox(height: 4),
-              Text(
-                'Watch and earn coins',
-                style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
-              ),
-            ],
+        FutureBuilder<PointWallet>(
+          future: widget.controller.session == null
+              ? null
+              : widget.controller.wallet(),
+          builder: (context, snapshot) => Container(
+            padding: const EdgeInsets.all(22),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(colors: [_purple, _pink]),
+              borderRadius: BorderRadius.circular(22),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Coin balance',
+                  style: TextStyle(fontSize: 14, color: Colors.white70),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  widget.controller.session == null
+                      ? 'Sign in to view'
+                      : snapshot.hasError
+                      ? 'Unavailable'
+                      : snapshot.data?.balancePoints ?? '…',
+                  style: const TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
         const SizedBox(height: 26),
-        _rewardTile(
-          Icons.play_circle_fill,
-          'Watch a rewarded video',
-          '+5 coins',
-          () => _message(context, 'Rewarded ad placement requested'),
-        ),
-        _rewardTile(
-          Icons.calendar_month,
-          'Daily check-in',
-          '+2 coins',
-          () => _message(context, 'Checked in'),
-        ),
-        _rewardTile(
-          Icons.person_add_alt_1,
-          'Invite a friend',
-          '+20 coins',
-          () => _message(context, 'Invite link copied'),
+        const ListTile(
+          leading: Icon(Icons.play_circle_fill),
+          title: Text('Rewarded episode unlocks'),
+          subtitle: Text(
+            'Watch an ad on a locked episode to unlock that episode directly.',
+          ),
         ),
         const SizedBox(height: 24),
         FilledButton(
@@ -921,46 +1210,7 @@ class _RewardsScreenState extends State<RewardsScreen> {
   );
 
   Future<void> _openStore(BuildContext context) async {
-    if (widget.controller.session == null &&
-        !await _showLogin(
-          context,
-          widget.controller,
-          reason: 'Purchases require an account',
-        )) {
-      return;
-    }
-    if (!context.mounted) return;
-    final ids = widget.controller.config.storeProducts.values
-        .whereType<String>()
-        .toSet();
-    if (ids.isEmpty) {
-      _message(context, 'Store products are not configured for this tenant');
-      return;
-    }
-    final response = await InAppPurchase.instance.queryProductDetails(ids);
-    if (!context.mounted) return;
-    showModalBottomSheet<void>(
-      context: context,
-      builder: (context) => ListView(
-        padding: const EdgeInsets.all(20),
-        children: [
-          const Text(
-            'Coin Store',
-            style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-          ),
-          ...response.productDetails.map(
-            (product) => ListTile(
-              title: Text(product.title),
-              subtitle: Text(product.description),
-              trailing: Text(product.price),
-              onTap: () => InAppPurchase.instance.buyConsumable(
-                purchaseParam: PurchaseParam(productDetails: product),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
+    await _openStoreForController(context, widget.controller);
   }
 }
 
@@ -1003,8 +1253,8 @@ class LibraryScreen extends StatelessWidget {
             Expanded(
               child: TabBarView(
                 children: [
-                  _DramaList(items: watched),
-                  _DramaList(items: saved),
+                  _DramaList(controller: controller, items: watched),
+                  _DramaList(controller: controller, items: saved),
                 ],
               ),
             ),
@@ -1065,16 +1315,19 @@ class ProfileScreen extends StatelessWidget {
           Icons.workspace_premium_outlined,
           'Membership',
           'Plans and benefits',
+          onTap: () => _openStoreForController(context, controller),
         ),
         _profileTile(
           Icons.monetization_on_outlined,
           'Coins',
           'Balance and transactions',
+          onTap: () => _showWallet(context, controller),
         ),
         _profileTile(
           Icons.notifications_none,
           'Messages',
           'Updates and replies',
+          onTap: () => _showInbox(context, controller),
         ),
         _profileTile(
           Icons.language,
@@ -1122,6 +1375,7 @@ class DramaSearch extends SearchDelegate<void> {
   Widget _results() {
     final lowered = query.toLowerCase();
     return _DramaList(
+      controller: controller,
       items: controller.dramas
           .where(
             (drama) =>
@@ -1134,7 +1388,8 @@ class DramaSearch extends SearchDelegate<void> {
 }
 
 class _DramaList extends StatelessWidget {
-  const _DramaList({required this.items});
+  const _DramaList({required this.controller, required this.items});
+  final AppController controller;
   final List<Drama> items;
   @override
   Widget build(BuildContext context) => items.isEmpty
@@ -1157,7 +1412,7 @@ class _DramaList extends StatelessWidget {
                   height: 112,
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(12),
-                    child: _Backdrop(palette: drama.palette),
+                    child: _CoverImage(controller: controller, drama: drama),
                   ),
                 ),
                 const SizedBox(width: 14),
@@ -1190,6 +1445,30 @@ class _DramaList extends StatelessWidget {
             );
           },
         );
+}
+
+class _CoverImage extends StatelessWidget {
+  const _CoverImage({required this.controller, required this.drama});
+  final AppController controller;
+  final Drama drama;
+
+  @override
+  Widget build(BuildContext context) {
+    final mediaId = drama.coverMediaId;
+    if (mediaId == null) return _Backdrop(palette: drama.palette);
+    return FutureBuilder<String?>(
+      future: controller.assetUrl(mediaId),
+      builder: (context, snapshot) {
+        final url = snapshot.data;
+        if (url == null) return _Backdrop(palette: drama.palette);
+        return Image.network(
+          url,
+          fit: BoxFit.cover,
+          errorBuilder: (_, _, _) => _Backdrop(palette: drama.palette),
+        );
+      },
+    );
+  }
 }
 
 class _Backdrop extends StatelessWidget {
@@ -1300,7 +1579,7 @@ class _LaunchScreen extends StatelessWidget {
           ),
           SizedBox(height: 12),
           Text(
-            'SHANCHUANG',
+            'NIGHT FLIX',
             style: TextStyle(
               fontSize: 22,
               fontWeight: FontWeight.w900,
@@ -1373,23 +1652,6 @@ Widget _action(IconData icon, String label, VoidCallback action) => Padding(
         style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
       ),
     ],
-  ),
-);
-
-Widget _rewardTile(
-  IconData icon,
-  String title,
-  String subtitle,
-  VoidCallback action,
-) => Card(
-  child: ListTile(
-    leading: CircleAvatar(
-      backgroundColor: const Color(0x337558ff),
-      child: Icon(icon, color: _purple),
-    ),
-    title: Text(title),
-    subtitle: Text(subtitle),
-    trailing: FilledButton.tonal(onPressed: action, child: const Text('Claim')),
   ),
 );
 
@@ -1473,35 +1735,6 @@ Future<bool> _showLogin(
               },
               child: const Text('Continue with email'),
             ),
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 14),
-              child: Row(
-                children: [
-                  Expanded(child: Divider()),
-                  Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 12),
-                    child: Text('or'),
-                  ),
-                  Expanded(child: Divider()),
-                ],
-              ),
-            ),
-            OutlinedButton.icon(
-              onPressed: () => _message(
-                context,
-                'Google login needs this agent\'s OAuth client ID',
-              ),
-              icon: const Icon(Icons.g_mobiledata),
-              label: const Text('Continue with Google'),
-            ),
-            OutlinedButton.icon(
-              onPressed: () => _message(
-                context,
-                'Apple login needs this agent\'s Services ID',
-              ),
-              icon: const Icon(Icons.apple),
-              label: const Text('Continue with Apple'),
-            ),
           ],
         ),
       ),
@@ -1539,6 +1772,176 @@ void _languageSheet(BuildContext context, AppController controller) =>
         ],
       ),
     );
+
+Future<void> _openStoreForController(
+  BuildContext context,
+  AppController controller,
+) async {
+  if (controller.session == null &&
+      !await _showLogin(
+        context,
+        controller,
+        reason: 'Purchases require an account',
+      )) {
+    return;
+  }
+  if (!context.mounted) return;
+  if (!controller.config.inAppPurchasesEnabled) {
+    _message(
+      context,
+      'Purchases are unavailable until this brand finishes secure store verification',
+    );
+    return;
+  }
+  final ids = controller.config.storeProducts.values
+      .whereType<String>()
+      .toSet();
+  if (ids.isEmpty) {
+    _message(context, 'Store products are not configured for this tenant');
+    return;
+  }
+  final available = await InAppPurchase.instance.isAvailable();
+  if (!available) {
+    if (context.mounted) _message(context, 'The App Store is unavailable');
+    return;
+  }
+  final response = await InAppPurchase.instance.queryProductDetails(ids);
+  if (!context.mounted) return;
+  await showModalBottomSheet<void>(
+    context: context,
+    builder: (context) => ListView(
+      padding: const EdgeInsets.all(20),
+      children: [
+        const Text(
+          'Store',
+          style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+        ),
+        if (response.notFoundIDs.isNotEmpty)
+          Text(
+            'Unavailable products: ${response.notFoundIDs.join(', ')}',
+            style: const TextStyle(color: Colors.orangeAccent),
+          ),
+        ...response.productDetails.map(
+          (product) => ListTile(
+            title: Text(product.title),
+            subtitle: Text(product.description),
+            trailing: Text(product.price),
+            onTap: () => InAppPurchase.instance.buyConsumable(
+              purchaseParam: PurchaseParam(productDetails: product),
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+Future<void> _showWallet(BuildContext context, AppController controller) async {
+  if (controller.session == null && !await _showLogin(context, controller)) {
+    return;
+  }
+  if (!context.mounted) return;
+  try {
+    final wallet = await controller.wallet();
+    if (!context.mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Coin balance'),
+        content: Text(
+          wallet.balancePoints,
+          style: const TextStyle(fontSize: 30, fontWeight: FontWeight.bold),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  } catch (cause) {
+    if (context.mounted) _message(context, cause.toString());
+  }
+}
+
+Future<void> _showInbox(BuildContext context, AppController controller) async {
+  if (controller.session == null && !await _showLogin(context, controller)) {
+    return;
+  }
+  if (!context.mounted) return;
+  try {
+    var items = await controller.inbox();
+    if (!context.mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => SizedBox(
+          height: MediaQuery.sizeOf(context).height * .72,
+          child: Column(
+            children: [
+              const Padding(
+                padding: EdgeInsets.all(18),
+                child: Text(
+                  'Messages',
+                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                ),
+              ),
+              Expanded(
+                child: items.isEmpty
+                    ? const Center(child: Text('No messages'))
+                    : ListView.builder(
+                        itemCount: items.length,
+                        itemBuilder: (context, index) {
+                          final item = items[index];
+                          return ListTile(
+                            leading: Icon(
+                              item.status == 'unread'
+                                  ? Icons.mark_email_unread
+                                  : Icons.drafts_outlined,
+                            ),
+                            title: Text(
+                              item.title,
+                              style: TextStyle(
+                                fontWeight: item.status == 'unread'
+                                    ? FontWeight.bold
+                                    : FontWeight.normal,
+                              ),
+                            ),
+                            subtitle: Text(
+                              item.body,
+                              maxLines: 3,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            onTap: item.status == 'unread'
+                                ? () async {
+                                    await controller.markMessageRead(item.id);
+                                    final changed = InboxMessage(
+                                      body: item.body,
+                                      id: item.id,
+                                      status: 'read',
+                                      title: item.title,
+                                    );
+                                    final updated = [...items];
+                                    updated[index] = changed;
+                                    setState(() => items = updated);
+                                  }
+                                : null,
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  } catch (cause) {
+    if (context.mounted) _message(context, cause.toString());
+  }
+}
 
 void _message(BuildContext context, String value) =>
     ScaffoldMessenger.of(context).showSnackBar(

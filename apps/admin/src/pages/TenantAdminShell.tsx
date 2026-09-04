@@ -15,9 +15,13 @@ import {
   MailOutlined,
   ShareAltOutlined,
   UsergroupAddOutlined,
+  LogoutOutlined,
+  MenuOutlined,
 } from '@ant-design/icons';
 import {
+  Avatar,
   Button,
+  Drawer,
   Layout,
   Menu,
   Result,
@@ -26,7 +30,7 @@ import {
   Typography,
   type MenuProps,
 } from 'antd';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import type { AuthPrincipal } from '../auth/AuthProvider';
 import { useAuth } from '../auth/AuthProvider';
@@ -50,6 +54,27 @@ import { TenantLegalPrivacyPage } from './TenantLegalPrivacyPage';
 import { PublicDramaPoolPage } from './PublicDramaPoolPage';
 
 const { Content, Header, Sider } = Layout;
+
+const pageTitles: Record<string, string> = {
+  'audit-logs': '审计日志',
+  catalog: '商品定价',
+  communications: '邮箱与短信',
+  community: '社区治理',
+  content: '内容管理',
+  customers: '用户管理',
+  dashboard: '经营概览',
+  finance: '余额与提现',
+  'legal-privacy': '法律与隐私',
+  notifications: '通知运营',
+  orders: '订单管理',
+  payments: '支付设置',
+  'public-pool': '公共剧池与 App',
+  referrals: '一级分销',
+  roles: '角色管理',
+  'site-settings': '站点与域名',
+  staff: '员工账号',
+  storage: '对象存储',
+};
 
 export function ScopedAdminShell({ principal }: { principal: AuthPrincipal }) {
   const { logout } = useAuth();
@@ -83,7 +108,8 @@ export function ScopedAdminShell({ principal }: { principal: AuthPrincipal }) {
     'tenant.legal.read',
     'tenant.privacy_request.read',
   ].some((permission) => principal.permissions.includes(permission));
-  const [activePage, setActivePage] = useState('dashboard');
+  const [activePage, setActivePage] = useState(() => readInitialPage());
+  const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
   const navigation = useMemo<MenuProps['items']>(() => {
     const items: NonNullable<MenuProps['items']> = [
       canReadAnalytics
@@ -211,34 +237,86 @@ export function ScopedAdminShell({ principal }: { principal: AuthPrincipal }) {
     canOpenLegalPrivacy,
   ]);
 
+  useEffect(() => {
+    if (effectivePage && effectivePage !== activePage) {
+      setActivePage(effectivePage);
+    }
+  }, [activePage, effectivePage]);
+
+  function openPage(page: string): void {
+    setActivePage(page);
+    setMobileNavigationOpen(false);
+    const url = new URL(window.location.href);
+    url.searchParams.set('page', page);
+    window.history.replaceState(null, '', url);
+  }
+
+  const navigationMenu = (
+    <Menu
+      className="app-menu"
+      defaultOpenKeys={['security']}
+      items={navigation}
+      mode="inline"
+      onClick={({ key }) => openPage(key)}
+      selectedKeys={effectivePage ? [effectivePage] : []}
+      theme="dark"
+    />
+  );
+
   return (
     <Layout className="app-shell tenant-admin-shell">
-      <Sider className="app-sider" width={240}>
+      <Sider className="app-sider" width={248}>
         <div className="brand-block">
-          <div className="brand-mark">D</div>
+          <div className="brand-mark">NF</div>
           <div>
-            <div className="brand-name">Drama Cloud</div>
-            <div className="brand-caption">商家管理后台</div>
+            <div className="brand-name">Night Flix</div>
+            <div className="brand-caption">代理商工作台</div>
           </div>
         </div>
-        <Menu
-          className="app-menu"
-          defaultOpenKeys={['security']}
-          items={navigation}
-          mode="inline"
-          onClick={({ key }) => setActivePage(key)}
-          selectedKeys={effectivePage ? [effectivePage] : []}
-          theme="dark"
-        />
+        <div className="navigation-caption">业务管理</div>
+        {navigationMenu}
       </Sider>
       <Layout>
         <Header className="app-header">
-          <Space size={12}>
-            <Tag color="blue">商家空间</Tag>
-            <Typography.Text type="secondary">{principal.displayName}</Typography.Text>
-            <Button size="small" onClick={() => void logout()}>退出</Button>
+          <div className="app-header-context">
+            <Button
+              aria-label="打开导航"
+              className="mobile-menu-button"
+              icon={<MenuOutlined />}
+              onClick={() => setMobileNavigationOpen(true)}
+              type="text"
+            />
+            <div>
+              <div className="header-eyebrow">代理商工作台</div>
+              <div className="header-page-title">{pageTitles[effectivePage ?? ''] ?? '管理后台'}</div>
+            </div>
+          </div>
+          <Space className="app-header-account" size={12}>
+            <Tag className="environment-tag" color="blue">代理商空间</Tag>
+            <Avatar className="account-avatar" size={30}>{principal.displayName.slice(0, 1)}</Avatar>
+            <Typography.Text className="account-name">{principal.displayName}</Typography.Text>
+            <Button icon={<LogoutOutlined />} size="small" onClick={() => void logout()}>退出</Button>
           </Space>
         </Header>
+        <Drawer
+          className="mobile-navigation-drawer"
+          closable={false}
+          onClose={() => setMobileNavigationOpen(false)}
+          open={mobileNavigationOpen}
+          placement="left"
+          styles={{ body: { padding: 0 } }}
+          width={280}
+        >
+          <div className="brand-block">
+            <div className="brand-mark">NF</div>
+            <div>
+              <div className="brand-name">Night Flix</div>
+              <div className="brand-caption">代理商工作台</div>
+            </div>
+          </div>
+          <div className="navigation-caption">业务管理</div>
+          {navigationMenu}
+        </Drawer>
         <Content className="app-content">
           {effectivePage === 'dashboard' ? (
             <AnalyticsDashboardPage
@@ -253,7 +331,7 @@ export function ScopedAdminShell({ principal }: { principal: AuthPrincipal }) {
           ) : effectivePage === 'storage' ? (
             <StorageProviderPage
               apiBase="/api/v1/tenant/storage/providers"
-              description="管理当前商家的私有存储，并查看总后台启用的公共存储。"
+              description="管理当前代理商的私有存储，并查看总后台启用的公共存储。"
               managePermission="tenant.storage.manage"
               title="对象存储"
             />
@@ -266,7 +344,7 @@ export function ScopedAdminShell({ principal }: { principal: AuthPrincipal }) {
               platformScope={false}
               readPermission="tenant.interaction.read"
               sensitiveWordPermission="tenant.sensitive_word.manage"
-              title="商家社区治理"
+              title="代理商社区治理"
             />
           ) : effectivePage === 'notifications' ? (
             <TenantNotificationPage />
@@ -281,7 +359,7 @@ export function ScopedAdminShell({ principal }: { principal: AuthPrincipal }) {
               readPermission="tenant.customer.read"
               scope="tenant"
               sessionRevokePermission="tenant.customer.session_revoke"
-              title="商家用户管理"
+              title="代理商用户管理"
             />
           ) : effectivePage === 'referrals' ? (
             <TenantReferralPage />
@@ -292,7 +370,7 @@ export function ScopedAdminShell({ principal }: { principal: AuthPrincipal }) {
           ) : effectivePage === 'payments' ? (
             <PaymentSettingsPage
               apiBase="/api/v1/tenant/commerce/payments"
-              description="选择平台公共代收或商家独立直收；真实渠道需先安装对应支付适配器。"
+              description="选择平台公共代收或代理商独立直收；真实渠道需先安装对应支付适配器。"
               managePermission="commerce.payment.manage"
               scope="tenant"
               title="支付与收款路由"
@@ -308,27 +386,31 @@ export function ScopedAdminShell({ principal }: { principal: AuthPrincipal }) {
               readPermission="tenant.staff.read"
               roleReadPermission="tenant.role.read"
               sessionRevokePermission="tenant.staff.session_revoke"
-              title="商家员工账号"
+              title="代理商员工账号"
             />
           ) : effectivePage === 'roles' ? (
             <RoleManagementPage
               apiBase="/api/v1/tenant/access"
-              description="管理当前商家的自定义角色；系统角色只读，当前数据范围仅支持 all。"
+              description="管理当前代理商的自定义角色；系统角色只读，当前数据范围仅支持 all。"
               managePermission="tenant.role.manage"
-              title="商家角色权限"
+              title="代理商角色权限"
             />
           ) : effectivePage === 'audit-logs' ? (
             <AuditLogPage
               allowTenantFilter={false}
               apiBase="/api/v1/tenant/audit-logs"
-              description="查询当前商家的管理动作和资源变更。"
-              title="商家审计日志"
+              description="查询当前代理商的管理动作和资源变更。"
+              title="代理商审计日志"
             />
           ) : (
-            <Result status="403" title="当前账号没有可用的商家后台功能" />
+            <Result status="403" title="当前账号没有可用的代理商后台功能" />
           )}
         </Content>
       </Layout>
     </Layout>
   );
+}
+
+function readInitialPage(): string {
+  return new URLSearchParams(window.location.search).get('page')?.trim() || 'dashboard';
 }

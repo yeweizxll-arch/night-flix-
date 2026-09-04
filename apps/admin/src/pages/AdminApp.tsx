@@ -20,7 +20,7 @@ export function AdminApp() {
         status="403"
         title={ADMIN_SCOPE === 'platform'
           ? '当前账号不能进入总后台'
-          : '当前账号不能进入商家后台'}
+          : '当前账号不能进入代理商后台'}
         extra={<Button onClick={() => void logout()}>退出登录</Button>}
       />
     );

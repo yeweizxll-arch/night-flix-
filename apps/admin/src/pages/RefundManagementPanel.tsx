@@ -214,7 +214,7 @@ export function RefundManagementPanel(props: {
         <Alert
           className="page-alert"
           description="退款金额完全由服务端已支付订单决定；处理中或需人工对账的订单不可重复发起。"
-          message={props.mode === 'platform' ? '平台只处理平台代收订单' : '商家只处理独立直收订单'}
+          message={props.mode === 'platform' ? '平台只处理平台代收订单' : '代理商只处理独立直收订单'}
           showIcon
           type="info"
         />
@@ -233,7 +233,7 @@ export function RefundManagementPanel(props: {
             ) },
             { dataIndex: 'orderId', title: '订单 UUID', render: (value: string) => <Typography.Text copyable>{value}</Typography.Text> },
             { key: 'amount', title: '服务端金额', render: (_, record) => formatMoney(record.amountMinor, record.currency) },
-            { dataIndex: 'collectionMode', title: '收款模式', render: (value: CollectionMode) => value === 'platform_collect' ? '平台代收' : '商家直收' },
+            { dataIndex: 'collectionMode', title: '收款模式', render: (value: CollectionMode) => value === 'platform_collect' ? '平台代收' : '代理商直收' },
             { dataIndex: 'status', title: '状态', render: (value: RefundStatus) => <RefundStatusTag status={value} /> },
             { dataIndex: 'createdAt', title: '发起时间', render: formatDateTime, width: 180 },
             { key: 'action', title: '操作', width: 80, render: (_, record) => <Button size="small" onClick={() => openDetail(record.id)}>详情</Button> },
@@ -290,7 +290,7 @@ function RefundDetail({ record }: { record: RefundRecord }) {
         <Descriptions.Item label="订单 UUID" span={2}><Typography.Text copyable>{record.orderId}</Typography.Text></Descriptions.Item>
         <Descriptions.Item label="状态"><RefundStatusTag status={record.status} /></Descriptions.Item>
         <Descriptions.Item label="类型">{record.fullRefund ? '全额退款' : '—'}</Descriptions.Item>
-        <Descriptions.Item label="收款模式">{record.collectionMode === 'platform_collect' ? '平台代收' : '商家直收'}</Descriptions.Item>
+        <Descriptions.Item label="收款模式">{record.collectionMode === 'platform_collect' ? '平台代收' : '代理商直收'}</Descriptions.Item>
         <Descriptions.Item label="服务端金额"><Typography.Text strong>{formatMoney(record.amountMinor, record.currency)}</Typography.Text></Descriptions.Item>
         <Descriptions.Item label="发起时间" span={2}>{formatDateTime(record.createdAt)}</Descriptions.Item>
         <Descriptions.Item label="原因" span={2}><Typography.Paragraph style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{record.reason}</Typography.Paragraph></Descriptions.Item>

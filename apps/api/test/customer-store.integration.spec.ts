@@ -104,6 +104,12 @@ describe('customer store and wallet read models', () => {
   it('returns only safe bootstrap fields and uses a stable closed-site error', async () => {
     const result = await store.bootstrap(tenantA, {});
     expect(result).toMatchObject({
+      capabilities: {
+        appleSignIn: false,
+        googleSignIn: false,
+        inAppPurchases: false,
+        nativePurchaseReceiptVerification: false,
+      },
       defaultLocale: 'fr-FR',
       iconMediaAssetId: icon,
       logoMediaAssetId: logo,

@@ -306,7 +306,7 @@ export function PlatformFinancePage() {
 
   function confirmRunSettlements(values: SettlementRunFormValues): void {
     modalApi.confirm({
-      content: '系统只会处理已到期的待结算记录，并真实更新商家可用余额。',
+      content: '系统只会处理已到期的待结算记录，并真实更新代理商可用余额。',
       okText: '确认执行',
       onOk: () => runSettlements(values),
       title: '确认手动运行到期结算？',
@@ -399,14 +399,14 @@ export function PlatformFinancePage() {
               onSearch={(value) => {
                 const normalized = value.trim();
                 if (normalized && !UUID_PATTERN.test(normalized)) {
-                  messageApi.error('请输入正确的商家 UUID');
+                  messageApi.error('请输入正确的代理商 UUID');
                   return;
                 }
                 listSequence.current += 1;
                 setWithdrawals([]);
                 setTenantIdFilter(normalized);
               }}
-              placeholder="商家 Tenant UUID"
+              placeholder="代理商 Tenant UUID"
               style={{ width: 310 }}
               value={tenantIdInput}
             />
@@ -435,7 +435,7 @@ export function PlatformFinancePage() {
               },
               {
                 dataIndex: 'tenantId',
-                title: '商家',
+                title: '代理商',
                 render: (value: string) => <Typography.Text copyable>{value}</Typography.Text>,
               },
               {
@@ -511,7 +511,7 @@ export function PlatformFinancePage() {
                 onFinish={confirmRunSettlements}
                 requiredMark={false}
               >
-                <Form.Item label="商家 Tenant UUID（可选）" name="tenantId" rules={[
+                <Form.Item label="代理商 Tenant UUID（可选）" name="tenantId" rules={[
                   { pattern: UUID_PATTERN, message: '请输入正确 UUID' },
                 ]}>
                   <Input maxLength={36} />
@@ -534,9 +534,9 @@ export function PlatformFinancePage() {
               </Form>
             </Col>
             <Col xs={24} xl={12}>
-              <Typography.Title level={5}>商家结算延迟策略</Typography.Title>
+              <Typography.Title level={5}>代理商结算延迟策略</Typography.Title>
               <Typography.Paragraph type="secondary">
-                按商家和币种设置 T+N 天（0–90），再次保存会更新现有策略。
+                按代理商和币种设置 T+N 天（0–90），再次保存会更新现有策略。
               </Typography.Paragraph>
               <Form<SettlementPolicyFormValues>
                 form={policyForm}
@@ -545,8 +545,8 @@ export function PlatformFinancePage() {
                 onFinish={(values) => void savePolicy(values)}
                 requiredMark={false}
               >
-                <Form.Item label="商家 Tenant UUID" name="tenantId" rules={[
-                  { required: true, message: '请输入商家 UUID' },
+                <Form.Item label="代理商 Tenant UUID" name="tenantId" rules={[
+                  { required: true, message: '请输入代理商 UUID' },
                   { pattern: UUID_PATTERN, message: '请输入正确 UUID' },
                 ]}>
                   <Input maxLength={36} />

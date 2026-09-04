@@ -525,7 +525,7 @@ export function TenantFinancePage() {
       >
         <Alert
           className="page-alert"
-          description="收款账户将加密保存，提交成功后商家后台只显示指纹，不回显完整账号。"
+          description="收款账户将加密保存，提交成功后代理商后台只显示指纹，不回显完整账号。"
           message="请仔细核对收款信息"
           showIcon
           type="warning"

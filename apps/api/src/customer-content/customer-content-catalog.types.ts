@@ -33,6 +33,7 @@ export interface CustomerEpisodeCatalogItem {
 }
 
 export interface CustomerEpisodeMediaTrack {
+  id: string;
   isDefault: boolean;
   label: string;
   locale: string;

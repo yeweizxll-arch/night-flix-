@@ -43,6 +43,12 @@ class DramaRepository {
     return Drama.fromJson(await _request(uri), palette: drama.palette);
   }
 
+  Future<String?> assetUrl(String mediaId) async {
+    if (demoMode) return null;
+    return (await _get('/api/v1/customer/assets/$mediaId/url'))['url']
+        as String?;
+  }
+
   Future<Episode> playback(Episode episode, String accessToken) async {
     if (demoMode) return episode;
     final json = await _get(
@@ -50,6 +56,33 @@ class DramaRepository {
       accessToken: accessToken,
     );
     return episode.withPlayback(json);
+  }
+
+  Future<SignedTrack> playbackTrack(
+    Episode episode,
+    EpisodeTrack track,
+    String accessToken,
+  ) async {
+    if (demoMode) return SignedTrack(id: track.id, type: track.type, url: '');
+    return SignedTrack.fromJson(
+      await _get(
+        '/api/v1/customer/playback/episodes/${episode.id}/tracks/${track.id}/url',
+        accessToken: accessToken,
+      ),
+    );
+  }
+
+  Future<String> downloadTrackText(String signedUrl) async {
+    final response = await http
+        .get(Uri.parse(signedUrl))
+        .timeout(const Duration(seconds: 15));
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw ApiException('Subtitle download failed', response.statusCode);
+    }
+    if (response.bodyBytes.length > 5 * 1024 * 1024) {
+      throw const ApiException('Subtitle file is too large', 413);
+    }
+    return utf8.decode(response.bodyBytes);
   }
 
   Future<DramaInteractionSummary> interactionSummary(
@@ -166,6 +199,57 @@ class DramaRepository {
     );
   }
 
+  Future<void> unlockWithPoints(
+    String targetType,
+    String targetId,
+    String accessToken,
+  ) async {
+    if (demoMode) return;
+    await _request(
+      Uri.parse(
+        '$apiBaseUrl/api/v1/customer/commerce/point-unlocks/$targetType/$targetId',
+      ),
+      method: 'POST',
+      payload: const {},
+      accessToken: accessToken,
+      extraHeaders: {'Idempotency-Key': 'point-unlock-$targetType-$targetId'},
+    );
+  }
+
+  Future<PointWallet> wallet(String accessToken) async => demoMode
+      ? const PointWallet(balancePoints: '0')
+      : PointWallet.fromJson(
+          await _get(
+            '/api/v1/customer/wallet/points',
+            accessToken: accessToken,
+          ),
+        );
+
+  Future<List<InboxMessage>> inbox(String accessToken) async {
+    if (demoMode) return const [];
+    final json = await _get(
+      '/api/v1/customer/notifications/inbox?page=1&pageSize=50',
+      accessToken: accessToken,
+    );
+    return (json['items'] as List? ?? const [])
+        .map(
+          (value) =>
+              InboxMessage.fromJson(Map<String, dynamic>.from(value as Map)),
+        )
+        .toList();
+  }
+
+  Future<void> markMessageRead(String messageId, String accessToken) async {
+    if (demoMode) return;
+    await _request(
+      Uri.parse(
+        '$apiBaseUrl/api/v1/customer/notifications/inbox/$messageId/read',
+      ),
+      method: 'POST',
+      accessToken: accessToken,
+    );
+  }
+
   Future<String> rewardedStatus(String challengeId, String accessToken) async =>
       (await _get(
             '/api/v1/customer/rewarded-unlocks/$challengeId',
@@ -183,7 +267,7 @@ class DramaRepository {
       );
     }
     final json = await _post('/api/v1/customer/auth/login', {
-      'deviceLabel': 'Shanchuang Drama App',
+      'deviceLabel': 'Night Flix App',
       'devicePlatform': Platform.isIOS ? 'ios' : 'android',
       'identifier': email.trim(),
       'password': password,
@@ -254,6 +338,7 @@ class AppController extends ChangeNotifier {
   final Set<String> favorites = {};
   final List<String> history = [];
   final Map<String, DramaInteractionSummary> interactions = {};
+  final Map<String, String?> assetUrls = {};
 
   Future<void> initialize() async {
     try {
@@ -301,6 +386,20 @@ class AppController extends ChangeNotifier {
   }
 
   Future<Drama> loadDetail(Drama drama) => repository.detail(drama, locale);
+
+  Future<String?> assetUrl(String mediaId) async {
+    if (assetUrls.containsKey(mediaId)) return assetUrls[mediaId];
+    final value = await repository.assetUrl(mediaId);
+    assetUrls[mediaId] = value;
+    return value;
+  }
+
+  Future<SignedTrack> loadPlaybackTrack(Episode episode, EpisodeTrack track) {
+    if (session == null) {
+      throw const ApiException('Sign in to select a track', 401);
+    }
+    return repository.playbackTrack(episode, track, session!.accessToken);
+  }
 
   Future<Episode> loadPlayback(Episode episode) async {
     if (session == null) {
@@ -385,6 +484,36 @@ class AppController extends ChangeNotifier {
   Future<RewardedUnlockChallenge> createRewardedChallenge(String episodeId) {
     if (session == null) throw const ApiException('Sign in to unlock', 401);
     return repository.createRewardedChallenge(episodeId, session!.accessToken);
+  }
+
+  Future<void> unlockWithPoints(String targetType, String targetId) {
+    if (session == null) throw const ApiException('Sign in to unlock', 401);
+    return repository.unlockWithPoints(
+      targetType,
+      targetId,
+      session!.accessToken,
+    );
+  }
+
+  Future<PointWallet> wallet() {
+    if (session == null) {
+      throw const ApiException('Sign in to view your balance', 401);
+    }
+    return repository.wallet(session!.accessToken);
+  }
+
+  Future<List<InboxMessage>> inbox() {
+    if (session == null) {
+      throw const ApiException('Sign in to view messages', 401);
+    }
+    return repository.inbox(session!.accessToken);
+  }
+
+  Future<void> markMessageRead(String messageId) {
+    if (session == null) {
+      throw const ApiException('Sign in to view messages', 401);
+    }
+    return repository.markMessageRead(messageId, session!.accessToken);
   }
 
   Future<bool> waitForReward(String challengeId) async {

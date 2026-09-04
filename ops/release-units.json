@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "units": {
+    "web": {
+      "dockerTarget": "web-api",
+      "staticDockerTarget": "web-static",
+      "role": "web",
+      "routes": ["/api/v1/customer", "/api/v1/payments/webhooks"],
+      "healthPath": "/api/v1/health/ready"
+    },
+    "worker": {
+      "dockerTarget": "worker",
+      "role": "worker",
+      "routes": [],
+      "healthPath": null
+    },
+    "admin": {
+      "dockerTarget": "admin-api",
+      "staticDockerTarget": "platform-admin-static",
+      "role": "admin",
+      "routes": ["/api/v1/platform"],
+      "staticRoot": "/srv/platform-admin",
+      "healthPath": "/api/v1/health/ready"
+    },
+    "agent": {
+      "dockerTarget": "agent-api",
+      "staticDockerTarget": "tenant-admin-static",
+      "role": "agent",
+      "routes": ["/api/v1/tenant"],
+      "staticRoot": "/srv/tenant-admin",
+      "healthPath": "/api/v1/health/ready"
+    }
+  }
+}

@@ -813,9 +813,9 @@ export function TenantContentListPage() {
       {messageContext}
       <div className="page-heading">
         <div>
-          <Typography.Title level={2}>商家内容管理</Typography.Title>
+          <Typography.Title level={2}>代理商内容管理</Typography.Title>
           <Typography.Text type="secondary">
-            管理本商家的短剧、剧集、分类标签、S3 直传及安全导入导出。
+            管理本代理商的短剧、剧集、分类标签、S3 直传及安全导入导出。
           </Typography.Text>
         </div>
       </div>
@@ -980,16 +980,16 @@ export function TenantContentListPage() {
           <Form.Item label="封面 Media Asset ID（可选）">
             <Space.Compact block>
               <Form.Item name="coverFileId" noStyle>
-                <Input maxLength={36} placeholder="本商家可用、image、ready 的 UUID" />
+                <Input maxLength={36} placeholder="本代理商可用、image、ready 的 UUID" />
               </Form.Item>
               {canCreate ? <Button htmlType="button" onClick={() => setUploadTarget('cover')}>上传图片</Button> : null}
             </Space.Compact>
           </Form.Item>
           <Form.Item label="分类" name="categoryId">
-            <Select allowClear options={taxonomyOptions(categoryOptions)} placeholder="可选商家分类或公共分类" />
+            <Select allowClear options={taxonomyOptions(categoryOptions)} placeholder="可选代理商分类或公共分类" />
           </Form.Item>
           <Form.Item label="标签" name="tagIds">
-            <Select mode="multiple" options={taxonomyOptions(tagOptions)} placeholder="最多 50 个商家或公共标签" />
+            <Select mode="multiple" options={taxonomyOptions(tagOptions)} placeholder="最多 50 个代理商或公共标签" />
           </Form.Item>
           <ScheduleFields />
           <TranslationFields kind="drama" />
@@ -1010,7 +1010,7 @@ export function TenantContentListPage() {
         title={episodeEditor?.episode ? '编辑剧集' : '添加剧集'}
         width={720}
       >
-        <Alert className="page-alert" message="正片与试看必须是两个不同的视频。输入已有 UUID 或分别安全上传；保存时服务端会校验本商家范围与 ready，绝不从正片复制或回退。" showIcon type="info" />
+        <Alert className="page-alert" message="正片与试看必须是两个不同的视频。输入已有 UUID 或分别安全上传；保存时服务端会校验本代理商范围与 ready，绝不从正片复制或回退。" showIcon type="info" />
         <Form form={episodeForm} layout="vertical" onFinish={(values) => void saveEpisode(values)} preserve={false}>
           <Space align="start" wrap>
             <Form.Item label="集数" name="episodeNo" rules={[{ required: true }]}>
@@ -1023,7 +1023,7 @@ export function TenantContentListPage() {
               <InputNumber max={86400} min={0} precision={0} />
             </Form.Item>
           </Space>
-          <Form.Item extra="必填；保存时验证为当前商家可用的 ready 视频。" label="正片 Media Asset ID" required>
+          <Form.Item extra="必填；保存时验证为当前代理商可用的 ready 视频。" label="正片 Media Asset ID" required>
             <Space.Compact block>
               <Form.Item name="mediaAssetId" noStyle rules={[{ required: true }]}>
                 <Input maxLength={36} />
@@ -1084,7 +1084,7 @@ export function TenantContentListPage() {
       <Modal destroyOnHidden footer={null} onCancel={closeDelete} open={Boolean(deleteTarget)} title="确认软删除">
         <Alert className="page-alert" message={deleteTarget?.kind === 'drama'
           ? '发布中或审核中的短剧不能删除。短剧软删除后可在 30 天恢复期内恢复。'
-          : '公共分类/标签只读；商家自有项被短剧引用时不能删除。'} showIcon type="warning" />
+          : '公共分类/标签只读；代理商自有项被短剧引用时不能删除。'} showIcon type="warning" />
         <Form form={deleteForm} layout="vertical" onFinish={(values) => void deleteContent(values)} preserve={false}>
           <Form.Item label="删除原因" name="reason" rules={[{ max: 2000, required: true, whitespace: true }]}>
             <Input.TextArea maxLength={2000} rows={3} showCount />
@@ -1318,13 +1318,13 @@ function TaxonomyList({
         <Space wrap>
           <Space>
             <Switch checked={includeDeleted} onChange={onIncludeDeleted} />
-            <Typography.Text>包含已删除商家项</Typography.Text>
+            <Typography.Text>包含已删除代理商项</Typography.Text>
           </Space>
           <Button loading={loading} onClick={onRetry}>刷新</Button>
         </Space>
         {canManage ? <Button onClick={onCreate} type="primary">创建{taxonomyName(type)}</Button> : null}
       </div>
-      <Alert className="page-alert" message="公共分类和标签可用于短剧，但只能由总后台维护；商家只能修改自己的项目。" showIcon type="info" />
+      <Alert className="page-alert" message="公共分类和标签可用于短剧，但只能由总后台维护；代理商只能修改自己的项目。" showIcon type="info" />
       {error ? <RetryAlert message={error} onRetry={onRetry} /> : null}
       <Table<TaxonomyRecord>
         columns={[
@@ -1334,7 +1334,7 @@ function TaxonomyList({
               <Typography.Text className="secondary-id" type="secondary">{record.code} · {record.id}</Typography.Text>
             </Space>
           ) },
-          { dataIndex: 'ownerType', title: '归属', width: 90, render: (value) => value === 'platform' ? <Tag color="blue">公共</Tag> : <Tag>商家</Tag> },
+          { dataIndex: 'ownerType', title: '归属', width: 90, render: (value) => value === 'platform' ? <Tag color="blue">公共</Tag> : <Tag>代理商</Tag> },
           { dataIndex: 'status', title: '状态', width: 100, render: (value, record) => (
             <Space direction="vertical" size={2}>
               {value === 'active' ? <Tag color="green">启用</Tag> : <Tag>停用</Tag>}
@@ -1507,7 +1507,7 @@ function DramaDetail({
           {editable ? <Button onClick={onAddEpisode} type="primary">添加剧集</Button> : null}
         </div>
         {!editable ? <Alert className="page-alert" message="仅草稿或驳回状态允许编辑剧集；审核中、已发布、已下架或已删除状态只读。" showIcon type="info" /> : null}
-        <Alert className="page-alert" message="媒体列显示绑定状态，不伪造实时转码状态；创建、更新和提审时服务端会重新验证正片与独立试看均为本商家可用的 ready 视频。" showIcon type="info" />
+        <Alert className="page-alert" message="媒体列显示绑定状态，不伪造实时转码状态；创建、更新和提审时服务端会重新验证正片与独立试看均为本代理商可用的 ready 视频。" showIcon type="info" />
         <Table<EpisodeRecord>
           columns={[
             { dataIndex: 'episodeNo', title: '集数', width: 70 },
@@ -1783,7 +1783,7 @@ function TenantMediaUploadModal({
               disabled={Boolean(stage)}
               onChange={setProviderId}
               options={providers.map((provider) => ({
-                label: `${provider.label} · ${provider.ownerType === 'platform' ? '公共只读' : '商家私有'}`,
+                label: `${provider.label} · ${provider.ownerType === 'platform' ? '公共只读' : '代理商私有'}`,
                 value: provider.id,
               }))}
               placeholder="请选择已启用的 S3 Provider"
@@ -1941,7 +1941,7 @@ async function confirmDelete(_: unknown, value: boolean): Promise<void> {
 function contentError(reason: unknown, fallback: string): string {
   if (!(reason instanceof ApiError)) return fallback;
   if (reason.status === 401) return '登录状态已失效，请重新登录';
-  if (reason.status === 403) return '当前账号没有执行该操作的权限，或商家已过期进入只读状态';
+  if (reason.status === 403) return '当前账号没有执行该操作的权限，或代理商已过期进入只读状态';
   if (reason.status === 409) return '数据版本或状态已变化，页面将刷新，请重新操作';
   if ([400, 404].includes(reason.status) && reason.message) return reason.message;
   return fallback;

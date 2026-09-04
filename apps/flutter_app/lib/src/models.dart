@@ -1,49 +1,62 @@
 class AppRuntimeConfig {
   const AppRuntimeConfig({
     required this.admob,
+    required this.capabilities,
     required this.defaultLocale,
     required this.deepLinkHost,
     required this.featureFlags,
     required this.siteName,
     required this.storeProducts,
     required this.supportedLocales,
+    required this.theme,
   });
 
   final Map<String, dynamic> admob;
+  final Map<String, dynamic> capabilities;
   final String defaultLocale;
   final String? deepLinkHost;
   final Map<String, dynamic> featureFlags;
   final String siteName;
   final Map<String, dynamic> storeProducts;
   final List<String> supportedLocales;
+  final Map<String, dynamic> theme;
 
   bool get admobEnabled => admob.isNotEmpty && admob['enabled'] != false;
+  bool get inAppPurchasesEnabled =>
+      capabilities['inAppPurchases'] == true &&
+      capabilities['nativePurchaseReceiptVerification'] == true;
 
   factory AppRuntimeConfig.fromJson(Map<String, dynamic> json) =>
       AppRuntimeConfig(
         admob: Map<String, dynamic>.from(json['admob'] as Map? ?? const {}),
+        capabilities: Map<String, dynamic>.from(
+          json['capabilities'] as Map? ?? const {},
+        ),
         defaultLocale: json['defaultLocale'] as String? ?? 'en-US',
         deepLinkHost: json['deepLinkHost'] as String?,
         featureFlags: Map<String, dynamic>.from(
           json['featureFlags'] as Map? ?? const {},
         ),
-        siteName: json['siteName'] as String? ?? 'Shanchuang Drama',
+        siteName: json['siteName'] as String? ?? 'Night Flix',
         storeProducts: Map<String, dynamic>.from(
           json['storeProducts'] as Map? ?? const {},
         ),
         supportedLocales: List<String>.from(
           json['supportedLocales'] as List? ?? const ['en-US'],
         ),
+        theme: Map<String, dynamic>.from(json['theme'] as Map? ?? const {}),
       );
 
   static const demo = AppRuntimeConfig(
     admob: {},
+    capabilities: {},
     defaultLocale: 'en-US',
     deepLinkHost: null,
     featureFlags: {},
-    siteName: 'Shanchuang Drama',
+    siteName: 'Night Flix',
     storeProducts: {},
     supportedLocales: ['en-US', 'es-ES', 'pt-BR'],
+    theme: {},
   );
 }
 
@@ -94,6 +107,7 @@ class Episode {
     this.pointsAmount,
     this.playbackUrl,
     this.access = 'unknown',
+    this.tracks = const [],
   });
 
   final String id;
@@ -104,6 +118,7 @@ class Episode {
   final int? pointsAmount;
   final String? playbackUrl;
   final String access;
+  final List<EpisodeTrack> tracks;
 
   bool get locked =>
       access == 'locked' || (pointsAmount != null && playbackUrl == null);
@@ -117,6 +132,12 @@ class Episode {
     durationSeconds: json['durationSeconds'] as int? ?? 0,
     previewSeconds: json['previewSeconds'] as int? ?? 0,
     pointsAmount: (json['pointsAmount'] as num?)?.toInt(),
+    tracks: (json['tracks'] as List? ?? const [])
+        .map(
+          (value) =>
+              EpisodeTrack.fromJson(Map<String, dynamic>.from(value as Map)),
+        )
+        .toList(),
   );
 
   Episode withPlayback(Map<String, dynamic> json) => Episode(
@@ -128,6 +149,47 @@ class Episode {
     pointsAmount: pointsAmount,
     playbackUrl: json['url'] as String?,
     access: json['access'] as String? ?? 'full',
+    tracks: tracks,
+  );
+}
+
+class EpisodeTrack {
+  const EpisodeTrack({
+    required this.id,
+    required this.isDefault,
+    required this.label,
+    required this.locale,
+    required this.type,
+  });
+
+  final String id;
+  final bool isDefault;
+  final String label;
+  final String locale;
+  final String type;
+
+  bool get isSubtitle => type == 'subtitle';
+  bool get isDubbing => type == 'dubbing';
+
+  factory EpisodeTrack.fromJson(Map<String, dynamic> json) => EpisodeTrack(
+    id: json['id'] as String,
+    isDefault: json['isDefault'] == true,
+    label: json['label'] as String? ?? '',
+    locale: json['locale'] as String? ?? '',
+    type: json['type'] as String? ?? 'subtitle',
+  );
+}
+
+class SignedTrack {
+  const SignedTrack({required this.id, required this.type, required this.url});
+  final String id;
+  final String type;
+  final String url;
+
+  factory SignedTrack.fromJson(Map<String, dynamic> json) => SignedTrack(
+    id: json['id'] as String,
+    type: json['type'] as String,
+    url: json['url'] as String,
   );
 }
 
@@ -217,4 +279,30 @@ class UserSession {
   final String accessToken;
   final String refreshToken;
   final String email;
+}
+
+class PointWallet {
+  const PointWallet({required this.balancePoints});
+  final String balancePoints;
+  factory PointWallet.fromJson(Map<String, dynamic> json) =>
+      PointWallet(balancePoints: json['balancePoints'] as String? ?? '0');
+}
+
+class InboxMessage {
+  const InboxMessage({
+    required this.body,
+    required this.id,
+    required this.status,
+    required this.title,
+  });
+  final String body;
+  final String id;
+  final String status;
+  final String title;
+  factory InboxMessage.fromJson(Map<String, dynamic> json) => InboxMessage(
+    body: json['body'] as String? ?? '',
+    id: json['id'] as String,
+    status: json['status'] as String? ?? 'unread',
+    title: json['title'] as String? ?? '',
+  );
 }

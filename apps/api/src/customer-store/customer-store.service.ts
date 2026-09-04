@@ -132,10 +132,13 @@ export class CustomerStoreService {
       return {
         capabilities: {
           admob: Object.keys(safeObject(runtime.admob_json)).length > 0,
+          appleSignIn: false,
           commerceCatalog: true,
           customerAuthentication: true,
           entitlements: true,
-          inAppPurchases: Object.keys(safeObject(runtime.store_products_json)).length > 0,
+          googleSignIn: false,
+          inAppPurchases: false,
+          nativePurchaseReceiptVerification: false,
           pointsWallet: true,
         },
         admob: safeObject(runtime.admob_json),

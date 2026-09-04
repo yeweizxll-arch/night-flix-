@@ -5,7 +5,7 @@
   "packageManager": "pnpm@10.33.3",
   "scripts": {
     "admin:bootstrap": "pnpm --filter @drama/api admin:bootstrap",
-    "build": "pnpm -r build",
+    "build": "pnpm --filter '!@drama/mobile' -r build",
     "db:migrate": "pnpm --filter @drama/api db:migrate",
     "dev": "pnpm -r --parallel dev",
     "lint": "pnpm -r lint",

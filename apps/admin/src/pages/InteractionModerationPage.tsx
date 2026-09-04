@@ -169,7 +169,7 @@ export function InteractionModerationPage({
   function applyTenantFilter(): void {
     const value = tenantInput.trim();
     if (value && !UUID_PATTERN.test(value)) {
-      messageApi.error('请输入正确的商家 UUID');
+      messageApi.error('请输入正确的代理商 UUID');
       return;
     }
     queueSequence.current += 1;
@@ -275,7 +275,7 @@ export function InteractionModerationPage({
     },
     ...(platformScope ? [{
       dataIndex: 'tenantId',
-      title: '商家',
+      title: '代理商',
       width: 250,
       render: (value: string) => <Typography.Text copyable>{value}</Typography.Text>,
     }] : []),
@@ -355,8 +355,8 @@ export function InteractionModerationPage({
           {platformScope ? (
             <Input.Search
               allowClear
-              enterButton="筛选商家"
-              placeholder="商家 Tenant UUID"
+              enterButton="筛选代理商"
+              placeholder="代理商 Tenant UUID"
               style={{ width: 360 }}
               value={tenantInput}
               onChange={(event) => {
@@ -426,7 +426,7 @@ export function InteractionModerationPage({
         rowKey="id"
         columns={[
           { dataIndex: 'term', title: '词语', render: (term: string) => <Typography.Text>{term}</Typography.Text> },
-          { dataIndex: 'scope', title: '范围', width: 100, render: (value) => value === 'platform' ? '公共' : '本商家' },
+          { dataIndex: 'scope', title: '范围', width: 100, render: (value) => value === 'platform' ? '公共' : '本代理商' },
           { dataIndex: 'status', title: '状态', width: 90, render: (value) => value === 'active' ? <Tag color="green">启用</Tag> : <Tag>停用</Tag> },
           { dataIndex: 'createdAt', title: '创建时间', width: 180, render: formatDateTime },
           {
@@ -533,7 +533,7 @@ function QueueDetail({ item, targetType }: { item: QueueItem; targetType: Modera
   return (
     <Descriptions bordered column={1} size="small">
       <Descriptions.Item label="记录 ID"><Typography.Text copyable>{item.id}</Typography.Text></Descriptions.Item>
-      <Descriptions.Item label="商家 ID"><Typography.Text copyable>{item.tenantId}</Typography.Text></Descriptions.Item>
+      <Descriptions.Item label="代理商 ID"><Typography.Text copyable>{item.tenantId}</Typography.Text></Descriptions.Item>
       <Descriptions.Item label="状态"><StatusTag status={item.status} /></Descriptions.Item>
       {entries.map(([label, value]) => (
         <Descriptions.Item key={label} label={label}>

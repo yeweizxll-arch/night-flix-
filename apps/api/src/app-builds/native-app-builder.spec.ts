@@ -9,7 +9,10 @@ import { describe, expect, it } from 'vitest';
 
 import { NativeAppBuilder } from './native-app-builder';
 
-const runSmoke = process.env.RUN_NATIVE_APP_BUILD_SMOKE === 'true';
+const smokeTargets = process.env.RUN_NATIVE_APP_BUILD_SMOKE_TARGETS
+  ?.split(',')
+  .filter((value): value is 'android_debug' | 'ios_simulator' =>
+    value === 'android_debug' || value === 'ios_simulator') ?? [];
 const execFileAsync = promisify(execFile);
 
 describe('NativeAppBuilder', () => {
@@ -28,12 +31,12 @@ describe('NativeAppBuilder', () => {
     })).rejects.toMatchObject({ code: 'asset_unavailable' });
   });
 
-  it.runIf(runSmoke)('builds real isolated Android and iOS internal artifacts', async () => {
+  it.runIf(smokeTargets.length > 0)('builds real isolated Flutter artifacts', async () => {
     const icon = await sharp({
       create: { background: '#2563eb', channels: 3, height: 1024, width: 1024 },
     }).png().toBuffer();
     const builder = new NativeAppBuilder();
-    for (const target of ['android_debug', 'ios_simulator'] as const) {
+    for (const target of smokeTargets) {
       const output = await builder.build({
         androidApplicationId: 'com.example.generatedtest',
         appName: 'Generated Test',
@@ -50,11 +53,12 @@ describe('NativeAppBuilder', () => {
         if (target === 'android_debug') {
           const androidHome = process.env.ANDROID_HOME ?? process.env.ANDROID_SDK_ROOT;
           expect(androidHome).toBeTruthy();
-          const inspected = await execFileAsync(
-            join(androidHome!, 'cmdline-tools', 'latest', 'bin', 'apkanalyzer'),
-            ['manifest', 'application-id', output.path],
-          );
-          expect(inspected.stdout.trim()).toBe('com.example.generatedtest');
+          const aapt2 = process.env.APP_BUILD_AAPT2_BIN;
+          expect(aapt2).toBeTruthy();
+          const inspected = await execFileAsync(aapt2!, [
+            'dump', 'xmltree', output.path, '--file', 'AndroidManifest.xml',
+          ]);
+          expect(inspected.stdout).toContain('package="com.example.generatedtest"');
         } else {
           const extracted = await mkdtemp(join(tmpdir(), 'app-build-smoke-'));
           try {

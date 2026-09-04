@@ -64,6 +64,16 @@ interface DramaTranslation {
 
 interface EpisodeTranslation { locale: ContentLocale; title: string }
 
+interface EpisodeTrackRecord {
+  id: string;
+  isDefault: boolean;
+  label: string;
+  locale: string;
+  mediaAssetId: string;
+  status: 'active' | 'disabled';
+  type: 'dubbing' | 'subtitle';
+}
+
 interface EpisodeRecord {
   dramaId: string;
   durationSeconds: number;
@@ -74,6 +84,7 @@ interface EpisodeRecord {
   previewSeconds: number;
   releaseAt?: string;
   status: 'approved' | 'draft' | 'published' | 'unpublished';
+  tracks: EpisodeTrackRecord[];
   translations: EpisodeTranslation[];
   unpublishAt?: string;
   version: number;
@@ -88,8 +99,13 @@ interface DramaRecord {
   episodes?: EpisodeRecord[];
   id: string;
   releaseAt?: string;
+  publicReleaseLockedAt?: string;
+  publicRevision?: number;
   restoreUntil?: string;
+  shanchuangCreatorId?: string;
+  shanchuangWorkId?: string;
   status: DramaStatus;
+  supersedesDramaId?: string;
   tagIds: string[];
   totalEpisodes: number;
   translations: DramaTranslation[];
@@ -120,7 +136,11 @@ interface DramaFormValue {
   categoryId?: string;
   code: string;
   coverMediaAssetId?: string;
+  publicRevision?: number;
   releaseAt?: string;
+  shanchuangCreatorId?: string;
+  shanchuangWorkId?: string;
+  supersedesDramaId?: string;
   tagIds?: string[];
   translations: DramaTranslationForm[];
   unpublishAt?: string;
@@ -137,6 +157,14 @@ interface EpisodeFormValue {
   unpublishAt?: string;
 }
 
+interface EpisodeTrackFormValue {
+  isDefault?: boolean;
+  label: string;
+  locale: string;
+  mediaAssetId: string;
+  type: 'dubbing' | 'subtitle';
+}
+
 interface TaxonomyFormValue {
   code: string;
   sortOrder?: number;
@@ -150,7 +178,7 @@ type TaxonomyEditor = { record?: TaxonomyRecord; type: TaxonomyType };
 type DeleteTarget =
   | { kind: 'drama'; record: DramaRecord }
   | { kind: TaxonomyType; record: TaxonomyRecord };
-type UploadTarget = 'cover' | 'episode-main' | 'episode-preview';
+type UploadTarget = 'cover' | 'episode-main' | 'episode-preview' | 'track';
 
 const emptyDramas: PageResponse<DramaRecord> = { items: [], page: 1, pageSize: 20, total: 0 };
 const emptyTaxonomy: PageResponse<TaxonomyRecord> = { items: [], page: 1, pageSize: 20, total: 0 };
@@ -160,6 +188,7 @@ export function PlatformContentLibraryPage() {
   const [messageApi, messageContext] = message.useMessage();
   const [dramaForm] = Form.useForm<DramaFormValue>();
   const [episodeForm] = Form.useForm<EpisodeFormValue>();
+  const [episodeTrackForm] = Form.useForm<EpisodeTrackFormValue>();
   const [taxonomyForm] = Form.useForm<TaxonomyFormValue>();
   const [deleteForm] = Form.useForm<DeleteFormValue>();
   const [dramas, setDramas] = useState(emptyDramas);
@@ -179,7 +208,9 @@ export function PlatformContentLibraryPage() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string>();
   const [dramaEditor, setDramaEditor] = useState<'create' | DramaRecord>();
+  const [revisionSource, setRevisionSource] = useState<DramaRecord>();
   const [episodeEditor, setEpisodeEditor] = useState<{ drama: DramaRecord; episode?: EpisodeRecord }>();
+  const [episodeTrackEditor, setEpisodeTrackEditor] = useState<{ drama: DramaRecord; episode: EpisodeRecord }>();
   const [taxonomyEditor, setTaxonomyEditor] = useState<TaxonomyEditor>();
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget>();
   const [uploadTarget, setUploadTarget] = useState<UploadTarget>();
@@ -286,10 +317,13 @@ export function PlatformContentLibraryPage() {
     setSelected(undefined);
     setDetailError(undefined);
     setEpisodeEditor(undefined);
+    setEpisodeTrackEditor(undefined);
     episodeForm.resetFields();
+    episodeTrackForm.resetFields();
   }
 
   function openDramaEditor(record?: DramaRecord): void {
+    setRevisionSource(undefined);
     dramaForm.resetFields();
     dramaForm.setFieldsValue(record ? {
       categoryId: record.categoryId,
@@ -308,8 +342,32 @@ export function PlatformContentLibraryPage() {
     setDramaEditor(record ?? 'create');
   }
 
+  function openRevisionEditor(record: DramaRecord): void {
+    if (!record.shanchuangWorkId || !record.shanchuangCreatorId || !record.publicRevision) {
+      messageApi.error('该公共剧缺少闪创来源标识，不能创建连续版本');
+      return;
+    }
+    setRevisionSource(record);
+    dramaForm.resetFields();
+    dramaForm.setFieldsValue({
+      categoryId: record.categoryId,
+      code: `${record.code}-r${record.publicRevision + 1}`.slice(0, 128),
+      coverMediaAssetId: record.coverMediaAssetId,
+      publicRevision: record.publicRevision + 1,
+      shanchuangCreatorId: record.shanchuangCreatorId,
+      shanchuangWorkId: record.shanchuangWorkId,
+      supersedesDramaId: record.id,
+      tagIds: record.tagIds,
+      translations: record.translations.map((translation) => ({
+        ...translation, searchKeywords: translation.searchKeywords?.join(', '),
+      })),
+    });
+    setDramaEditor('create');
+  }
+
   function closeDramaEditor(): void {
     setDramaEditor(undefined);
+    setRevisionSource(undefined);
     dramaForm.resetFields();
   }
 
@@ -363,7 +421,11 @@ export function PlatformContentLibraryPage() {
       categoryId: values.categoryId || undefined,
       code: normalizedCode,
       coverMediaAssetId: values.coverMediaAssetId?.trim() || undefined,
+      publicRevision: values.publicRevision,
       releaseAt,
+      shanchuangCreatorId: values.shanchuangCreatorId?.trim() || undefined,
+      shanchuangWorkId: values.shanchuangWorkId?.trim() || undefined,
+      supersedesDramaId: values.supersedesDramaId?.trim() || undefined,
       tagIds: values.tagIds ?? [],
       translations,
       unpublishAt,
@@ -413,6 +475,78 @@ export function PlatformContentLibraryPage() {
   function closeEpisodeEditor(): void {
     setEpisodeEditor(undefined);
     episodeForm.resetFields();
+  }
+
+  function openEpisodeTrackEditor(drama: DramaRecord, episode: EpisodeRecord): void {
+    episodeTrackForm.resetFields();
+    episodeTrackForm.setFieldsValue({ isDefault: false, locale: 'en', type: 'subtitle' });
+    setEpisodeTrackEditor({ drama, episode });
+  }
+
+  function closeEpisodeTrackEditor(): void {
+    setEpisodeTrackEditor(undefined);
+    episodeTrackForm.resetFields();
+  }
+
+  async function saveEpisodeTrack(values: EpisodeTrackFormValue): Promise<void> {
+    if (!episodeTrackEditor) return;
+    const { drama, episode } = episodeTrackEditor;
+    if (!isUuid(values.mediaAssetId.trim())) {
+      messageApi.error('字幕或配音 Media Asset ID 必须是 UUID');
+      return;
+    }
+    setSubmitting(`track:create:${episode.id}`);
+    try {
+      await request(`${API_BASE}/dramas/${encodeURIComponent(drama.id)}/episodes/${encodeURIComponent(episode.id)}/tracks`, {
+        body: JSON.stringify({
+          expectedDramaVersion: selected?.id === drama.id ? selected.version : drama.version,
+          isDefault: Boolean(values.isDefault),
+          label: values.label.trim(),
+          locale: values.locale.trim(),
+          mediaAssetId: values.mediaAssetId.trim(),
+          type: values.type,
+        }),
+        method: 'POST',
+      });
+      messageApi.success('字幕或配音轨道已保存');
+      episodeTrackForm.resetFields();
+      await loadDramas(dramas.page, dramas.pageSize);
+      await openDetail(drama);
+      closeEpisodeTrackEditor();
+    } catch (reason) {
+      messageApi.error(contentError(reason, '轨道保存失败'));
+      if (isConflict(reason)) {
+        await loadDramas(dramas.page, dramas.pageSize);
+        await openDetail(drama);
+        closeEpisodeTrackEditor();
+      }
+    } finally {
+      setSubmitting(undefined);
+    }
+  }
+
+  async function disableEpisodeTrack(track: EpisodeTrackRecord): Promise<void> {
+    if (!episodeTrackEditor) return;
+    const { drama, episode } = episodeTrackEditor;
+    setSubmitting(`track:disable:${track.id}`);
+    try {
+      await request(`${API_BASE}/dramas/${encodeURIComponent(drama.id)}/episodes/${encodeURIComponent(episode.id)}/tracks/${encodeURIComponent(track.id)}`, {
+        body: JSON.stringify({ expectedVersion: selected?.id === drama.id ? selected.version : drama.version }),
+        method: 'DELETE',
+      });
+      messageApi.success('轨道已停用');
+      await loadDramas(dramas.page, dramas.pageSize);
+      await openDetail(drama);
+      closeEpisodeTrackEditor();
+    } catch (reason) {
+      messageApi.error(contentError(reason, '轨道停用失败'));
+      if (isConflict(reason)) {
+        await openDetail(drama);
+        closeEpisodeTrackEditor();
+      }
+    } finally {
+      setSubmitting(undefined);
+    }
   }
 
   async function saveEpisode(values: EpisodeFormValue): Promise<void> {
@@ -643,6 +777,26 @@ export function PlatformContentLibraryPage() {
     }
   }
 
+  function confirmEmergencyTakedown(record: DramaRecord): void {
+    let reason = '';
+    Modal.confirm({
+      content: <Input.TextArea maxLength={2000} onChange={(event) => { reason = event.target.value; }} placeholder="填写必须立即停止全部代理商播放的原因" rows={4} showCount />,
+      okButtonProps: { danger: true },
+      okText: '立即停止全部播放',
+      onOk: async () => {
+        if (!reason.trim()) throw new Error('必须填写紧急下架原因');
+        await request(`/api/v1/platform/public-drama-pool/${encodeURIComponent(record.id)}/emergency-takedown`, {
+          body: JSON.stringify({ expectedVersion: record.version, reason: reason.trim() }),
+          method: 'POST',
+        });
+        messageApi.success('已紧急下架，所有代理商立即停止播放');
+        closeDetail();
+        await loadDramas(dramas.page, dramas.pageSize);
+      },
+      title: `总部紧急下架：${translationValue(record.translations, 'title') || record.code}`,
+    });
+  }
+
   return (
     <>
       {messageContext}
@@ -650,7 +804,7 @@ export function PlatformContentLibraryPage() {
         <div>
           <Typography.Title level={2}>公共内容管理</Typography.Title>
           <Typography.Text type="secondary">
-            管理平台自有短剧、剧集、分类与标签；平台内容直接发布，不经过商家审核队列。
+            管理平台自有短剧、剧集、分类与标签；平台内容直接发布，不经过代理商审核队列。
           </Typography.Text>
         </div>
       </div>
@@ -678,9 +832,11 @@ export function PlatformContentLibraryPage() {
                 onDelete={(record) => openDelete({ kind: 'drama', record })}
                 onDetail={(record) => void openDetail(record)}
                 onEdit={openDramaEditor}
+                onEmergency={confirmEmergencyTakedown}
                 onIncludeDeleted={setIncludeDeletedDramas}
                 onPage={(page, pageSize) => void loadDramas(page, pageSize)}
                 onRetry={() => void loadDramas(dramas.page, dramas.pageSize)}
+                onRevision={openRevisionEditor}
                 onStatus={setDramaStatus}
                 status={dramaStatus}
                 submitting={submitting}
@@ -746,6 +902,7 @@ export function PlatformContentLibraryPage() {
               canManage={canManage}
               onAddEpisode={() => openEpisodeEditor(selected)}
               onEditEpisode={(episode) => openEpisodeEditor(selected, episode)}
+              onManageTracks={(episode) => openEpisodeTrackEditor(selected, episode)}
               record={selected}
             />
           ) : null}
@@ -756,7 +913,7 @@ export function PlatformContentLibraryPage() {
         footer={null}
         onCancel={closeDramaEditor}
         open={Boolean(dramaEditor)}
-        title={dramaEditor === 'create' ? '创建公共短剧' : '编辑公共短剧'}
+        title={revisionSource ? `创建新版本：${revisionSource.code}` : dramaEditor === 'create' ? '创建公共短剧' : '编辑公共短剧'}
         width={760}
       >
         <Form form={dramaForm} layout="vertical" onFinish={(values) => void saveDrama(values)} preserve={false}>
@@ -764,6 +921,17 @@ export function PlatformContentLibraryPage() {
             { max: 128, min: 2, required: true },
             { pattern: /^[a-z0-9][a-z0-9_-]{1,127}$/, message: '仅支持小写字母、数字、_、-' },
           ]}><Input maxLength={128} /></Form.Item>
+          {dramaEditor === 'create' ? (
+            <>
+              <Alert className="page-alert" message="闪创完结剧请同时填写作品、创作者和版本号。首版为 1；被代理商使用后只能通过“创建新版本”继续更新。" showIcon type="info" />
+              <Form.Item label="闪创作品 ID" name="shanchuangWorkId"><Input disabled={Boolean(revisionSource)} maxLength={200} /></Form.Item>
+              <Form.Item label="闪创创作者 ID" name="shanchuangCreatorId"><Input disabled={Boolean(revisionSource)} maxLength={200} /></Form.Item>
+              <Space align="start" wrap>
+                <Form.Item label="公共版本" name="publicRevision"><InputNumber disabled={Boolean(revisionSource)} min={1} precision={0} /></Form.Item>
+                <Form.Item label="替代上一版本 Drama ID" name="supersedesDramaId"><Input disabled style={{ width: 330 }} /></Form.Item>
+              </Space>
+            </>
+          ) : null}
           <Form.Item label="封面 Media Asset ID（可选）">
             <Space.Compact block>
               <Form.Item name="coverMediaAssetId" noStyle>
@@ -783,6 +951,63 @@ export function PlatformContentLibraryPage() {
           <Button block htmlType="submit" loading={submitting === (dramaEditor === 'create' ? 'drama:create' : `drama:${(dramaEditor as DramaRecord | undefined)?.id}`)} type="primary">
             保存公共短剧
           </Button>
+        </Form>
+      </Modal>
+
+      <Modal
+        destroyOnHidden
+        footer={null}
+        onCancel={closeEpisodeTrackEditor}
+        open={Boolean(episodeTrackEditor)}
+        title={`字幕与配音 · 第 ${episodeTrackEditor?.episode.episodeNo ?? '—'} 集`}
+        width={760}
+      >
+        <Alert className="page-alert" message="同一类型和语言再次保存会更新原轨道；每种类型只能有一个默认轨道。字幕使用 WebVTT，配音使用常见音频格式。" showIcon type="info" />
+        <Table<EpisodeTrackRecord>
+          columns={[
+            { dataIndex: 'type', title: '类型', width: 90, render: (value) => value === 'subtitle' ? '字幕' : '配音' },
+            { dataIndex: 'locale', title: '语言', width: 100 },
+            { dataIndex: 'label', title: '名称' },
+            { dataIndex: 'isDefault', title: '默认', width: 70, render: (value) => value ? <Tag color="green">是</Tag> : '—' },
+            { dataIndex: 'status', title: '状态', width: 80, render: (value) => value === 'active' ? <Tag color="blue">启用</Tag> : <Tag>停用</Tag> },
+            { key: 'action', title: '操作', width: 90, render: (_, track) => track.status === 'active' ? (
+              <Popconfirm onConfirm={() => void disableEpisodeTrack(track)} title="确认停用该轨道？">
+                <Button danger loading={submitting === `track:disable:${track.id}`} size="small">停用</Button>
+              </Popconfirm>
+            ) : null },
+          ]}
+          dataSource={episodeTrackEditor?.episode.tracks ?? []}
+          locale={{ emptyText: <Empty description="暂无字幕或配音" /> }}
+          pagination={false}
+          rowKey="id"
+          size="small"
+        />
+        <Typography.Title level={5} style={{ marginTop: 24 }}>新增或更新轨道</Typography.Title>
+        <Form form={episodeTrackForm} layout="vertical" onFinish={(values) => void saveEpisodeTrack(values)} preserve={false}>
+          <Space align="start" wrap>
+            <Form.Item label="类型" name="type" rules={[{ required: true }]}>
+              <Select options={[{ label: '字幕', value: 'subtitle' }, { label: '配音', value: 'dubbing' }]} style={{ width: 120 }} />
+            </Form.Item>
+            <Form.Item label="语言代码" name="locale" rules={[
+              { required: true, whitespace: true },
+              { pattern: /^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/, message: '请输入 BCP 47 语言代码，如 en 或 es-MX' },
+            ]}>
+              <Input maxLength={35} placeholder="en / es-MX" style={{ width: 150 }} />
+            </Form.Item>
+            <Form.Item label="显示名称" name="label" rules={[{ max: 120, required: true, whitespace: true }]}>
+              <Input maxLength={120} placeholder="English" style={{ width: 220 }} />
+            </Form.Item>
+            <Form.Item label="设为默认" name="isDefault" valuePropName="checked"><Switch /></Form.Item>
+          </Space>
+          <Form.Item label="Media Asset ID" required>
+            <Space.Compact block>
+              <Form.Item name="mediaAssetId" noStyle rules={[{ required: true, whitespace: true }]}>
+                <Input maxLength={36} placeholder="平台自有、ready 的字幕或音频 UUID" />
+              </Form.Item>
+              <Button htmlType="button" onClick={() => setUploadTarget('track')}>上传文件</Button>
+            </Space.Compact>
+          </Form.Item>
+          <Button block htmlType="submit" loading={Boolean(episodeTrackEditor && submitting === `track:create:${episodeTrackEditor.episode.id}`)} type="primary">保存轨道</Button>
         </Form>
       </Modal>
 
@@ -874,12 +1099,13 @@ export function PlatformContentLibraryPage() {
       </Modal>
 
       <PlatformMediaUploadModal
-        kind={uploadTarget === 'cover' ? 'image' : 'video'}
+        kind={uploadTarget === 'cover' ? 'image' : uploadTarget === 'track' ? 'file' : 'video'}
         onCancel={() => setUploadTarget(undefined)}
         onReady={(mediaId) => {
           if (uploadTarget === 'cover') dramaForm.setFieldValue('coverMediaAssetId', mediaId);
           else if (uploadTarget === 'episode-main') episodeForm.setFieldValue('mediaAssetId', mediaId);
-          else episodeForm.setFieldValue('previewMediaAssetId', mediaId);
+          else if (uploadTarget === 'episode-preview') episodeForm.setFieldValue('previewMediaAssetId', mediaId);
+          else episodeTrackForm.setFieldValue('mediaAssetId', mediaId);
           setUploadTarget(undefined);
           messageApi.success('文件已上传并由服务端验证为 ready，Media Asset ID 已填入表单');
         }}
@@ -902,9 +1128,11 @@ function DramaList({
   onDelete,
   onDetail,
   onEdit,
+  onEmergency,
   onIncludeDeleted,
   onPage,
   onRetry,
+  onRevision,
   onStatus,
   status,
   submitting,
@@ -920,9 +1148,11 @@ function DramaList({
   onDelete(record: DramaRecord): void;
   onDetail(record: DramaRecord): void;
   onEdit(record: DramaRecord): void;
+  onEmergency(record: DramaRecord): void;
   onIncludeDeleted(value: boolean): void;
   onPage(page: number, pageSize: number): void;
   onRetry(): void;
+  onRevision(record: DramaRecord): void;
   onStatus(value: DramaStatus | undefined): void;
   status?: DramaStatus;
   submitting?: string;
@@ -983,12 +1213,14 @@ function DramaList({
           ) },
           { dataIndex: 'version', title: '版本', width: 70 },
           {
-            key: 'actions', title: '操作', width: 320,
+            key: 'actions', title: '操作', width: 420,
             render: (_, record) => (
               <Space wrap>
                 <Button size="small" onClick={() => onDetail(record)}>详情</Button>
                 {canManage && isDramaEditable(record.status, record.deletedAt)
                   ? <Button size="small" onClick={() => onEdit(record)}>编辑</Button> : null}
+                {canManage && record.publicReleaseLockedAt && record.shanchuangWorkId
+                  ? <Button size="small" onClick={() => onRevision(record)}>创建新版本</Button> : null}
                 {canPublish && isDramaPublishable(record.status, record.deletedAt) ? (
                   <Popconfirm onConfirm={() => onAction(record, 'publish')} title={publishPrompt(record)}>
                     <Button loading={submitting === `publish:${record.id}`} size="small" type="primary">发布</Button>
@@ -998,6 +1230,9 @@ function DramaList({
                   <Popconfirm onConfirm={() => onAction(record, 'unpublish')} title="确认下架并取消待执行发布任务？">
                     <Button loading={submitting === `unpublish:${record.id}`} size="small">下架</Button>
                   </Popconfirm>
+                ) : null}
+                {canPublish && !record.deletedAt && record.status !== 'unpublished' ? (
+                  <Button danger size="small" onClick={() => onEmergency(record)}>紧急全局下架</Button>
                 ) : null}
                 {canManage && !record.deletedAt && !['approved', 'published'].includes(record.status)
                   ? <Button danger size="small" onClick={() => onDelete(record)}>软删除</Button> : null}
@@ -1123,11 +1358,13 @@ function DramaDetail({
   canManage,
   onAddEpisode,
   onEditEpisode,
+  onManageTracks,
   record,
 }: {
   canManage: boolean;
   onAddEpisode(): void;
   onEditEpisode(episode: EpisodeRecord): void;
+  onManageTracks(episode: EpisodeRecord): void;
   record: DramaRecord;
 }) {
   const editable = canManage && isDramaEditable(record.status, record.deletedAt);
@@ -1136,6 +1373,11 @@ function DramaDetail({
       <Descriptions bordered column={1} size="small">
         <Descriptions.Item label="短剧 ID"><Typography.Text copyable>{record.id}</Typography.Text></Descriptions.Item>
         <Descriptions.Item label="Code">{record.code}</Descriptions.Item>
+        <Descriptions.Item label="闪创作品 ID">{record.shanchuangWorkId ?? '非闪创公共剧'}</Descriptions.Item>
+        <Descriptions.Item label="闪创创作者 ID">{record.shanchuangCreatorId ?? '—'}</Descriptions.Item>
+        <Descriptions.Item label="公共版本">{record.publicRevision ?? '—'}</Descriptions.Item>
+        <Descriptions.Item label="替代上一版本">{record.supersedesDramaId ?? '—'}</Descriptions.Item>
+        <Descriptions.Item label="公共内容锁定时间">{formatDateTime(record.publicReleaseLockedAt)}</Descriptions.Item>
         <Descriptions.Item label="状态"><DramaStatusTag status={record.status} /> {record.deletedAt ? <Tag color="red">已软删除</Tag> : null}</Descriptions.Item>
         <Descriptions.Item label="封面 Media Asset ID">{record.coverMediaAssetId ? <Typography.Text copyable>{record.coverMediaAssetId}</Typography.Text> : '未设置'}</Descriptions.Item>
         <Descriptions.Item label="分类 ID">{record.categoryId ?? '未设置'}</Descriptions.Item>
@@ -1178,8 +1420,8 @@ function DramaDetail({
             { dataIndex: 'previewMediaAssetId', title: '独立试看媒体（绑定状态）', width: 300, render: (value?: string) => value ? <Space direction="vertical" size={2}><Tag color="blue">独立试看已绑定</Tag><Typography.Text copyable>{value}</Typography.Text></Space> : <Tag>未配置，不回退正片</Tag> },
             { dataIndex: 'releaseAt', title: '发布时间', width: 180, render: formatDateTime },
             { dataIndex: 'version', title: '版本', width: 70 },
-            { key: 'action', title: '操作', width: 90, render: (_, episode) => editable
-              ? <Button size="small" onClick={() => onEditEpisode(episode)}>编辑</Button>
+            { key: 'action', title: '操作', width: 180, render: (_, episode) => editable
+              ? <Space><Button size="small" onClick={() => onEditEpisode(episode)}>编辑</Button><Button size="small" onClick={() => onManageTracks(episode)}>字幕/配音</Button></Space>
               : <Typography.Text type="secondary">只读</Typography.Text> },
           ]}
           dataSource={record.episodes ?? []}
@@ -1273,7 +1515,7 @@ function PlatformMediaUploadModal({
   open,
   purpose,
 }: {
-  kind: 'image' | 'video';
+  kind: 'file' | 'image' | 'video';
   onCancel(): void;
   onReady(mediaId: string): void;
   open: boolean;
@@ -1393,7 +1635,7 @@ function PlatformMediaUploadModal({
       maskClosable={!stage}
       onCancel={cancel}
       open={open}
-      title={kind === 'image' ? '上传平台封面图片' : purpose === 'episode-preview' ? '单独上传平台试看短片' : '单独上传平台正片视频'}
+      title={kind === 'image' ? '上传平台封面图片' : kind === 'file' ? '上传字幕或配音文件' : purpose === 'episode-preview' ? '单独上传平台试看短片' : '单独上传平台正片视频'}
       width={620}
     >
       <Alert
@@ -1421,17 +1663,19 @@ function PlatformMediaUploadModal({
           ) : null}
         </div>
         <div>
-          <Typography.Text strong>{kind === 'image' ? '图片文件' : '视频文件'}</Typography.Text>
+          <Typography.Text strong>{kind === 'image' ? '图片文件' : kind === 'video' ? '视频文件' : '字幕或配音文件'}</Typography.Text>
           <Input
             accept={kind === 'image'
               ? 'image/avif,image/jpeg,image/png,image/webp'
-              : 'video/mp4,video/quicktime,video/webm'}
+              : kind === 'video'
+                ? 'video/mp4,video/quicktime,video/webm'
+                : '.vtt,audio/aac,audio/flac,audio/mp4,audio/mpeg,audio/ogg,audio/wav'}
             disabled={Boolean(stage)}
             onChange={(event) => setFile(event.target.files?.[0])}
             type="file"
           />
           <Typography.Text type="secondary">
-            {kind === 'image' ? 'AVIF/JPEG/PNG/WebP，最大 25 MiB' : 'MP4/MOV/WebM，最大 2 GiB'}
+            {kind === 'image' ? 'AVIF/JPEG/PNG/WebP，最大 25 MiB' : kind === 'video' ? 'MP4/MOV/WebM，最大 2 GiB' : 'WebVTT 或 AAC/FLAC/M4A/MP3/OGG/WAV，最大 100 MiB'}
           </Typography.Text>
         </div>
         {file ? <Typography.Text>已选择：{file.name}（{formatContentBytes(file.size)}）</Typography.Text> : null}

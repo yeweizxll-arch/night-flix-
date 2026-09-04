@@ -191,7 +191,7 @@ export function CommerceOrderPage() {
       okButtonProps: { danger: true },
       okText: '确认发起全额退款',
       onOk: () => submitRefund(values),
-      title: '二次确认：商家直收订单退款',
+      title: '二次确认：代理商直收订单退款',
     });
   }
 
@@ -230,7 +230,7 @@ export function CommerceOrderPage() {
         <div>
           <Typography.Title level={2}>订单管理</Typography.Title>
           <Typography.Text type="secondary">
-            只读查看当前商家的服务端订单快照，不在后台模拟支付或改价。
+            只读查看当前代理商的服务端订单快照，不在后台模拟支付或改价。
           </Typography.Text>
         </div>
       </div>
@@ -403,7 +403,7 @@ export function CommerceOrderPage() {
         ) : null}
       </Drawer> : null}
 
-      {canReadOrders ? <Modal destroyOnHidden footer={null} onCancel={closeRefund} open={Boolean(refundTarget)} title="商家直收订单全额退款">
+      {canReadOrders ? <Modal destroyOnHidden footer={null} onCancel={closeRefund} open={Boolean(refundTarget)} title="代理商直收订单全额退款">
         <Alert className="page-alert" description="不提供金额输入；退款金额仅使用服务端订单实付快照。"
           message={refundTarget ? `${refundTarget.orderNo} · ${formatMoney(refundTarget.totalMinor, refundTarget.currency)}` : '—'}
           showIcon type="warning" />
@@ -429,7 +429,7 @@ function OrderDetail({ detail }: { detail: TenantOrderDetail }) {
         </Descriptions.Item>
         <Descriptions.Item label="商品类型">{typeLabels[detail.orderType]}</Descriptions.Item>
         <Descriptions.Item label="收款模式" span={2}>
-          {detail.collectionMode === 'tenant_direct' ? '商家直收'
+          {detail.collectionMode === 'tenant_direct' ? '代理商直收'
             : detail.collectionMode === 'platform_collect' ? '平台代收' : '尚无成功收款快照'}
         </Descriptions.Item>
         <Descriptions.Item label="小计">{formatMoney(detail.subtotalMinor, detail.currency)}</Descriptions.Item>
@@ -521,7 +521,7 @@ function refundCreateError(reason: unknown): string {
   if (!(reason instanceof ApiError)) return '全额退款发起失败';
   if (reason.status === 409) return '订单已有退款或状态已变更；请刷新核对，不要重复发起。';
   if (reason.status === 403) return '当前账号无权发起退款。';
-  if (reason.status === 404) return '未找到可退款的商家直收订单。';
+  if (reason.status === 404) return '未找到可退款的代理商直收订单。';
   if (reason.status === 400) return '该订单不符合全额退款规则，请刷新后核对。';
   return '全额退款发起失败';
 }

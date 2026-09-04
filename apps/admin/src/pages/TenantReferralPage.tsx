@@ -177,7 +177,7 @@ export function TenantReferralPage() {
         <div>
           <Typography.Title level={2}>一级分销</Typography.Title>
           <Typography.Text type="secondary">
-            只支持一级邀请关系；佣金列表是商家应付账，不提供提现或打款操作。
+            只支持一级邀请关系；佣金列表是代理商应付账，不提供提现或打款操作。
           </Typography.Text>
         </div>
       </div>

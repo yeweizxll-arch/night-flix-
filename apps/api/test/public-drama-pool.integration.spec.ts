@@ -195,6 +195,26 @@ describe('shared public drama pool', () => {
       sourceId: 'point-unlock-1', sourceType: 'coin_unlock', tenantId: tenantOneId,
     }, { requestId: crypto.randomUUID() });
     expect(repeated).toMatchObject({ duplicate: true, id: first.id });
+    const previous = new Date();
+    previous.setUTCDate(1);
+    previous.setUTCMonth(previous.getUTCMonth() - 1);
+    previous.setUTCHours(12, 0, 0, 0);
+    const month = previous.toISOString().slice(0, 7);
+    await revenue.record({
+      currency: 'USD', dramaId: publicDramaId, episodeId: publicEpisodeId,
+      grossMinor: 500, incomeType: 'coin_unlock', occurredAt: previous.toISOString(),
+      sourceId: 'point-unlock-previous-month', sourceType: 'coin_unlock', tenantId: tenantOneId,
+    }, { requestId: crypto.randomUUID() });
+    const settlement = await revenue.settleMonth(
+      tenantOneId, month, 'usd', { actorId: platformStaffId, requestId: crypto.randomUUID() },
+    );
+    expect(settlement).toMatchObject({
+      alreadySettled: false, count: 1, creatorMinor: '150',
+      grossMinor: '500', headquartersMinor: '100', tenantMinor: '250',
+    });
+    expect(await revenue.settleMonth(
+      tenantOneId, month, 'USD', { actorId: platformStaffId, requestId: crypto.randomUUID() },
+    )).toMatchObject({ alreadySettled: true, count: 1 });
     await expect(revenue.reverse(tenantTwoId, first.id)).rejects.toBeInstanceOf(ConflictException);
     expect(await revenue.reverse(tenantOneId, first.id)).toEqual({ id: first.id, status: 'reversed' });
   });

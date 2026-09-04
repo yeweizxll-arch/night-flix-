@@ -9,12 +9,17 @@ export interface ContentUploadIntent {
 
 export function validateContentUploadFile(
   file: Pick<File, 'name' | 'size' | 'type'>,
-  kind: 'image' | 'video',
+  kind: 'file' | 'image' | 'video',
 ): string | undefined {
   const allowed = kind === 'image'
     ? new Set(['image/avif', 'image/jpeg', 'image/png', 'image/webp'])
-    : new Set(['video/mp4', 'video/quicktime', 'video/webm']);
-  const maximum = kind === 'image' ? 25 * 1024 ** 2 : 2 * 1024 ** 3;
+    : kind === 'video'
+      ? new Set(['video/mp4', 'video/quicktime', 'video/webm'])
+      : new Set([
+          'audio/aac', 'audio/flac', 'audio/m4a', 'audio/mp4', 'audio/mpeg',
+          'audio/ogg', 'audio/wav', 'text/vtt',
+        ]);
+  const maximum = kind === 'image' ? 25 * 1024 ** 2 : kind === 'video' ? 2 * 1024 ** 3 : 100 * 1024 ** 2;
   if (!allowed.has(file.type)) return '文件 MIME 类型不在允许范围内';
   if (file.size < 1 || file.size > maximum) return '文件大小超出当前媒体类型限制';
   const extension = contentFileExtension(file.name);

@@ -360,7 +360,7 @@ export function TenantLegalPrivacyPage() {
   return (
     <>
       {messageContext}{modalContext}
-      <div className="page-heading"><div><Typography.Title level={2}>法律与隐私</Typography.Title><Typography.Text type="secondary">管理当前商家的法律文档版本，并只读查看用户擦除请求。</Typography.Text></div></div>
+      <div className="page-heading"><div><Typography.Title level={2}>法律与隐私</Typography.Title><Typography.Text type="secondary">管理当前代理商的法律文档版本，并只读查看用户擦除请求。</Typography.Text></div></div>
       <Tabs items={tabs} />
       <Modal cancelText="取消" destroyOnHidden confirmLoading={legalSubmitting === 'save'} okText={editing === 'create' ? '创建草稿' : '保存草稿'} onCancel={() => { if (!legalSubmitting) closeEditor(); }} onOk={() => legalForm.submit()} open={Boolean(editing)} title={editing === 'create' ? '新建法律文档草稿' : '编辑草稿'} width={760}>
         <Alert className="page-alert" message="Markdown 不允许原始 HTML；客户端也不会使用 innerHTML 渲染。" showIcon type="info" />

@@ -1,4 +1,4 @@
-package com.shanchuang.shanchuang_drama
+package com.nightflix.template
 
 import io.flutter.embedding.android.FlutterActivity
 

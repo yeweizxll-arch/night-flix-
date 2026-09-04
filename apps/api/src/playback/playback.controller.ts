@@ -56,6 +56,20 @@ export class PlaybackController {
     );
   }
 
+  @Get('episodes/:episodeId/tracks/:trackId/url')
+  @PublicEndpoint()
+  @Header('Cache-Control', 'no-store')
+  async playbackTrackUrl(
+    @Param('episodeId') episodeId: string,
+    @Param('trackId') trackId: string,
+    @Query('expiresInSeconds') expiresInSeconds: unknown,
+    @Req() request: FastifyRequest,
+  ) {
+    return this.playbackUrls.issueTrack(
+      await this.principal(request), episodeId, trackId, expiresInSeconds, request.ip,
+    );
+  }
+
   @Get('episodes/:episodeId/access')
   @PublicEndpoint()
   async access(

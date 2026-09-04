@@ -74,7 +74,7 @@ export function WithdrawalDetail({ withdrawal }: { withdrawal: WithdrawalRecord 
     <Space direction="vertical" size="large" style={{ width: '100%' }}>
       <Descriptions bordered column={1} size="small">
         <Descriptions.Item label="提现单号">{withdrawal.withdrawalNo}</Descriptions.Item>
-        <Descriptions.Item label="商家 ID">
+        <Descriptions.Item label="代理商 ID">
           <Typography.Text copyable>{withdrawal.tenantId}</Typography.Text>
         </Descriptions.Item>
         <Descriptions.Item label="申请人 ID">

@@ -1,6 +1,6 @@
 name: drama-saas
 
-x-api-environment: &api-environment
+x-service-environment: &service-environment
   NODE_ENV: production
   PORT: 3000
   TRUST_PROXY: "1"
@@ -37,111 +37,146 @@ x-api-environment: &api-environment
   APP_BUILD_WORKER_ENABLED: "false"
   APP_BUILD_EXECUTOR: disabled
 
+x-api-service: &api-service
+  restart: unless-stopped
+  environment: *service-environment
+  networks: [internal]
+  security_opt: ['no-new-privileges:true']
+  read_only: true
+  tmpfs:
+    - /tmp:size=64m,mode=1777
+
+x-api-healthcheck: &api-healthcheck
+  test:
+    - CMD
+    - node
+    - -e
+    - "fetch('http://127.0.0.1:3000/api/v1/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+  interval: 15s
+  timeout: 5s
+  retries: 8
+  start_period: 30s
+
 services:
-  api:
+  web-api:
+    <<: *api-service
     build:
       context: ..
       dockerfile: Dockerfile
-      target: api
-    image: ${DRAMA_API_IMAGE:-drama-saas-api:local}
-    restart: unless-stopped
-    environment: *api-environment
-    healthcheck:
-      test:
-        - CMD
-        - node
-        - -e
-        - "fetch('http://127.0.0.1:3000/api/v1/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
-      interval: 15s
-      timeout: 5s
-      retries: 8
-      start_period: 30s
-    networks: [internal]
-    security_opt: [no-new-privileges:true]
-    read_only: true
-    tmpfs:
-      - /tmp:size=64m,mode=1777
+      target: web-api
+    image: ${DRAMA_WEB_API_IMAGE:-drama-saas-web-api:local}
+    environment:
+      <<: *service-environment
+      DRAMA_SERVICE_ROLE: web
+    healthcheck: *api-healthcheck
+
+  admin-api:
+    <<: *api-service
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: admin-api
+    image: ${DRAMA_ADMIN_API_IMAGE:-drama-saas-admin-api:local}
+    environment:
+      <<: *service-environment
+      DRAMA_SERVICE_ROLE: admin
+    healthcheck: *api-healthcheck
+
+  agent-api:
+    <<: *api-service
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: agent-api
+    image: ${DRAMA_AGENT_API_IMAGE:-drama-saas-agent-api:local}
+    environment:
+      <<: *service-environment
+      DRAMA_SERVICE_ROLE: agent
+    healthcheck: *api-healthcheck
 
   worker:
-    image: ${DRAMA_API_IMAGE:-drama-saas-api:local}
-    restart: unless-stopped
-    command: ["node", "dist/cli/run-worker.js"]
+    <<: *api-service
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: worker
+    image: ${DRAMA_WORKER_IMAGE:-drama-saas-worker:local}
     environment:
-      <<: *api-environment
-      WORKER_ID: ${WORKER_ID:-single-server-worker-1}
-    depends_on:
-      api:
-        condition: service_healthy
-    networks: [internal]
-    security_opt: [no-new-privileges:true]
-    read_only: true
-    tmpfs:
-      - /tmp:size=64m,mode=1777
+      <<: *service-environment
+      WORKER_ID: ${WORKER_ID:-drama-worker-1}
 
   platform-admin:
     build:
       context: ..
       dockerfile: Dockerfile
-      target: web
-    image: ${DRAMA_WEB_IMAGE:-drama-saas-web:local}
+      target: platform-admin-static
+    image: ${DRAMA_PLATFORM_ADMIN_IMAGE:-drama-saas-platform-admin:local}
     restart: unless-stopped
     environment:
       STATIC_ROOT: /srv/platform-admin
-      API_ORIGIN: http://api:3000
+      API_ORIGIN: http://admin-api:3000
       NGINX_ENVSUBST_FILTER: STATIC_ROOT|API_ORIGIN
     depends_on:
-      api:
+      admin-api:
         condition: service_healthy
     ports:
       - "127.0.0.1:${PLATFORM_ADMIN_PORT:-8081}:8080"
     networks: [internal]
-    security_opt: [no-new-privileges:true]
+    security_opt: ['no-new-privileges:true']
 
   tenant-admin:
-    image: ${DRAMA_WEB_IMAGE:-drama-saas-web:local}
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: tenant-admin-static
+    image: ${DRAMA_TENANT_ADMIN_IMAGE:-drama-saas-tenant-admin:local}
     restart: unless-stopped
     environment:
       STATIC_ROOT: /srv/tenant-admin
-      API_ORIGIN: http://api:3000
+      API_ORIGIN: http://agent-api:3000
       NGINX_ENVSUBST_FILTER: STATIC_ROOT|API_ORIGIN
     depends_on:
-      api:
+      agent-api:
         condition: service_healthy
     ports:
       - "127.0.0.1:${TENANT_ADMIN_PORT:-8082}:8080"
     networks: [internal]
-    security_opt: [no-new-privileges:true]
+    security_opt: ['no-new-privileges:true']
 
   h5:
-    image: ${DRAMA_WEB_IMAGE:-drama-saas-web:local}
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: web-static
+    image: ${DRAMA_WEB_STATIC_IMAGE:-drama-saas-web-static:local}
     restart: unless-stopped
     environment:
       STATIC_ROOT: /srv/h5
-      API_ORIGIN: http://api:3000
+      API_ORIGIN: http://web-api:3000
       NGINX_ENVSUBST_FILTER: STATIC_ROOT|API_ORIGIN
     depends_on:
-      api:
+      web-api:
         condition: service_healthy
     ports:
       - "127.0.0.1:${H5_PORT:-8083}:8080"
     networks: [internal]
-    security_opt: [no-new-privileges:true]
+    security_opt: ['no-new-privileges:true']
 
   migrate:
-    image: ${DRAMA_API_IMAGE:-drama-saas-api:local}
+    image: ${DRAMA_ADMIN_API_IMAGE:-drama-saas-admin-api:local}
     profiles: [tools]
     command: ["node", "dist/cli/migrate.js"]
-    environment: *api-environment
+    environment: *service-environment
     networks: [internal]
-    security_opt: [no-new-privileges:true]
+    security_opt: ['no-new-privileges:true']
 
   permissions-sync:
-    image: ${DRAMA_API_IMAGE:-drama-saas-api:local}
+    image: ${DRAMA_ADMIN_API_IMAGE:-drama-saas-admin-api:local}
     profiles: [tools]
     command: ["node", "dist/cli/sync-permissions.js"]
-    environment: *api-environment
+    environment: *service-environment
     networks: [internal]
-    security_opt: [no-new-privileges:true]
+    security_opt: ['no-new-privileges:true']
 
 networks:
   internal:

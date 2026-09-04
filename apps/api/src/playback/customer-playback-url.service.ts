@@ -33,6 +33,12 @@ interface SecureAssetRow {
   provider_id: string;
 }
 
+interface SecureTrackAssetRow extends SecureAssetRow {
+  label: string;
+  locale: string;
+  track_type: 'dubbing' | 'subtitle';
+}
+
 @Injectable()
 export class CustomerPlaybackUrlService {
   constructor(
@@ -139,31 +145,11 @@ export class CustomerPlaybackUrlService {
           }
           throw new NotFoundException('Secure playback asset is unavailable');
         }
-        // Presigning is local cryptographic work. Keep it inside the transaction while
-        // the provider row is share-locked, so disable/rotation cannot race issuance.
         try {
-          const credentials: S3StorageCredentials = this.credentialCipher.decrypt(
-            asset.credential_ciphertext,
-            {
-              keyVersion: asset.key_version,
-              ownerTenantId: asset.owner_tenant_id,
-              ownerType: asset.owner_type,
-              providerId: asset.provider_id,
-            },
-          );
-          const signed = await this.storage.presignGetObject({
-            credentials,
-            expiresInSeconds,
-            objectKey: asset.object_key,
-            target: {
-              bucket: asset.bucket,
-              endpoint: asset.endpoint,
-            },
-          });
-          const expiresAt = validSignedResponse(signed, expiresInSeconds);
+          const signed = await this.signAsset(asset, expiresInSeconds);
           return {
             access: access.access,
-            expiresAt: expiresAt.toISOString(),
+            expiresAt: signed.expiresAt.toISOString(),
             mediaAssetId,
             offlineSupported: false as const,
             ...(access.access === 'preview'
@@ -179,6 +165,113 @@ export class CustomerPlaybackUrlService {
         }
       },
     );
+  }
+
+  async issueTrack(
+    principal: CustomerPrincipal,
+    episodeIdValue: unknown,
+    trackIdValue: unknown,
+    expiryValue: unknown,
+    ipValue: unknown,
+  ) {
+    assertPrincipal(principal);
+    const episodeId = uuid(episodeIdValue, 'episodeId');
+    const trackId = uuid(trackIdValue, 'trackId');
+    const expiresInSeconds = expirySeconds(expiryValue);
+    const ip = requestIp(ipValue);
+    await this.rateLimiter.consume({
+      accountId: principal.accountId,
+      ip,
+      tenantId: principal.tenantId,
+    });
+    return this.database.inTenantContext(principal.tenantId, async (transaction) => {
+      const access = await this.playbackAccess.resolveInTransaction(
+        transaction, principal, episodeId,
+      );
+      if (access.access !== 'full') {
+        throw new ForbiddenException({
+          code: 'TRACK_ENTITLEMENT_REQUIRED',
+          message: 'Full playback access is required for subtitle and dubbing tracks',
+        });
+      }
+      const rows = await transaction<SecureTrackAssetRow[]>`
+        select
+          provider.id as provider_id,
+          provider.owner_type,
+          provider.owner_tenant_id,
+          provider.endpoint,
+          provider.bucket,
+          provider.credential_ciphertext,
+          provider.key_version,
+          media.object_key,
+          track.track_type,
+          track.locale,
+          track.label
+        from episode_media_tracks as track
+        inner join media_assets as media on media.id = track.media_asset_id
+        inner join storage_providers as provider on provider.id = media.storage_provider_id
+        where track.id = ${trackId}
+          and track.episode_id = ${episodeId}
+          and track.status = 'active'
+          and media.kind = 'file'
+          and media.status = 'ready'
+          and media.deleted_at is null
+          and media.object_key is not null
+          and media.source_url is null
+          and provider.provider = 's3'
+          and provider.status = 'active'
+          and (
+            (provider.owner_type = 'platform' and provider.owner_tenant_id is null)
+            or (
+              provider.owner_type = 'tenant'
+              and provider.owner_tenant_id = ${principal.tenantId}
+              and media.owner_type = 'tenant'
+              and media.owner_tenant_id = ${principal.tenantId}
+            )
+          )
+        for share of track, media, provider
+      `;
+      const track = rows[0];
+      if (!track) throw new NotFoundException('Playback track is unavailable');
+      try {
+        const signed = await this.signAsset(track, expiresInSeconds);
+        return {
+          expiresAt: signed.expiresAt.toISOString(),
+          id: trackId,
+          label: track.label,
+          locale: track.locale,
+          offlineSupported: false as const,
+          type: track.track_type,
+          url: signed.url,
+        };
+      } catch {
+        throw new ServiceUnavailableException({
+          code: 'PLAYBACK_SIGNING_UNAVAILABLE',
+          message: 'Secure playback is temporarily unavailable',
+        });
+      }
+    });
+  }
+
+  private async signAsset(asset: SecureAssetRow, expiresInSeconds: number) {
+    // Keep presigning inside the transaction while the provider is share-locked,
+    // so provider disable or credential rotation cannot race URL issuance.
+    const credentials: S3StorageCredentials = this.credentialCipher.decrypt(
+      asset.credential_ciphertext,
+      {
+        keyVersion: asset.key_version,
+        ownerTenantId: asset.owner_tenant_id,
+        ownerType: asset.owner_type,
+        providerId: asset.provider_id,
+      },
+    );
+    const signed = await this.storage.presignGetObject({
+      credentials,
+      expiresInSeconds,
+      objectKey: asset.object_key,
+      target: { bucket: asset.bucket, endpoint: asset.endpoint },
+    });
+    return { expiresAt: validSignedResponse(signed, expiresInSeconds), url: signed.url };
   }
 }
 

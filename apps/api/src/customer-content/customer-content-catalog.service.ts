@@ -294,6 +294,7 @@ export class CustomerContentCatalogService {
         points_amount: string | number | bigint | null;
         title: string;
         tracks: Array<{
+          id: string;
           isDefault: boolean;
           label: string;
           locale: string;
@@ -317,6 +318,7 @@ export class CustomerContentCatalogService {
           episode.media_asset_id,
           coalesce((
             select jsonb_agg(jsonb_build_object(
+              'id', track.id,
               'isDefault', track.is_default,
               'label', track.label,
               'locale', track.locale,

@@ -156,7 +156,7 @@ export function CustomerManagementPage({
   function chooseTenant(): void {
     const normalized = tenantInput.trim().toLowerCase();
     if (!isValidTenantId(normalized)) {
-      messageApi.error('请输入有效的商家 UUID');
+      messageApi.error('请输入有效的代理商 UUID');
       return;
     }
     closeDetail();
@@ -292,8 +292,8 @@ export function CustomerManagementPage({
       {scope === 'platform' ? (
         <Alert
           className="page-alert"
-          description="为避免全库模糊扫描，总后台必须先输入准确的商家 UUID，再查询该商家的用户。"
-          message="先选择商家"
+          description="为避免全库模糊扫描，总后台必须先输入准确的代理商 UUID，再查询该代理商的用户。"
+          message="先选择代理商"
           showIcon
           type="info"
         />
@@ -307,11 +307,11 @@ export function CustomerManagementPage({
                 maxLength={36}
                 onChange={(event) => setTenantInput(event.target.value)}
                 onPressEnter={chooseTenant}
-                placeholder="商家 UUID"
+                placeholder="代理商 UUID"
                 style={{ width: 330 }}
                 value={tenantInput}
               />
-              <Button onClick={chooseTenant} type="primary">查询商家用户</Button>
+              <Button onClick={chooseTenant} type="primary">查询代理商用户</Button>
             </>
           ) : null}
           <Input
@@ -351,7 +351,7 @@ export function CustomerManagementPage({
       </div>
 
       {!ready && scope === 'platform' ? (
-        <Empty description="输入商家 UUID 后查询；系统不会自动加载全平台用户" />
+        <Empty description="输入代理商 UUID 后查询；系统不会自动加载全平台用户" />
       ) : (
         <Table<CustomerRecord>
           columns={[
@@ -531,7 +531,7 @@ function CustomerDetail({
     <Space direction="vertical" size="large" style={{ width: '100%' }}>
       <Descriptions bordered column={1} size="small">
         <Descriptions.Item label="用户 ID"><Typography.Text copyable>{record.id}</Typography.Text></Descriptions.Item>
-        <Descriptions.Item label="商家 ID"><Typography.Text copyable>{record.tenantId}</Typography.Text></Descriptions.Item>
+        <Descriptions.Item label="代理商 ID"><Typography.Text copyable>{record.tenantId}</Typography.Text></Descriptions.Item>
         <Descriptions.Item label="用户名">{record.username}</Descriptions.Item>
         <Descriptions.Item label="邮箱（脱敏）">{record.email ?? '—'} / {record.emailVerified ? '已验证' : '未验证'}</Descriptions.Item>
         <Descriptions.Item label="手机号（脱敏）">{record.phone ?? '—'} / {record.phoneVerified ? '已验证' : '未验证'}</Descriptions.Item>

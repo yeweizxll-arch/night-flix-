@@ -360,10 +360,10 @@ export function SiteSettingsPanel({
             message={settings.effectiveSiteEnabled
               ? '用户站当前可访问'
               : siteStatusMode === 'platform'
-                ? '用户站当前不可访问：平台开关或商家开关已关闭'
+                ? '用户站当前不可访问：平台开关或代理商开关已关闭'
                 : settings.platformSiteEnabled
-                  ? '用户站当前由商家关闭'
-                  : '用户站已被平台关闭，商家无法自行恢复'}
+                  ? '用户站当前由代理商关闭'
+                  : '用户站已被平台关闭，代理商无法自行恢复'}
             showIcon
             type={settings.effectiveSiteEnabled ? 'success' : 'warning'}
           />
@@ -388,7 +388,7 @@ export function SiteSettingsPanel({
             </Col>
             <Col md={12} xs={24}>
               <Form.Item
-                extra="填写当前商家已上传且状态为 ready 的图片媒体 UUID；留空可清除。"
+                extra="填写当前代理商已上传且状态为 ready 的图片媒体 UUID；留空可清除。"
                 label="Logo 媒体 ID"
                 name="logoMediaAssetId"
               >
@@ -421,7 +421,7 @@ export function SiteSettingsPanel({
             </Col>
             <Col span={24}>
               <Form.Item
-                label={siteStatusMode === 'platform' ? '平台用户站安全开关' : '商家用户站开关'}
+                label={siteStatusMode === 'platform' ? '平台用户站安全开关' : '代理商用户站开关'}
                 name="userSiteEnabled"
                 valuePropName="checked"
               >

@@ -222,7 +222,7 @@ export function AnalyticsDashboardPage(props: {
       if (sequence === rankingSequence.current) setRanking(result);
     } catch (reason) {
       if (sequence === rankingSequence.current) {
-        setRankingError(errorMessage(reason, '商家排行加载失败'));
+        setRankingError(errorMessage(reason, '代理商排行加载失败'));
         setRanking(undefined);
       }
     } finally {
@@ -246,7 +246,7 @@ export function AnalyticsDashboardPage(props: {
   function applyTenantFilter(value: string): void {
     const normalized = value.trim();
     if (normalized && !UUID_PATTERN.test(normalized)) {
-      setRankingError('请输入正确的商家 UUID');
+      setRankingError('请输入正确的代理商 UUID');
       return;
     }
     rankingSequence.current += 1;
@@ -310,7 +310,7 @@ export function AnalyticsDashboardPage(props: {
                 style={{ display: 'block', minWidth: 210 }} value={timeZone} />
             </label>
           ) : (
-            <Typography.Text type="secondary">商家固定时区：{overview?.range.timeZone ?? '加载中'}</Typography.Text>
+            <Typography.Text type="secondary">代理商固定时区：{overview?.range.timeZone ?? '加载中'}</Typography.Text>
           )}
           <Button loading={overviewLoading} onClick={applyDateRange} type="primary">应用（最多 90 天）</Button>
           <Button disabled={!applied} loading={overviewLoading} onClick={() => void loadOverview(applied)}>刷新</Button>
@@ -355,19 +355,32 @@ export function AnalyticsDashboardPage(props: {
 
 function OverviewCards({ overview, scope }: { overview: AnalyticsOverview; scope: 'platform' | 'tenant' }) {
   return (
-    <Row gutter={[12, 12]}>
+    <div className={`analytics-metric-grid ${scope === 'tenant' ? 'analytics-metric-grid-tenant' : ''}`}>
       {scope === 'platform' && overview.tenants ? (
-        <Col xs={24} sm={12} xl={6}><Card><Statistic title="商家" value={overview.tenants.total} suffix={`活跃 ${overview.tenants.active}`} />
-          <Typography.Text type="secondary">过期 {overview.tenants.expired} · 暂停 {overview.tenants.suspended}</Typography.Text></Card></Col>
+        <Card className="dashboard-metric-card">
+          <Statistic title="代理商总数" value={overview.tenants.total} />
+          <Typography.Text type="secondary">
+            活跃 {overview.tenants.active} · 过期 {overview.tenants.expired} · 暂停 {overview.tenants.suspended}
+          </Typography.Text>
+        </Card>
       ) : null}
-      <Col xs={24} sm={12} xl={6}><Card><Statistic title="客户总数" value={overview.customers.total} suffix={`新增 ${overview.customers.new}`} />
-        <Typography.Text type="secondary">区间付费客户 {overview.customers.paid}</Typography.Text></Card></Col>
-      <Col xs={24} sm={12} xl={6}><Card><Statistic title="已支付订单" value={overview.orders.paid} suffix={`退款 ${overview.orders.refunded}`} /></Card></Col>
-      <Col xs={24} sm={12} xl={6}><Card><Statistic title="退款积压" value={overview.refundBacklog.processing}
-        suffix={`人工 ${overview.refundBacklog.manualReconciliation}`} /></Card></Col>
-      <Col xs={24} sm={12} xl={6}><Card><Statistic title="已发布内容" value={overview.content.published}
-        suffix={`待审 ${overview.content.pending}`} /><Typography.Text type="secondary">草稿 {overview.content.draft}</Typography.Text></Card></Col>
-    </Row>
+      <Card className="dashboard-metric-card">
+        <Statistic title="用户总数" value={overview.customers.total} />
+        <Typography.Text type="secondary">新增 {overview.customers.new} · 付费 {overview.customers.paid}</Typography.Text>
+      </Card>
+      <Card className="dashboard-metric-card">
+        <Statistic title="已支付订单" value={overview.orders.paid} />
+        <Typography.Text type="secondary">退款订单 {overview.orders.refunded}</Typography.Text>
+      </Card>
+      <Card className="dashboard-metric-card">
+        <Statistic title="退款待处理" value={overview.refundBacklog.processing} />
+        <Typography.Text type="secondary">需人工核对 {overview.refundBacklog.manualReconciliation}</Typography.Text>
+      </Card>
+      <Card className="dashboard-metric-card">
+        <Statistic title="已发布剧目" value={overview.content.published} />
+        <Typography.Text type="secondary">待审 {overview.content.pending} · 草稿 {overview.content.draft}</Typography.Text>
+      </Card>
+    </div>
   );
 }
 
@@ -410,14 +423,14 @@ function FinancialCards({ overview }: { overview: AnalyticsOverview }) {
   return (
     <Row gutter={[16, 16]}>
       <Col xs={24} xl={12}>
-        <Card title="商家余额（按币种）">
+        <Card title="代理商余额（按币种）">
           <Table dataSource={overview.merchantBalances} columns={[
             { dataIndex: 'currency', title: '币种' },
             { dataIndex: 'pendingMinor', title: '待结算', render: (value, row) => minorText(value, row.currency) },
             { dataIndex: 'availableMinor', title: '可用', render: (value, row) => minorText(value, row.currency) },
             { dataIndex: 'frozenMinor', title: '冻结', render: (value, row) => minorText(value, row.currency) },
             { dataIndex: 'withdrawnMinor', title: '已提现', render: (value, row) => minorText(value, row.currency) },
-          ]} locale={{ emptyText: '暂无商家余额' }} pagination={false} rowKey="currency" size="small" scroll={{ x: 720 }} />
+          ]} locale={{ emptyText: '暂无代理商余额' }} pagination={false} rowKey="currency" size="small" scroll={{ x: 720 }} />
         </Card>
       </Col>
       <Col xs={24} xl={12}>
@@ -461,20 +474,20 @@ function TenantRanking(props: {
   ranking?: TenantRankingResponse;
 }) {
   return (
-    <Card title="商家成交排行（单币种）">
+    <Card title="代理商成交排行（单币种）">
       <div className="tenant-content-toolbar">
         <Select options={currencies.map((value) => ({ label: value, value }))} placeholder="先选币种" style={{ width: 120 }}
           value={props.currency} onChange={props.onCurrency} />
         <Input.Search allowClear onChange={(event) => {
           props.onInput(event.target.value);
           if (!event.target.value) props.onSearch('');
-        }} onSearch={props.onSearch} placeholder="精确商家 UUID（可选）" style={{ maxWidth: 330 }} value={props.input} />
+        }} onSearch={props.onSearch} placeholder="精确代理商 UUID（可选）" style={{ maxWidth: 330 }} value={props.input} />
         <Button disabled={!props.currency} loading={props.loading} onClick={props.onReload}>刷新</Button>
       </div>
       {props.error ? <Alert action={<Button size="small" onClick={props.onReload}>重试</Button>}
         className="page-alert" message={props.error} showIcon type="error" /> : null}
       <Table<TenantRankingResponse['items'][number]> columns={[
-        { dataIndex: 'name', title: '商家', render: (value, row) => (
+        { dataIndex: 'name', title: '代理商', render: (value, row) => (
           <Space direction="vertical" size={0}><Typography.Text strong>{value}</Typography.Text>
             <Typography.Text copyable type="secondary">{row.tenantId}</Typography.Text></Space>
         ) },
@@ -483,7 +496,7 @@ function TenantRanking(props: {
         { dataIndex: 'paidOrders', title: '已支付订单' },
         { dataIndex: 'grossMinor', title: `${props.currency ?? '所选币种'} 原始成交`, render: (value) => props.currency ? minorText(value, props.currency) : '—' },
       ]} dataSource={props.ranking?.items ?? []} loading={props.loading}
-        locale={{ emptyText: <Empty description={props.currency ? '当前条件暂无商家数据' : '请先选择一个币种'} image={Empty.PRESENTED_IMAGE_SIMPLE} /> }}
+        locale={{ emptyText: <Empty description={props.currency ? '当前条件暂无代理商数据' : '请先选择一个币种'} image={Empty.PRESENTED_IMAGE_SIMPLE} /> }}
         pagination={false} rowKey="tenantId" size="small" />
       <Space style={{ marginTop: 12 }}>
         <Button disabled={!props.cursorState.history.length || props.loading} onClick={props.onPrevious}>上一页</Button>

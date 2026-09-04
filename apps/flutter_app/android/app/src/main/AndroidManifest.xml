@@ -1,7 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
     <application
-        android:label="shanchuang_drama"
+        android:label="night_flix"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <!-- Test App ID. Tenant release automation replaces this at build time. -->

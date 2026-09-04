@@ -77,6 +77,45 @@ export class RevenueShareService {
     });
   }
 
+  async listPolicies(tenantId?: string) {
+    if (tenantId) uuid(tenantId, 'tenantId');
+    return this.database.inPlatformContext(async (transaction) => {
+      const rows = await transaction<Array<{
+        content_scope: 'private' | 'public';
+        creator_bps: number;
+        headquarters_bps: number;
+        id: string;
+        income_type: (typeof INCOME_TYPES)[number];
+        status: 'active' | 'disabled';
+        tenant_bps: number;
+        tenant_id: string;
+        updated_at: Date;
+        version: number;
+      }>>`
+        select id, tenant_id, content_scope, income_type, headquarters_bps,
+          tenant_bps, creator_bps, status, version, updated_at
+        from content_revenue_share_policies
+        where (${tenantId ?? null}::uuid is null or tenant_id = ${tenantId ?? null})
+        order by tenant_id, content_scope, income_type
+        limit 1000
+      `;
+      return {
+        items: rows.map((row) => ({
+          contentScope: row.content_scope,
+          creatorBps: row.creator_bps,
+          headquartersBps: row.headquarters_bps,
+          id: row.id,
+          incomeType: row.income_type,
+          status: row.status,
+          tenantBps: row.tenant_bps,
+          tenantId: row.tenant_id,
+          updatedAt: row.updated_at.toISOString(),
+          version: row.version,
+        })),
+      };
+    });
+  }
+
   async record(rawInput: RecordRevenueInput, metadata: RevenueMutationMetadata) {
     const input = recordInput(rawInput);
     return this.database.inPlatformContext(async (transaction) => {
@@ -177,7 +216,13 @@ export class RevenueShareService {
     if (tenantId) uuid(tenantId, 'tenantId');
     if (month && !/^\d{4}-\d{2}$/.test(month)) throw new BadRequestException('month is invalid');
     return this.database.inPlatformContext(async (transaction) => {
-      const rows = await transaction<any[]>`
+      const rows = await transaction<Array<{
+        content_scope: string; creator_id_snapshot: string | null; creator_minor: string;
+        currency: string; drama_id: string; episode_id: string | null; gross_minor: string;
+        headquarters_minor: string; id: string; income_type: string; occurred_at: Date;
+        settlement_month: Date | string; source_id: string; source_type: string; status: string;
+        tenant_id: string; tenant_minor: string;
+      }>>`
         select id, tenant_id, drama_id, episode_id, creator_id_snapshot,
           content_scope, income_type, currency, gross_minor::text,
           headquarters_minor::text, tenant_minor::text, creator_minor::text,
@@ -188,9 +233,124 @@ export class RevenueShareService {
             or settlement_month = (${`${month ?? '2000-01'}-01`})::date)
         order by occurred_at desc, id desc limit 1000
       `;
-      return { items: rows };
+      return { items: rows.map((row) => ({
+        contentScope: row.content_scope,
+        creatorId: row.creator_id_snapshot ?? undefined,
+        creatorMinor: row.creator_minor,
+        currency: row.currency,
+        dramaId: row.drama_id,
+        episodeId: row.episode_id ?? undefined,
+        grossMinor: row.gross_minor,
+        headquartersMinor: row.headquarters_minor,
+        id: row.id,
+        incomeType: row.income_type,
+        occurredAt: row.occurred_at.toISOString(),
+        settlementMonth: typeof row.settlement_month === 'string'
+          ? row.settlement_month
+          : row.settlement_month.toISOString().slice(0, 10),
+        sourceId: row.source_id,
+        sourceType: row.source_type,
+        status: row.status,
+        tenantId: row.tenant_id,
+        tenantMinor: row.tenant_minor,
+      })) };
     });
   }
+
+  async settleMonth(
+    tenantId: string,
+    month: string,
+    currencyValue: string,
+    metadata: RevenueMutationMetadata,
+  ) {
+    uuid(tenantId, 'tenantId');
+    uuid(metadata.actorId, 'actorId');
+    const actorId = metadata.actorId;
+    const settlementMonth = closedSettlementMonth(month);
+    const currency = currencyValue.toUpperCase();
+    if (!CURRENCIES.includes(currency as (typeof CURRENCIES)[number])) {
+      throw new BadRequestException('currency is invalid');
+    }
+    return this.database.inPlatformContext(async (transaction) => {
+      const rows = await transaction<Array<{
+        creator_minor: string; gross_minor: string; headquarters_minor: string;
+        id: string; tenant_minor: string;
+      }>>`
+        select id, gross_minor::text, headquarters_minor::text,
+          tenant_minor::text, creator_minor::text
+        from content_revenue_ledger
+        where tenant_id = ${tenantId}
+          and settlement_month = ${settlementMonth}::date
+          and currency = ${currency}
+          and status = 'pending'
+        order by id
+        for update
+      `;
+      if (rows.length === 0) {
+        const existing = await transaction<Array<{ count: number }>>`
+          select count(*)::integer as count from content_revenue_ledger
+          where tenant_id = ${tenantId}
+            and settlement_month = ${settlementMonth}::date
+            and currency = ${currency}
+            and status = 'settled'
+        `;
+        return {
+          alreadySettled: (existing[0]?.count ?? 0) > 0,
+          count: existing[0]?.count ?? 0,
+          currency,
+          month,
+          tenantId,
+        };
+      }
+      await transaction`
+        update content_revenue_ledger set status = 'settled'
+        where id = any(${rows.map((row) => row.id)}::uuid[])
+          and status = 'pending'
+      `;
+      const totals = rows.reduce((sum, row) => ({
+        creatorMinor: sum.creatorMinor + BigInt(row.creator_minor),
+        grossMinor: sum.grossMinor + BigInt(row.gross_minor),
+        headquartersMinor: sum.headquartersMinor + BigInt(row.headquarters_minor),
+        tenantMinor: sum.tenantMinor + BigInt(row.tenant_minor),
+      }), { creatorMinor: 0n, grossMinor: 0n, headquartersMinor: 0n, tenantMinor: 0n });
+      await transaction`
+        insert into audit_logs (
+          id, scope_type, actor_type, actor_id, action, resource_type,
+          resource_id, after_json, request_id
+        ) values (
+          ${uuidV7()}, 'platform', 'platform_staff', ${actorId},
+          'finance.content_revenue.settle', 'content_revenue_month',
+          ${tenantId},
+          ${transaction.json({ count: rows.length, currency, month, tenantId })},
+          ${metadata.requestId}
+        )
+      `;
+      return {
+        alreadySettled: false,
+        count: rows.length,
+        creatorMinor: totals.creatorMinor.toString(),
+        currency,
+        grossMinor: totals.grossMinor.toString(),
+        headquartersMinor: totals.headquartersMinor.toString(),
+        month,
+        tenantId,
+        tenantMinor: totals.tenantMinor.toString(),
+      };
+    });
+  }
+}
+
+function closedSettlementMonth(value: string): string {
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(value)) {
+    throw new BadRequestException('month is invalid');
+  }
+  const month = new Date(`${value}-01T00:00:00.000Z`);
+  const current = new Date();
+  const currentMonth = new Date(Date.UTC(current.getUTCFullYear(), current.getUTCMonth(), 1));
+  if (month >= currentMonth) {
+    throw new BadRequestException('Only a closed UTC month can be settled');
+  }
+  return `${value}-01`;
 }
 
 function policyInput(input: RevenueSharePolicyInput) {

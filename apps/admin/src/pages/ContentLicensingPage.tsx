@@ -361,7 +361,7 @@ export function ContentLicensingPage() {
   function applyTenantFilter(): void {
     const value = tenantFilterInput.trim();
     if (value && !UUID_PATTERN.test(value)) {
-      messageApi.error('请输入有效的商家 UUID');
+      messageApi.error('请输入有效的代理商 UUID');
       return;
     }
     const nextFilter = value || undefined;
@@ -392,7 +392,7 @@ export function ContentLicensingPage() {
         <div>
           <Typography.Title level={2}>公共内容授权</Typography.Title>
           <Typography.Text type="secondary">
-            将平台自有公共剧以单剧或授权包的方式发放给商家。
+            将平台自有公共剧以单剧或授权包的方式发放给代理商。
           </Typography.Text>
         </div>
         {canManage ? (
@@ -407,7 +407,7 @@ export function ContentLicensingPage() {
 
       <Alert
         className="page-alert"
-        description="选择器只查询平台自有、已发布且未删除的公共剧。发放授权时服务端会再次校验剧集和商家的有效性。"
+        description="选择器只查询平台自有、已发布且未删除的公共剧。发放授权时服务端会再次校验剧集和代理商的有效性。"
         message="公共剧目录已按发布状态过滤"
         showIcon
         type="info"
@@ -656,14 +656,14 @@ function LicensePanel({
             allowClear
             onChange={(event) => onFilterInput(event.target.value)}
             onPressEnter={onApplyFilter}
-            placeholder="按商家 UUID 筛选"
+            placeholder="按代理商 UUID 筛选"
             style={{ width: 330 }}
             value={filterInput}
           />
           <Button loading={loading} onClick={onApplyFilter} type="primary">筛选</Button>
           {filter ? <Button onClick={onClearFilter}>清除</Button> : null}
         </Space.Compact>
-        {filter ? <Tag color="blue">已筛选商家</Tag> : null}
+        {filter ? <Tag color="blue">已筛选代理商</Tag> : null}
       </div>
       {error ? (
         <Alert
@@ -678,7 +678,7 @@ function LicensePanel({
         columns={[
           {
             dataIndex: 'tenantName',
-            title: '商家',
+            title: '代理商',
             render: (tenantName: string, item) => (
               <Space direction="vertical" size={0}>
                 <Typography.Text strong>{tenantName}</Typography.Text>
@@ -1047,8 +1047,8 @@ function GrantLicenseModal({
     >
       <Alert
         className="page-alert"
-        description="授权到期时间不能超过商家到期时间；单剧必须是已发布的平台公共剧。"
-        message="发放后商家只获得授权使用权"
+        description="授权到期时间不能超过代理商到期时间；单剧必须是已发布的平台公共剧。"
+        message="发放后代理商只获得授权使用权"
         showIcon
         type="info"
       />
@@ -1061,10 +1061,10 @@ function GrantLicenseModal({
         requiredMark={false}
       >
         <Form.Item
-          label="商家 UUID"
+          label="代理商 UUID"
           name="tenantId"
           rules={[
-            { required: true, message: '请输入商家 UUID' },
+            { required: true, message: '请输入代理商 UUID' },
             { message: '请输入有效的 UUID', pattern: UUID_PATTERN },
           ]}
         >
@@ -1146,7 +1146,7 @@ function RevokeLicenseModal({
       title="撤销内容授权"
     >
       <Typography.Paragraph type="secondary">
-        撤销「{target?.tenantName}」的当前授权后，对应公共剧将不再对该商家可用。
+        撤销「{target?.tenantName}」的当前授权后，对应公共剧将不再对该代理商可用。
       </Typography.Paragraph>
       <Form<RevokeLicenseForm>
         form={form}

@@ -304,7 +304,7 @@ export function PaymentSettingsPage({
             {config.provider === 'fake' ? <Tag color="red">Fake·本地测试</Tag> : null}
             {scope === 'tenant' ? (
               <Tag color={config.ownerType === 'platform' ? 'blue' : 'purple'}>
-                {config.ownerType === 'platform' ? '平台公共' : '商家独立'}
+                {config.ownerType === 'platform' ? '平台公共' : '代理商独立'}
               </Tag>
             ) : null}
           </Space>
@@ -515,7 +515,7 @@ export function PaymentSettingsPage({
               value={collectionMode}
             >
               <Radio.Button value="platform_collect">平台公共代收</Radio.Button>
-              <Radio.Button value="tenant_direct">商家独立直收</Radio.Button>
+              <Radio.Button value="tenant_direct">代理商独立直收</Radio.Button>
             </Radio.Group>
             <Select
               disabled={!canManage}
@@ -556,7 +556,7 @@ export function PaymentSettingsPage({
             <Empty
               description={scope === 'platform'
                 ? '尚未安装并配置真实支付渠道'
-                : '暂无可用的公共或商家独立支付配置'}
+                : '暂无可用的公共或代理商独立支付配置'}
               image={Empty.PRESENTED_IMAGE_SIMPLE}
             />
           ),

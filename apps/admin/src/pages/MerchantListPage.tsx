@@ -89,7 +89,7 @@ export function MerchantListPage() {
         );
         setData(result);
       } catch (reason) {
-        setError(reason instanceof ApiError ? reason.message : '商家数据加载失败');
+        setError(reason instanceof ApiError ? reason.message : '代理商数据加载失败');
       } finally {
         setLoading(false);
       }
@@ -116,7 +116,7 @@ export function MerchantListPage() {
       form.resetFields();
       await load(1);
     } catch (reason) {
-      setError(reason instanceof ApiError ? reason.message : '商家创建失败');
+      setError(reason instanceof ApiError ? reason.message : '代理商创建失败');
     } finally {
       setSubmitting(false);
     }
@@ -126,14 +126,14 @@ export function MerchantListPage() {
     <>
       <div className="page-heading">
         <div>
-          <Typography.Title level={2}>商家管理</Typography.Title>
+          <Typography.Title level={2}>代理商管理</Typography.Title>
           <Typography.Text type="secondary">
-            商家仅由总后台创建，账号、域名、数据和权限相互隔离。
+            代理商仅由总后台创建，账号、域名、数据和权限相互隔离。
           </Typography.Text>
         </div>
         {canCreate ? (
           <Button type="primary" onClick={() => setModalOpen(true)}>
-            创建商家
+            创建代理商
           </Button>
         ) : null}
       </div>
@@ -154,7 +154,7 @@ export function MerchantListPage() {
         columns={[
           {
             dataIndex: 'name',
-            title: '商家',
+            title: '代理商',
             render: (name: string, row) => (
               <Space direction="vertical" size={0}>
                 <Typography.Text strong>{name}</Typography.Text>
@@ -218,7 +218,7 @@ export function MerchantListPage() {
         footer={null}
         onCancel={() => setModalOpen(false)}
         open={modalOpen}
-        title="创建商家"
+        title="创建代理商"
         width={680}
       >
         <Form<CreateMerchantForm>
@@ -233,11 +233,11 @@ export function MerchantListPage() {
           requiredMark={false}
         >
           <div className="two-column-form">
-            <Form.Item label="商家名称" name="name" rules={[{ required: true }]}>
+            <Form.Item label="代理商名称" name="name" rules={[{ required: true }]}>
               <Input maxLength={200} />
             </Form.Item>
             <Form.Item
-              label="商家代码"
+              label="代理商代码"
               name="code"
               extra="用于生成平台子域名，创建后不可随意修改"
               rules={[
@@ -274,7 +274,7 @@ export function MerchantListPage() {
             </Form.Item>
           </div>
 
-          <Typography.Title level={5}>商家所有者账号</Typography.Title>
+          <Typography.Title level={5}>代理商所有者账号</Typography.Title>
           <div className="two-column-form">
             <Form.Item
               label="登录账号"

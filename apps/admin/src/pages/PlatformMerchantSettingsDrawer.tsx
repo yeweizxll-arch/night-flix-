@@ -34,7 +34,7 @@ export function PlatformMerchantSettingsDrawer({
           siteStatusEndpoint={`${base}/site-status`}
           siteStatusMode="platform"
           tlsStatusEndpoint={(domainId) => `${base}/domains/${encodeURIComponent(domainId)}/tls-status`}
-          title="商家站点配置"
+          title="代理商站点配置"
         />
       ) : null}
     </Drawer>

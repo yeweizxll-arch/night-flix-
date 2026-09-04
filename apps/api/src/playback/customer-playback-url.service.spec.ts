@@ -20,6 +20,7 @@ const episodeId = '33333333-3333-4333-8333-333333333333';
 const dramaId = '44444444-4444-4444-8444-444444444444';
 const mediaAssetId = '55555555-5555-4555-8555-555555555555';
 const previewMediaAssetId = '99999999-9999-4999-8999-999999999999';
+const trackId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const providerId = '66666666-6666-4666-8666-666666666666';
 const principal: CustomerPrincipal = {
   accountId,
@@ -197,6 +198,40 @@ describe('CustomerPlaybackUrlService', () => {
     expect(fixture.cipher.decrypt).not.toHaveBeenCalled();
     expect(fixture.storage.presignGetObject).not.toHaveBeenCalled();
   });
+
+  it('signs an active episode track only after full playback access', async () => {
+    const fixture = serviceFixture({
+      assetRows: [{ ...asset, label: 'English', locale: 'en', track_type: 'subtitle' }],
+    });
+    const response = await fixture.service.issueTrack(
+      principal, episodeId, trackId, 180, '203.0.113.10',
+    );
+
+    expect(fixture.access.resolveInTransaction).toHaveBeenCalledWith(
+      fixture.transaction, principal, episodeId,
+    );
+    expect(response).toMatchObject({
+      id: trackId,
+      label: 'English',
+      locale: 'en',
+      offlineSupported: false,
+      type: 'subtitle',
+      url: expect.stringMatching(/^https:\/\//),
+    });
+    expect(fixture.sql.join('\n')).toContain('track.episode_id');
+    expect(fixture.sql.join('\n')).toContain('for share of track, media, provider');
+  });
+
+  it('does not expose subtitle or dubbing tracks to preview access', async () => {
+    const fixture = serviceFixture({ accessResult: { ...fullAccess, access: 'preview' } });
+    await expect(fixture.service.issueTrack(
+      principal, episodeId, trackId, 180, '203.0.113.10',
+    )).rejects.toMatchObject({
+      response: expect.objectContaining({ code: 'TRACK_ENTITLEMENT_REQUIRED' }),
+    });
+    expect(fixture.transaction).not.toHaveBeenCalled();
+    expect(fixture.storage.presignGetObject).not.toHaveBeenCalled();
+  });
 });
 
 function serviceFixture(options: {
@@ -204,7 +239,7 @@ function serviceFixture(options: {
     durationSeconds: number; episodeId: string; mediaAssetId: string;
     previewMediaAssetId?: string; previewSeconds: number };
   adapterError?: Error;
-  assetRows?: typeof asset[];
+  assetRows?: Array<typeof asset & { label?: string; locale?: string; track_type?: 'dubbing' | 'subtitle' }>;
   cipherError?: Error;
   signingGate?: Promise<void>;
 } = {}) {

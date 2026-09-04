@@ -25,9 +25,11 @@ import {
   type PlatformContentMutationMetadata,
   type PlatformDramaRecord,
   type PlatformEpisodeRecord,
+  type PlatformEpisodeTrackRecord,
   type TaxonomyTranslationInput,
   type UpdatePlatformDramaInput,
   type UpdatePlatformEpisodeInput,
+  type UpsertPlatformEpisodeTrackInput,
   type UpdatePlatformTaxonomyInput,
 } from './platform-content-library.types';
 
@@ -35,6 +37,7 @@ const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const CODE_PATTERN = /^[a-z0-9][a-z0-9_-]{1,127}$/;
 const IDEMPOTENCY_PATTERN = /^[A-Za-z0-9._:-]{8,200}$/;
+const TRACK_LOCALE_PATTERN = /^[a-z]{2,3}(?:-[A-Z][a-z]{3})?(?:-[A-Z]{2}|-[0-9]{3})?$/;
 
 interface DramaRow {
   category_id: string | null;
@@ -68,6 +71,7 @@ interface EpisodeRow {
   preview_seconds: number;
   release_at: Date | null;
   status: PlatformEpisodeRecord['status'];
+  tracks: PlatformEpisodeTrackRecord[];
   translations: EpisodeTranslationInput[];
   unpublish_at: Date | null;
   version: number;
@@ -435,6 +439,126 @@ export class PlatformContentLibraryService {
         aggregateType: 'episode', after: response, eventType: 'PlatformEpisodeUpdated',
       });
       await this.completeCommand(transaction, command.id, response, 200, 'episode', episodeId);
+      return response;
+    });
+  }
+
+  async upsertEpisodeTrack(
+    dramaId: string,
+    episodeId: string,
+    rawInput: UpsertPlatformEpisodeTrackInput,
+    metadata: PlatformContentMutationMetadata,
+  ) {
+    assertUuid(dramaId, 'dramaId');
+    assertUuid(episodeId, 'episodeId');
+    const input = validateEpisodeTrack(rawInput);
+    assertMetadata(metadata);
+    return this.database.inPlatformContext(async (transaction) => {
+      const command = await this.beginCommand<PlatformEpisodeTrackRecord & { dramaVersion: number }>(
+        transaction,
+        { metadata, request: { dramaId, episodeId, ...input }, routeKey: 'platform.content_library.episode_track.upsert' },
+      );
+      if (command.cached) return command.cached;
+      await this.lockEditableDrama(transaction, dramaId, input.expectedDramaVersion);
+      const episode = await this.findEpisode(transaction, dramaId, episodeId, true);
+      if (!episode) throw new NotFoundException('Platform episode not found');
+      await this.assertTrackAsset(transaction, input.mediaAssetId, input.type);
+      if (input.isDefault) {
+        await transaction`
+          update episode_media_tracks set is_default = false
+          where episode_id = ${episodeId} and track_type = ${input.type}
+            and is_default
+        `;
+      }
+      const id = uuidV7();
+      const rows = await transaction<Array<{
+        id: string; is_default: boolean; label: string; locale: string;
+        media_asset_id: string; status: 'active'; track_type: 'dubbing' | 'subtitle';
+      }>>`
+        insert into episode_media_tracks (
+          id, episode_id, track_type, locale, label, media_asset_id,
+          is_default, status, created_by
+        ) values (
+          ${id}, ${episodeId}, ${input.type}, ${input.locale}, ${input.label},
+          ${input.mediaAssetId}, ${input.isDefault}, 'active', ${metadata.actorId}
+        ) on conflict (episode_id, track_type, locale) do update set
+          label = excluded.label,
+          media_asset_id = excluded.media_asset_id,
+          is_default = excluded.is_default,
+          status = 'active'
+        returning id, track_type, locale, label, media_asset_id, is_default, status
+      `;
+      const dramaRows = await transaction<Array<{ version: number }>>`
+        update dramas set version = version + 1, updated_by = ${metadata.actorId}
+        where id = ${dramaId} and version = ${input.expectedDramaVersion}
+        returning version
+      `;
+      const row = rows[0];
+      const dramaVersion = dramaRows[0]?.version;
+      if (!row || dramaVersion === undefined) {
+        throw new ConflictException('Platform drama changed concurrently');
+      }
+      const response = {
+        dramaVersion,
+        id: row.id,
+        isDefault: row.is_default,
+        label: row.label,
+        locale: row.locale,
+        mediaAssetId: row.media_asset_id,
+        status: row.status,
+        type: row.track_type,
+      };
+      await this.recordMutation(transaction, metadata, {
+        action: 'platform.content.episode_track.upsert', aggregateId: row.id,
+        aggregateType: 'episode_media_track', after: response,
+        eventType: 'PlatformEpisodeTrackUpserted',
+      });
+      await this.completeCommand(transaction, command.id, response, 200, 'episode_media_track', row.id);
+      return response;
+    });
+  }
+
+  async disableEpisodeTrack(
+    dramaId: string,
+    episodeId: string,
+    trackId: string,
+    rawInput: ExpectedVersionInput,
+    metadata: PlatformContentMutationMetadata,
+  ) {
+    assertUuid(dramaId, 'dramaId');
+    assertUuid(episodeId, 'episodeId');
+    assertUuid(trackId, 'trackId');
+    const input = validateExpectedVersion(rawInput);
+    assertMetadata(metadata);
+    return this.database.inPlatformContext(async (transaction) => {
+      const command = await this.beginCommand<{ dramaVersion: number; id: string; status: 'disabled' }>(
+        transaction,
+        { metadata, request: { dramaId, episodeId, trackId, ...input }, routeKey: 'platform.content_library.episode_track.disable' },
+      );
+      if (command.cached) return command.cached;
+      await this.lockEditableDrama(transaction, dramaId, input.expectedVersion);
+      const rows = await transaction<{ id: string }[]>`
+        update episode_media_tracks set status = 'disabled', is_default = false
+        where id = ${trackId} and episode_id = ${episodeId} and status = 'active'
+        returning id
+      `;
+      if (!rows[0]) throw new NotFoundException('Active episode media track not found');
+      const dramas = await transaction<Array<{ version: number }>>`
+        update dramas set version = version + 1, updated_by = ${metadata.actorId}
+        where id = ${dramaId} and version = ${input.expectedVersion}
+        returning version
+      `;
+      const dramaVersion = dramas[0]?.version;
+      if (dramaVersion === undefined) {
+        throw new ConflictException('Platform drama changed concurrently');
+      }
+      const response = { dramaVersion, id: trackId, status: 'disabled' as const };
+      await this.recordMutation(transaction, metadata, {
+        action: 'platform.content.episode_track.disable', aggregateId: trackId,
+        aggregateType: 'episode_media_track', after: response,
+        eventType: 'PlatformEpisodeTrackDisabled',
+      });
+      await this.completeCommand(transaction, command.id, response, 200, 'episode_media_track', trackId);
       return response;
     });
   }
@@ -1129,7 +1253,14 @@ export class PlatformContentLibraryService {
         coalesce((select jsonb_agg(jsonb_build_object(
           'locale', t.locale, 'title', t.title
         ) order by t.locale) from episode_translations as t
-          where t.episode_id = episode.id), '[]'::jsonb) as translations
+          where t.episode_id = episode.id), '[]'::jsonb) as translations,
+        coalesce((select jsonb_agg(jsonb_build_object(
+          'id', track.id, 'isDefault', track.is_default, 'label', track.label,
+          'locale', track.locale, 'mediaAssetId', track.media_asset_id,
+          'status', track.status, 'type', track.track_type
+        ) order by track.track_type, track.is_default desc, track.locale)
+          from episode_media_tracks as track
+          where track.episode_id = episode.id), '[]'::jsonb) as tracks
       from episodes as episode where episode.drama_id = ${dramaId}
         and episode.deleted_at is null order by episode.episode_no, episode.id
     `;
@@ -1151,7 +1282,14 @@ export class PlatformContentLibraryService {
           coalesce((select jsonb_agg(jsonb_build_object(
             'locale', t.locale, 'title', t.title
           ) order by t.locale) from episode_translations as t
-            where t.episode_id = episode.id), '[]'::jsonb) as translations
+            where t.episode_id = episode.id), '[]'::jsonb) as translations,
+          coalesce((select jsonb_agg(jsonb_build_object(
+            'id', track.id, 'isDefault', track.is_default, 'label', track.label,
+            'locale', track.locale, 'mediaAssetId', track.media_asset_id,
+            'status', track.status, 'type', track.track_type
+          ) order by track.track_type, track.is_default desc, track.locale)
+            from episode_media_tracks as track
+            where track.episode_id = episode.id), '[]'::jsonb) as tracks
         from episodes as episode where episode.id = ${episodeId}
           and episode.drama_id = ${dramaId} and episode.deleted_at is null
         for update of episode
@@ -1163,10 +1301,17 @@ export class PlatformContentLibraryService {
         episode.release_at, episode.unpublish_at, episode.duration_seconds,
         episode.media_asset_id, episode.preview_media_asset_id,
         episode.preview_seconds, episode.version,
-        coalesce((select jsonb_agg(jsonb_build_object(
-          'locale', t.locale, 'title', t.title
-        ) order by t.locale) from episode_translations as t
-          where t.episode_id = episode.id), '[]'::jsonb) as translations
+      coalesce((select jsonb_agg(jsonb_build_object(
+        'locale', t.locale, 'title', t.title
+      ) order by t.locale) from episode_translations as t
+        where t.episode_id = episode.id), '[]'::jsonb) as translations,
+      coalesce((select jsonb_agg(jsonb_build_object(
+        'id', track.id, 'isDefault', track.is_default, 'label', track.label,
+        'locale', track.locale, 'mediaAssetId', track.media_asset_id,
+        'status', track.status, 'type', track.track_type
+      ) order by track.track_type, track.is_default desc, track.locale)
+        from episode_media_tracks as track
+        where track.episode_id = episode.id), '[]'::jsonb) as tracks
       from episodes as episode where episode.id = ${episodeId}
         and episode.drama_id = ${dramaId} and episode.deleted_at is null
     `;
@@ -1225,6 +1370,29 @@ export class PlatformContentLibraryService {
       for share of media, provider
     `;
     if (!rows[0]) throw new BadRequestException('Platform episode media is unavailable');
+  }
+
+  private async assertTrackAsset(
+    transaction: DatabaseTransaction,
+    id: string,
+    type: 'dubbing' | 'subtitle',
+  ) {
+    const rows = await transaction<{ mime_type: string }[]>`
+      select media.mime_type from media_assets as media
+      inner join storage_providers as provider on provider.id = media.storage_provider_id
+      where media.id = ${id} and media.owner_type = 'platform'
+        and media.owner_tenant_id is null and media.kind = 'file'
+        and media.status = 'ready' and media.deleted_at is null
+        and media.object_key is not null and media.source_url is null
+        and provider.owner_type = 'platform' and provider.owner_tenant_id is null
+        and provider.provider = 's3' and provider.status = 'active'
+      for share of media, provider
+    `;
+    const mime = rows[0]?.mime_type;
+    const valid = type === 'subtitle'
+      ? mime === 'text/vtt'
+      : mime?.startsWith('audio/') === true;
+    if (!valid) throw new BadRequestException(`Platform ${type} media is unavailable`);
   }
 
   private async assertPublicationReady(
@@ -1773,6 +1941,27 @@ function episodeTranslations(value: unknown): EpisodeTranslationInput[] {
   });
 }
 
+function validateEpisodeTrack(value: unknown) {
+  const record = inputRecord(value);
+  assertOnlyKeys(record, [
+    'expectedDramaVersion', 'isDefault', 'label', 'locale', 'mediaAssetId', 'type',
+  ]);
+  const type = optionalEnum(record.type, 'type', ['dubbing', 'subtitle'] as const);
+  if (!type) throw new BadRequestException('type is required');
+  const locale = stringValue(record.locale, 'locale', 2, 20);
+  if (!TRACK_LOCALE_PATTERN.test(locale)) throw new BadRequestException('locale is invalid');
+  return {
+    expectedDramaVersion: versionValue(record.expectedDramaVersion),
+    isDefault: record.isDefault === undefined
+      ? false
+      : booleanValue(record.isDefault, 'isDefault', false),
+    label: stringValue(record.label, 'label', 1, 100),
+    locale,
+    mediaAssetId: requiredUuid(record.mediaAssetId, 'mediaAssetId'),
+    type,
+  };
+}
+
 function taxonomyTranslations(value: unknown): TaxonomyTranslationInput[] {
   if (!Array.isArray(value) || value.length < 1 || value.length > CONTENT_LOCALES.length) {
     throw new BadRequestException('translations must contain 1 to 6 locales');
@@ -1819,6 +2008,7 @@ function mapEpisode(row: EpisodeRow): PlatformEpisodeRecord {
     previewMediaAssetId: row.preview_media_asset_id ?? undefined,
     previewSeconds: row.preview_seconds, releaseAt: iso(row.release_at),
     status: row.status, translations: row.translations,
+    tracks: row.tracks,
     unpublishAt: iso(row.unpublish_at), version: row.version,
   }) as PlatformEpisodeRecord;
 }

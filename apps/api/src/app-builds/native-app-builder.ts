@@ -1,6 +1,5 @@
 import { spawn } from 'node:child_process';
 import {
-  chmod,
   cp,
   mkdir,
   mkdtemp,
@@ -12,7 +11,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 
 import sharp from 'sharp';
 
@@ -46,11 +45,12 @@ export class NativeAppBuilder {
   async build(input: NativeAppBuildInput): Promise<NativeAppBuildOutput> {
     const validated = await validateInput(input);
     const templateRoot = await resolveTemplateRoot(process.env.APP_BUILD_TEMPLATE_ROOT);
+    const flutter = await resolveFlutterBinary(process.env.APP_BUILD_FLUTTER_BIN);
     const temporaryRoot = await createTemporaryRoot(process.env.APP_BUILD_TMP_ROOT);
     try {
       const built = validated.target === 'android_debug'
-        ? await this.buildAndroid(templateRoot, temporaryRoot, validated)
-        : await this.buildIosSimulator(templateRoot, temporaryRoot, validated);
+        ? await this.buildAndroid(flutter, templateRoot, temporaryRoot, validated)
+        : await this.buildIosSimulator(flutter, templateRoot, temporaryRoot, validated);
       const info = await stat(built.path);
       if (!info.isFile() || info.size < 1 || info.size > MAX_ARTIFACT_BYTES) {
         throw new AppBuildExecutionError('build_failed');
@@ -67,78 +67,65 @@ export class NativeAppBuilder {
   }
 
   private async buildAndroid(
+    flutter: string,
     templateRoot: string,
     temporaryRoot: string,
     input: Awaited<ReturnType<typeof validateInput>>,
   ): Promise<Omit<NativeAppBuildOutput, 'cleanup'>> {
-    const source = join(templateRoot, 'android');
-    const target = join(temporaryRoot, 'android');
-    await copyNativeTemplate(source, target);
-    await rm(join(target, '.gradle'), { force: true, recursive: true });
-    await rm(join(target, 'app', 'build'), { force: true, recursive: true });
-    await rm(join(target, 'local.properties'), { force: true });
-
-    const capacitorAndroid = await realpath(join(
-      templateRoot, 'node_modules', '@capacitor', 'android', 'capacitor',
-    )).catch(() => undefined);
-    if (!capacitorAndroid) throw new AppBuildExecutionError('builder_unavailable');
-    const settingsPath = join(target, 'capacitor.settings.gradle');
-    const settings = await readFile(settingsPath, 'utf8');
-    await writeFile(settingsPath, settings.replace(
-      /project\(':capacitor-android'\)\.projectDir = new File\([^\n]+\)/,
-      `project(':capacitor-android').projectDir = new File('${groovyString(capacitorAndroid)}')`,
-    ), 'utf8');
-
-    const gradlePath = join(target, 'app', 'build.gradle');
+    const target = join(temporaryRoot, 'flutter_app');
+    await copyFlutterTemplate(templateRoot, target);
+    const gradlePath = join(target, 'android', 'app', 'build.gradle.kts');
     let gradle = await readFile(gradlePath, 'utf8');
-    gradle = replaceRequired(gradle, 'namespace = "com.drama.saas.test"',
+    gradle = replaceRequired(gradle, 'namespace = "com.nightflix.template"',
       `namespace = "${input.androidApplicationId}"`);
-    gradle = replaceRequired(gradle, 'applicationId "com.drama.saas.test"',
-      `applicationId "${input.androidApplicationId}"`);
+    gradle = replaceRequired(gradle, 'applicationId = "com.nightflix.template"',
+      `applicationId = "${input.androidApplicationId}"`);
     await writeFile(gradlePath, gradle, 'utf8');
 
-    const oldJava = join(
-      target, 'app', 'src', 'main', 'java', 'com', 'drama', 'saas', 'test', 'MainActivity.java',
+    const oldKotlin = join(
+      target, 'android', 'app', 'src', 'main', 'kotlin',
+      'com', 'nightflix', 'template', 'MainActivity.kt',
     );
     const packageDirectory = join(
-      target, 'app', 'src', 'main', 'java', ...input.androidApplicationId.split('.'),
+      target, 'android', 'app', 'src', 'main', 'kotlin', ...input.androidApplicationId.split('.'),
     );
     await mkdir(packageDirectory, { recursive: true });
-    const java = replaceRequired(
-      await readFile(oldJava, 'utf8'),
-      'package com.drama.saas.test;',
-      `package ${input.androidApplicationId};`,
+    const kotlin = replaceRequired(
+      await readFile(oldKotlin, 'utf8'),
+      'package com.nightflix.template',
+      `package ${input.androidApplicationId}`,
     );
-    await writeFile(join(packageDirectory, 'MainActivity.java'), java, 'utf8');
-    if (dirname(oldJava) !== packageDirectory) {
-      await rm(oldJava, { force: true });
+    await writeFile(join(packageDirectory, 'MainActivity.kt'), kotlin, 'utf8');
+    if (dirname(oldKotlin) !== packageDirectory) {
+      await rm(oldKotlin, { force: true });
     }
 
-    await writeAndroidStrings(target, input);
-    await writeCapacitorConfig(
-      join(target, 'app', 'src', 'main', 'assets', 'capacitor.config.json'), input,
-    );
+    await writeAndroidManifest(target, input);
     await writeAndroidImages(target, input.icon, input.splash);
-    const gradlew = join(target, 'gradlew');
-    await chmod(gradlew, 0o700);
-    const gradleHome = await requiredAbsoluteDirectory(
-      process.env.APP_BUILD_GRADLE_USER_HOME,
-      'APP_BUILD_GRADLE_USER_HOME',
-    );
-    const androidUserHome = join(temporaryRoot, 'android-user-home');
-    await mkdir(androidUserHome, { recursive: true, mode: 0o700 });
+    await writeFile(join(target, 'assets', 'brand', 'app-icon-master.png'), input.icon);
+    const environment: NodeJS.ProcessEnv = {
+      PUB_CACHE: await requiredAbsoluteDirectory(
+        process.env.APP_BUILD_PUB_CACHE,
+        'APP_BUILD_PUB_CACHE',
+      ),
+    };
+    if (process.env.APP_BUILD_GRADLE_USER_HOME) {
+      environment.GRADLE_USER_HOME = await requiredAbsoluteDirectory(
+        process.env.APP_BUILD_GRADLE_USER_HOME,
+        'APP_BUILD_GRADLE_USER_HOME',
+      );
+    }
+    const buildEnvironmentVariables = buildEnvironment(environment);
     await runFixedCommand(
-      gradlew,
-      ['--offline', '--no-daemon', '--console=plain', '--quiet', 'assembleDebug'],
-      {
-      cwd: target,
-      environment: buildEnvironment({
-        ANDROID_USER_HOME: androidUserHome,
-        GRADLE_USER_HOME: gradleHome,
-      }),
-      },
+      flutter,
+      ['--suppress-analytics', 'pub', 'get', '--offline'],
+      { cwd: target, environment: buildEnvironmentVariables },
     );
-    const produced = join(target, 'app', 'build', 'outputs', 'apk', 'debug', 'app-debug.apk');
+    await runFixedCommand(flutter, [
+      '--suppress-analytics', 'build', 'apk', '--debug', '--no-pub',
+      `--dart-define=API_BASE_URL=${input.h5Origin}`,
+    ], { cwd: target, environment: buildEnvironmentVariables });
+    const produced = join(target, 'build', 'app', 'outputs', 'flutter-apk', 'app-debug.apk');
     const filename = `${input.jobId}-android-debug.apk`;
     const artifact = join(temporaryRoot, filename);
     await rename(produced, artifact);
@@ -150,6 +137,7 @@ export class NativeAppBuilder {
   }
 
   private async buildIosSimulator(
+    flutter: string,
     templateRoot: string,
     temporaryRoot: string,
     input: Awaited<ReturnType<typeof validateInput>>,
@@ -157,54 +145,51 @@ export class NativeAppBuilder {
     if (process.platform !== 'darwin') {
       throw new AppBuildExecutionError('builder_unavailable');
     }
-    const source = join(templateRoot, 'ios', 'App');
-    const target = join(temporaryRoot, 'ios', 'App');
-    await copyNativeTemplate(source, target);
-    await cp(
-      join(templateRoot, 'ios', 'debug.xcconfig'),
-      join(temporaryRoot, 'ios', 'debug.xcconfig'),
-    ).catch(() => { throw new AppBuildExecutionError('builder_unavailable'); });
-    const projectPath = join(target, 'App.xcodeproj', 'project.pbxproj');
+    const target = join(temporaryRoot, 'flutter_app');
+    await copyFlutterTemplate(templateRoot, target);
+    const projectPath = join(target, 'ios', 'Runner.xcodeproj', 'project.pbxproj');
     let project = await readFile(projectPath, 'utf8');
-    const matches = project.match(/PRODUCT_BUNDLE_IDENTIFIER = com\.drama\.saas\.test;/g) ?? [];
+    const matches = project.match(/PRODUCT_BUNDLE_IDENTIFIER = com\.nightflix\.template;/g) ?? [];
     if (matches.length < 1) throw new AppBuildExecutionError('build_failed');
     project = project.replace(
-      /PRODUCT_BUNDLE_IDENTIFIER = com\.drama\.saas\.test;/g,
+      /PRODUCT_BUNDLE_IDENTIFIER = com\.nightflix\.template;/g,
       `PRODUCT_BUNDLE_IDENTIFIER = ${input.iosBundleId};`,
+    );
+    project = project.replace(
+      /PRODUCT_BUNDLE_IDENTIFIER = com\.nightflix\.template\.RunnerTests;/g,
+      `PRODUCT_BUNDLE_IDENTIFIER = ${input.iosBundleId}.RunnerTests;`,
     );
     await writeFile(projectPath, project, 'utf8');
 
-    const infoPath = join(target, 'App', 'Info.plist');
+    const infoPath = join(target, 'ios', 'Runner', 'Info.plist');
     let info = await readFile(infoPath, 'utf8');
     info = info.replace(
       /(<key>CFBundleDisplayName<\/key>\s*<string>)[^<]*(<\/string>)/,
       `$1${xmlText(input.appName)}$2`,
     );
     await writeFile(infoPath, info, 'utf8');
-    await writeCapacitorConfig(join(target, 'App', 'capacitor.config.json'), input);
     await writeIosImages(target, input.icon, input.splash);
+    await writeFile(join(target, 'assets', 'brand', 'app-icon-master.png'), input.icon);
 
-    const packageCache = await requiredAbsoluteDirectory(
-      process.env.APP_BUILD_XCODE_PACKAGES,
-      'APP_BUILD_XCODE_PACKAGES',
+    const buildEnvironmentVariables = buildEnvironment({
+      PUB_CACHE: await requiredAbsoluteDirectory(
+        process.env.APP_BUILD_PUB_CACHE,
+        'APP_BUILD_PUB_CACHE',
+      ),
+    });
+    await runFixedCommand(
+      flutter,
+      ['--suppress-analytics', 'pub', 'get', '--offline'],
+      { cwd: target, environment: buildEnvironmentVariables },
     );
-    const derivedData = join(temporaryRoot, 'ios-derived-data');
-    await runFixedCommand('xcodebuild', [
-      '-project', join(target, 'App.xcodeproj'),
-      '-scheme', 'App',
-      '-configuration', 'Debug',
-      '-sdk', 'iphonesimulator',
-      '-quiet',
-      '-derivedDataPath', derivedData,
-      '-clonedSourcePackagesDirPath', packageCache,
-      '-disableAutomaticPackageResolution',
-      'CODE_SIGNING_ALLOWED=NO',
-      'build',
+    await runFixedCommand(flutter, [
+      '--suppress-analytics', 'build', 'ios', '--simulator', '--debug', '--no-codesign', '--no-pub',
+      `--dart-define=API_BASE_URL=${input.h5Origin}`,
     ], {
       cwd: target,
-      environment: buildEnvironment(),
+      environment: buildEnvironmentVariables,
     });
-    const app = join(derivedData, 'Build', 'Products', 'Debug-iphonesimulator', 'App.app');
+    const app = join(target, 'build', 'ios', 'iphonesimulator', 'Runner.app');
     const filename = `${input.jobId}-ios-simulator.zip`;
     const artifact = join(temporaryRoot, filename);
     await runFixedCommand('/usr/bin/ditto', [
@@ -248,65 +233,66 @@ async function validateInput(input: NativeAppBuildInput) {
   return { ...input, h5Origin: origin };
 }
 
-async function writeCapacitorConfig(path: string, input: Awaited<ReturnType<typeof validateInput>>) {
-  const host = new URL(input.h5Origin).hostname;
-  const config = {
-    android: { allowMixedContent: false, webContentsDebuggingEnabled: false },
-    appId: input.target === 'android_debug' ? input.androidApplicationId : input.iosBundleId,
-    appName: input.appName,
-    packageClassList: [],
-    server: {
-      allowNavigation: [host],
-      cleartext: false,
-      url: input.h5Origin,
-    },
-    webDir: '../h5/dist',
-  };
-  await writeFile(path, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
-}
-
-async function writeAndroidStrings(
+async function writeAndroidManifest(
   root: string,
   input: Awaited<ReturnType<typeof validateInput>>,
 ) {
-  const values = `<?xml version='1.0' encoding='utf-8'?>\n<resources>\n`
-    + `    <string name="app_name">${xmlText(input.appName)}</string>\n`
-    + `    <string name="title_activity_main">${xmlText(input.appName)}</string>\n`
-    + `    <string name="package_name">${xmlText(input.androidApplicationId)}</string>\n`
-    + `    <string name="custom_url_scheme">${xmlText(input.androidApplicationId)}</string>\n`
-    + `</resources>\n`;
-  await writeFile(join(root, 'app', 'src', 'main', 'res', 'values', 'strings.xml'), values, 'utf8');
+  const path = join(root, 'android', 'app', 'src', 'main', 'AndroidManifest.xml');
+  const manifest = replaceRequired(
+    await readFile(path, 'utf8'),
+    'android:label="night_flix"',
+    `android:label="${xmlText(input.appName)}"`,
+  );
+  await writeFile(path, manifest, 'utf8');
 }
 
 async function writeAndroidImages(root: string, icon: Buffer, splash?: Buffer) {
-  const resourceRoot = join(root, 'app', 'src', 'main', 'res');
+  const resourceRoot = join(root, 'android', 'app', 'src', 'main', 'res');
   const files = await collectPngFiles(resourceRoot);
   for (const path of files) {
-    const name = basename(path);
     const current = await sharp(path).metadata();
     if (!current.width || !current.height) throw new AppBuildExecutionError('build_failed');
-    const isSplash = name === 'splash.png';
-    const source = isSplash ? (splash ?? icon) : icon;
-    const fit = isSplash && !splash ? 'contain' : 'cover';
-    await sharp(source, { limitInputPixels: 100_000_000 })
-      .resize(current.width, current.height, { background: '#ffffff', fit })
+    await sharp(icon, { limitInputPixels: 100_000_000 })
+      .resize(current.width, current.height, { background: '#080911', fit: 'contain' })
       .png()
       .toFile(`${path}.next`);
     await rename(`${path}.next`, path);
   }
+  if (splash) {
+    const launchImage = join(resourceRoot, 'drawable', 'launch_image.png');
+    await sharp(splash, { limitInputPixels: 100_000_000 })
+      .resize(1080, 1920, { fit: 'cover' }).png().toFile(launchImage);
+    for (const directory of ['drawable', 'drawable-v21']) {
+      const path = join(resourceRoot, directory, 'launch_background.xml');
+      const source = await readFile(path, 'utf8');
+      const layer = `<?xml version="1.0" encoding="utf-8"?>\n`
+        + `<layer-list xmlns:android="http://schemas.android.com/apk/res/android">\n`
+        + `    <item android:drawable="@android:color/black" />\n`
+        + `    <item><bitmap android:gravity="fill" android:src="@drawable/launch_image" /></item>\n`
+        + `</layer-list>\n`;
+      if (!source.includes('<layer-list')) throw new AppBuildExecutionError('build_failed');
+      await writeFile(path, layer, 'utf8');
+    }
+  }
 }
 
 async function writeIosImages(root: string, icon: Buffer, splash?: Buffer) {
-  const iconPath = join(root, 'App', 'Assets.xcassets', 'AppIcon.appiconset', 'AppIcon-512@2x.png');
-  await sharp(icon).resize(1024, 1024, { fit: 'cover' }).removeAlpha().png().toFile(`${iconPath}.next`);
-  await rename(`${iconPath}.next`, iconPath);
-  const splashRoot = join(root, 'App', 'Assets.xcassets', 'Splash.imageset');
-  for (const filename of [
-    'splash-2732x2732.png', 'splash-2732x2732-1.png', 'splash-2732x2732-2.png',
-  ]) {
-    const path = join(splashRoot, filename);
+  const iconRoot = join(root, 'ios', 'Runner', 'Assets.xcassets', 'AppIcon.appiconset');
+  for (const path of await collectPngFiles(iconRoot)) {
+    const current = await sharp(path).metadata();
+    if (!current.width || !current.height) throw new AppBuildExecutionError('build_failed');
+    await sharp(icon).resize(current.width, current.height, { fit: 'cover' })
+      .removeAlpha().png().toFile(`${path}.next`);
+    await rename(`${path}.next`, path);
+  }
+  const splashRoot = join(root, 'ios', 'Runner', 'Assets.xcassets', 'LaunchImage.imageset');
+  for (const path of await collectPngFiles(splashRoot)) {
+    const current = await sharp(path).metadata();
+    if (!current.width || !current.height) throw new AppBuildExecutionError('build_failed');
     await sharp(splash ?? icon)
-      .resize(2732, 2732, { background: '#ffffff', fit: splash ? 'cover' : 'contain' })
+      .resize(current.width, current.height, {
+        background: '#080911', fit: splash ? 'cover' : 'contain',
+      })
       .png()
       .toFile(`${path}.next`);
     await rename(`${path}.next`, path);
@@ -327,7 +313,7 @@ async function collectPngFiles(root: string): Promise<string[]> {
   return result;
 }
 
-async function copyNativeTemplate(source: string, target: string) {
+async function copyFlutterTemplate(source: string, target: string) {
   const root = await realpath(source).catch(() => undefined);
   if (!root) throw new AppBuildExecutionError('builder_unavailable');
   await cp(root, target, {
@@ -336,7 +322,9 @@ async function copyNativeTemplate(source: string, target: string) {
       const pathRelative = relative(root, path);
       if (!pathRelative) return true;
       const parts = pathRelative.split(sep);
-      return !parts.some((part) => ['.gradle', 'DerivedData', 'build', 'node_modules'].includes(part));
+      return !parts.some((part) => [
+        '.dart_tool', '.git', '.gradle', '.idea', 'Pods', 'build', 'node_modules',
+      ].includes(part));
     },
   });
 }
@@ -358,6 +346,15 @@ async function cleanupTemporaryRoot(path: string) {
 async function resolveTemplateRoot(value: string | undefined) {
   if (!value || !isAbsolute(value)) throw new AppBuildExecutionError('builder_unavailable');
   return realpath(value).catch(() => { throw new AppBuildExecutionError('builder_unavailable'); });
+}
+
+async function resolveFlutterBinary(value: string | undefined) {
+  if (!value || !isAbsolute(value)) throw new AppBuildExecutionError('builder_unavailable');
+  const path = await realpath(value).catch(() => undefined);
+  if (!path || !(await stat(path)).isFile()) {
+    throw new AppBuildExecutionError('builder_unavailable');
+  }
+  return path;
 }
 
 async function requiredAbsoluteDirectory(value: string | undefined, name: string) {
@@ -457,8 +454,4 @@ function replaceRequired(source: string, find: string, replacement: string) {
 function xmlText(value: string) {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
-}
-
-function groovyString(value: string) {
-  return value.replace(/\\/g, '/').replace(/'/g, "\\'");
 }

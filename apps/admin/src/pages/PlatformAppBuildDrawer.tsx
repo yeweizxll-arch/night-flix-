@@ -455,7 +455,7 @@ export function PlatformAppBuildDrawer({ merchant, onClose, principal }: Props) 
       {!overviewLoading && prerequisites && !configurationReady ? (
         <Alert
           className="page-alert"
-          description="需先启用商家客户站、准备已验证且 TLS 生效的域名，并上传通过服务端解码核验的 1024×1024 无透明 PNG 应用图标。"
+          description="需先启用代理商客户站、准备已验证且 TLS 生效的域名，并上传通过服务端解码核验的 1024×1024 无透明 PNG 应用图标。"
           message="构建前置条件尚未满足"
           showIcon
           type="warning"
@@ -467,7 +467,7 @@ export function PlatformAppBuildDrawer({ merchant, onClose, principal }: Props) 
       {prerequisites && prerequisites.assetProviders.length === 0 ? (
         <Alert
           className="page-alert"
-          message="当前商家没有可用于构建资产直传的 active S3 Provider，请先配置商家存储或启用公共存储。"
+          message="当前代理商没有可用于构建资产直传的 active S3 Provider，请先配置代理商存储或启用公共存储。"
           showIcon
           type="warning"
         />
@@ -484,7 +484,7 @@ export function PlatformAppBuildDrawer({ merchant, onClose, principal }: Props) 
             <Input maxLength={50} />
           </Form.Item>
           <Form.Item
-            extra="例如 com.example.drama；创建构建任务前请确认不会与其他商家冲突。"
+            extra="例如 com.example.drama；创建构建任务前请确认不会与其他代理商冲突。"
             label="Android Application ID"
             name="androidApplicationId"
             rules={[
@@ -895,7 +895,7 @@ function AppBuildAssetUploadModal({
             disabled={Boolean(stage)}
             onChange={setProviderId}
             options={providers.map((provider) => ({
-              label: `${provider.label}（${provider.ownerType === 'platform' ? '公共' : '商家'}）`,
+              label: `${provider.label}（${provider.ownerType === 'platform' ? '公共' : '代理商'}）`,
               value: provider.id,
             }))}
             placeholder="选择 active S3 Provider"

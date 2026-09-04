@@ -61,7 +61,7 @@ const moduleLabels: Record<string, string> = {
   notification: '消息推送',
   platform: '平台管理',
   storage: '对象存储',
-  tenant: '商家管理',
+  tenant: '代理商管理',
 };
 
 const actionLabels: Record<string, string> = {

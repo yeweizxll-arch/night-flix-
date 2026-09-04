@@ -42,14 +42,38 @@ USER drama
 EXPOSE 3000
 CMD ["node", "dist/main.js"]
 
-FROM nginx:1.27-alpine AS web
+FROM api AS web-api
+ENV DRAMA_SERVICE_ROLE=web
+CMD ["node", "dist/main.js"]
+
+FROM api AS admin-api
+ENV DRAMA_SERVICE_ROLE=admin
+CMD ["node", "dist/main.js"]
+
+FROM api AS agent-api
+ENV DRAMA_SERVICE_ROLE=agent
+CMD ["node", "dist/main.js"]
+
+FROM api AS worker
+CMD ["node", "dist/cli/run-worker.js"]
+
+FROM nginx:1.27-alpine AS static-base
 
 COPY deploy/nginx/default.conf.template /etc/nginx/templates/default.conf.template
-COPY --from=build /output/platform-admin /srv/platform-admin
-COPY --from=build /output/tenant-admin /srv/tenant-admin
-COPY --from=build /output/h5 /srv/h5
-
-ENV STATIC_ROOT=/srv/h5
-ENV API_ORIGIN=http://api:3000
 ENV NGINX_ENVSUBST_FILTER=STATIC_ROOT|API_ORIGIN
 EXPOSE 8080
+
+FROM static-base AS platform-admin-static
+COPY --from=build /output/platform-admin /srv/platform-admin
+ENV STATIC_ROOT=/srv/platform-admin
+ENV API_ORIGIN=http://admin-api:3000
+
+FROM static-base AS tenant-admin-static
+COPY --from=build /output/tenant-admin /srv/tenant-admin
+ENV STATIC_ROOT=/srv/tenant-admin
+ENV API_ORIGIN=http://agent-api:3000
+
+FROM static-base AS web-static
+COPY --from=build /output/h5 /srv/h5
+ENV STATIC_ROOT=/srv/h5
+ENV API_ORIGIN=http://web-api:3000

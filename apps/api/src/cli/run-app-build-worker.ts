@@ -77,6 +77,12 @@ async function detectCapabilities(): Promise<AppBuildTarget[]> {
   const templateRoot = await requiredDirectory(
     'APP_BUILD_TEMPLATE_ROOT', process.env.APP_BUILD_TEMPLATE_ROOT,
   );
+  await requiredFile(
+    'Flutter executable',
+    await requiredAbsoluteFile('APP_BUILD_FLUTTER_BIN', process.env.APP_BUILD_FLUTTER_BIN),
+  );
+  await requiredFile('Flutter pubspec', join(templateRoot, 'pubspec.yaml'));
+  await requiredDirectory('APP_BUILD_PUB_CACHE', process.env.APP_BUILD_PUB_CACHE);
   const providerId = process.env.APP_BUILD_ARTIFACT_STORAGE_PROVIDER_ID?.trim() ?? '';
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
     .test(providerId)) {
@@ -84,22 +90,28 @@ async function detectCapabilities(): Promise<AppBuildTarget[]> {
   }
 
   const capabilities: AppBuildTarget[] = [];
-  const gradleHome = process.env.APP_BUILD_GRADLE_USER_HOME?.trim();
-  if (gradleHome) {
-    await requiredDirectory('APP_BUILD_GRADLE_USER_HOME', gradleHome);
-    await requiredFile('Android Gradle wrapper', join(templateRoot, 'android', 'gradlew'));
-    await requiredDirectory(
-      'Capacitor Android template',
-      join(templateRoot, 'node_modules', '@capacitor', 'android', 'capacitor'),
+  const androidSdk = process.env.ANDROID_HOME?.trim() || process.env.ANDROID_SDK_ROOT?.trim();
+  if (androidSdk) {
+    await requiredDirectory('Android SDK', androidSdk);
+    await requiredFile(
+      'Flutter Android project', join(templateRoot, 'android', 'app', 'build.gradle.kts'),
     );
+    if (process.env.APP_BUILD_GRADLE_USER_HOME?.trim()) {
+      await requiredDirectory(
+        'APP_BUILD_GRADLE_USER_HOME', process.env.APP_BUILD_GRADLE_USER_HOME,
+      );
+    }
     capabilities.push('android_debug');
   }
 
-  const xcodePackages = process.env.APP_BUILD_XCODE_PACKAGES?.trim();
-  if (process.platform === 'darwin' && xcodePackages) {
-    await requiredDirectory('APP_BUILD_XCODE_PACKAGES', xcodePackages);
+  const pod = process.env.APP_BUILD_COCOAPODS_BIN?.trim();
+  if (process.platform === 'darwin' && pod) {
+    await requiredFile(
+      'CocoaPods executable',
+      await requiredAbsoluteFile('APP_BUILD_COCOAPODS_BIN', pod),
+    );
     await requiredDirectory(
-      'iOS Xcode project', join(templateRoot, 'ios', 'App', 'App.xcodeproj'),
+      'Flutter iOS project', join(templateRoot, 'ios', 'Runner.xcodeproj'),
     );
     await requiredFile('xcodebuild', '/usr/bin/xcodebuild');
     await requiredFile('ditto', '/usr/bin/ditto');
@@ -109,6 +121,12 @@ async function detectCapabilities(): Promise<AppBuildTarget[]> {
     throw new Error('No usable Android or iOS Simulator app-build toolchain is configured');
   }
   return capabilities;
+}
+
+async function requiredAbsoluteFile(name: string, value: string | undefined): Promise<string> {
+  const path = value?.trim() ?? '';
+  if (!path || !isAbsolute(path)) throw new Error(`${name} must be an absolute file`);
+  return path;
 }
 
 async function requiredDirectory(name: string, value: string | undefined): Promise<string> {

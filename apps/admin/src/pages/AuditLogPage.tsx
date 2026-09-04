@@ -67,7 +67,7 @@ const emptyData: AuditLogPageResponse = { items: [], page: 1, pageSize: 20, tota
 const actorLabels: Record<ActorType, string> = {
   platform_staff: '平台员工',
   system: '系统',
-  tenant_staff: '商家员工',
+  tenant_staff: '代理商员工',
   user: '用户',
 };
 const uuidRule = {
@@ -201,7 +201,7 @@ export function AuditLogPage({
             <Input allowClear maxLength={128} />
           </Form.Item>
           {allowTenantFilter ? (
-            <Form.Item label="商家 UUID" name="tenantId" rules={[uuidRule]}>
+            <Form.Item label="代理商 UUID" name="tenantId" rules={[uuidRule]}>
               <Input allowClear maxLength={36} />
             </Form.Item>
           ) : null}
@@ -264,7 +264,7 @@ export function AuditLogPage({
           },
           ...(allowTenantFilter ? [{
             dataIndex: 'tenantId' as const,
-            title: '商家 UUID',
+            title: '代理商 UUID',
             width: 160,
             render: (value: string | null) => value
               ? <Typography.Text className="secondary-id" copyable>{value}</Typography.Text>
@@ -323,7 +323,7 @@ function AuditDetailDrawer({ detail, onClose }: {
             <Descriptions.Item label="资源 UUID">{detail.resource.id ?? '—'}</Descriptions.Item>
             <Descriptions.Item label="Request ID" span={2}>{detail.requestId}</Descriptions.Item>
             {detail.tenantId ? (
-              <Descriptions.Item label="商家 UUID" span={2}>{detail.tenantId}</Descriptions.Item>
+              <Descriptions.Item label="代理商 UUID" span={2}>{detail.tenantId}</Descriptions.Item>
             ) : null}
           </Descriptions>
           <JsonPanel title="变更前" value={detail.before} />

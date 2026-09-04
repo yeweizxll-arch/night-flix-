@@ -77,6 +77,25 @@ export interface UpdatePlatformEpisodeInput {
   unpublishAt?: string | null;
 }
 
+export interface UpsertPlatformEpisodeTrackInput {
+  expectedDramaVersion: number;
+  isDefault?: boolean;
+  label: string;
+  locale: string;
+  mediaAssetId: string;
+  type: 'dubbing' | 'subtitle';
+}
+
+export interface PlatformEpisodeTrackRecord {
+  id: string;
+  isDefault: boolean;
+  label: string;
+  locale: string;
+  mediaAssetId: string;
+  status: 'active' | 'disabled';
+  type: 'dubbing' | 'subtitle';
+}
+
 export interface ExpectedVersionInput {
   expectedVersion: number;
 }
@@ -115,6 +134,7 @@ export interface PlatformEpisodeRecord {
   previewSeconds: number;
   releaseAt?: string;
   status: 'approved' | 'draft' | 'published' | 'unpublished';
+  tracks: PlatformEpisodeTrackRecord[];
   translations: EpisodeTranslationInput[];
   unpublishAt?: string;
   version: number;
