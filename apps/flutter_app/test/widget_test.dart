@@ -15,6 +15,15 @@ void main() {
     expect(config.inAppPurchasesEnabled, isFalse);
   });
 
+  test('demo exposes the target market language set including Chinese', () {
+    expect(AppRuntimeConfig.demo.supportedLocales, contains('zh-CN'));
+    expect(AppRuntimeConfig.demo.supportedLocales, contains('zh-TW'));
+    expect(
+      AppRuntimeConfig.demo.supportedLocales.length,
+      greaterThanOrEqualTo(15),
+    );
+  });
+
   test('interaction and rewarded unlock responses retain server state', () {
     final summary = DramaInteractionSummary.fromJson(const {
       'commentCount': 8,
@@ -45,6 +54,60 @@ void main() {
     expect(find.text('For You'), findsWidgets);
     expect(find.text('Drama'), findsOneWidget);
     expect(controller.session, isNull);
+  });
+
+  testWidgets('following tab filters dramas and follow state persists', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final controller = AppController(DramaRepository(apiBaseUrl: ''));
+    await controller.initialize();
+    await tester.pumpWidget(DramaApp(controller: controller));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Following').first);
+    await tester.pumpAndSettle();
+    expect(find.text('No followed dramas yet'), findsOneWidget);
+
+    await tester.tap(find.text('Browse For You'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Follow'));
+    await tester.pumpAndSettle();
+    expect(controller.following, contains('demo-1'));
+
+    await tester.tap(find.text('Following').first);
+    await tester.pumpAndSettle();
+    expect(find.text('The Last Contract'), findsOneWidget);
+
+    final restored = AppController(DramaRepository(apiBaseUrl: ''));
+    await restored.initialize();
+    expect(restored.following, contains('demo-1'));
+  });
+
+  testWidgets('simplified Chinese changes navigation and demo content', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final controller = AppController(DramaRepository(apiBaseUrl: ''));
+    await controller.initialize();
+    await tester.pumpWidget(DramaApp(controller: controller));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Me'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Language'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('简体中文'));
+    await tester.pumpAndSettle();
+
+    expect(controller.locale, 'zh-CN');
+    expect(controller.dramas.first.title, '最后的契约');
+    expect(find.text('剧场'), findsOneWidget);
+    expect(find.text('我的'), findsOneWidget);
+    await tester.tap(find.text('推荐'));
+    await tester.pumpAndSettle();
+    expect(find.text('最后的契约'), findsOneWidget);
+    expect(find.text('追剧'), findsWidgets);
   });
 
   test('demo episodes provide local playback and unlock state', () async {

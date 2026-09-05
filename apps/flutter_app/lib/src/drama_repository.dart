@@ -20,7 +20,7 @@ class DramaRepository {
       : AppRuntimeConfig.fromJson(await _get('/api/v1/customer/bootstrap'));
 
   Future<List<Drama>> dramas({String locale = 'en-US', String? query}) async {
-    if (demoMode) return _demoDramas;
+    if (demoMode) return _demoDramasForLocale(locale);
     final parameters = <String, String>{'locale': locale, 'pageSize': '50'};
     if (query?.trim().isNotEmpty == true) parameters['q'] = query!.trim();
     final uri = Uri.parse('$apiBaseUrl/api/v1/customer/content/dramas')
@@ -355,6 +355,7 @@ class AppController extends ChangeNotifier {
   bool loading = true;
   String? error;
   final Set<String> favorites = {};
+  final Set<String> following = {};
   final List<String> history = [];
   final Map<String, DramaInteractionSummary> interactions = {};
   final Map<String, String?> assetUrls = {};
@@ -368,6 +369,7 @@ class AppController extends ChangeNotifier {
         locale = config.defaultLocale;
       }
       favorites.addAll(preferences.getStringList('favorites') ?? const []);
+      following.addAll(preferences.getStringList('following') ?? const []);
       history.addAll(preferences.getStringList('history') ?? const []);
       dramas = await repository.dramas(locale: locale);
     } catch (cause) {
@@ -388,6 +390,7 @@ class AppController extends ChangeNotifier {
   Future<void> setLocale(String value) async {
     if (!config.supportedLocales.contains(value)) return;
     locale = value;
+    notifyListeners();
     await (await SharedPreferences.getInstance()).setString('locale', value);
     dramas = await repository.dramas(locale: locale);
     notifyListeners();
@@ -486,6 +489,17 @@ class AppController extends ChangeNotifier {
     await (await SharedPreferences.getInstance()).setStringList(
       'favorites',
       favorites.toList(),
+    );
+    notifyListeners();
+  }
+
+  Future<void> toggleFollowing(String dramaId) async {
+    following.contains(dramaId)
+        ? following.remove(dramaId)
+        : following.add(dramaId);
+    await (await SharedPreferences.getInstance()).setStringList(
+      'following',
+      following.toList(),
     );
     notifyListeners();
   }
@@ -656,6 +670,54 @@ const _demoDramas = [
     ],
   ),
 ];
+
+List<Drama> _demoDramasForLocale(String locale) {
+  if (!locale.startsWith('zh')) return _demoDramas;
+  const titles = {'demo-1': '最后的契约', 'demo-2': '重生复仇', 'demo-3': '我的秘密总裁'};
+  const summaries = {
+    'demo-1': '为了拯救家人，她签下了一份婚姻契约，却发现那个陌生人正是令所有人畏惧的继承人。',
+    'demo-2': '命运重来一次，她将背叛变成了一场精心策划的归来。',
+    'demo-3': '平凡的入职第一天，变成了两个人都不能说出的秘密。',
+  };
+  const episodeTitles = {
+    'demo-1-1': '契约',
+    'demo-1-2': '隐藏的名字',
+    'demo-1-3': '条款改变',
+    'demo-2-1': '回到那一夜',
+    'demo-2-2': '第一步',
+    'demo-3-1': '入职第一天',
+    'demo-3-2': '办公室门后',
+    'demo-3-3': '秘密会面',
+  };
+  return _demoDramas
+      .map(
+        (drama) => Drama(
+          id: drama.id,
+          title: titles[drama.id] ?? drama.title,
+          summary: summaries[drama.id] ?? drama.summary,
+          totalEpisodes: drama.totalEpisodes,
+          coverMediaId: drama.coverMediaId,
+          pointsAmount: drama.pointsAmount,
+          palette: drama.palette,
+          episodes: drama.episodes
+              .map(
+                (episode) => Episode(
+                  id: episode.id,
+                  number: episode.number,
+                  title: episodeTitles[episode.id] ?? episode.title,
+                  durationSeconds: episode.durationSeconds,
+                  previewSeconds: episode.previewSeconds,
+                  pointsAmount: episode.pointsAmount,
+                  playbackUrl: episode.playbackUrl,
+                  access: episode.access,
+                  tracks: episode.tracks,
+                ),
+              )
+              .toList(),
+        ),
+      )
+      .toList();
+}
 
 const _demoPlaybackUrls = {
   'demo-3-2': 'asset://assets/demo/contract.mp4',

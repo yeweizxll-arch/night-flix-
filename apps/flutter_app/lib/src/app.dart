@@ -1,12 +1,14 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:in_app_purchase/in_app_purchase.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:video_player/video_player.dart';
 
 import 'drama_repository.dart';
+import 'app_strings.dart';
 import 'models.dart';
 
 const _ink = Color(0xff080911);
@@ -26,6 +28,13 @@ class DramaApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: controller,
+      builder: (context, _) => _materialApp(),
+    );
+  }
+
+  Widget _materialApp() {
     final primary = _themeColor(
       controller.config.theme['primaryColor'],
       _purple,
@@ -34,6 +43,15 @@ class DramaApp extends StatelessWidget {
     return MaterialApp(
       title: controller.config.siteName,
       debugShowCheckedModeBanner: false,
+      locale: localeFromTag(controller.locale),
+      supportedLocales: controller.config.supportedLocales
+          .map(localeFromTag)
+          .toList(),
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
       theme: ThemeData(
         brightness: Brightness.dark,
         scaffoldBackgroundColor: _ink,
@@ -61,14 +79,11 @@ class DramaApp extends StatelessWidget {
         ),
         useMaterial3: true,
       ),
-      home: ListenableBuilder(
-        listenable: controller,
-        builder: (context, _) => controller.loading && controller.dramas.isEmpty
-            ? const _LaunchScreen()
-            : controller.error != null && controller.dramas.isEmpty
-            ? _ErrorScreen(message: controller.error!, retry: controller.retry)
-            : AppShell(controller: controller),
-      ),
+      home: controller.loading && controller.dramas.isEmpty
+          ? const _LaunchScreen()
+          : controller.error != null && controller.dramas.isEmpty
+          ? _ErrorScreen(message: controller.error!, retry: controller.retry)
+          : AppShell(controller: controller),
     );
   }
 }
@@ -98,31 +113,31 @@ class _AppShellState extends State<AppShell> {
       bottomNavigationBar: NavigationBar(
         selectedIndex: index,
         onDestinationSelected: (value) => setState(() => index = value),
-        destinations: const [
+        destinations: [
           NavigationDestination(
-            icon: Icon(Icons.smart_display_outlined),
-            selectedIcon: Icon(Icons.smart_display),
-            label: 'For You',
+            icon: const Icon(Icons.smart_display_outlined),
+            selectedIcon: const Icon(Icons.smart_display),
+            label: context.tr('forYou', 'For You'),
           ),
           NavigationDestination(
-            icon: Icon(Icons.local_movies_outlined),
-            selectedIcon: Icon(Icons.local_movies),
-            label: 'Drama',
+            icon: const Icon(Icons.local_movies_outlined),
+            selectedIcon: const Icon(Icons.local_movies),
+            label: context.tr('drama', 'Drama'),
           ),
           NavigationDestination(
-            icon: Icon(Icons.card_giftcard_outlined),
-            selectedIcon: Icon(Icons.card_giftcard),
-            label: 'Rewards',
+            icon: const Icon(Icons.card_giftcard_outlined),
+            selectedIcon: const Icon(Icons.card_giftcard),
+            label: context.tr('rewards', 'Rewards'),
           ),
           NavigationDestination(
-            icon: Icon(Icons.bookmark_border),
-            selectedIcon: Icon(Icons.bookmark),
-            label: 'Library',
+            icon: const Icon(Icons.bookmark_border),
+            selectedIcon: const Icon(Icons.bookmark),
+            label: context.tr('library', 'Library'),
           ),
           NavigationDestination(
-            icon: Icon(Icons.person_outline),
-            selectedIcon: Icon(Icons.person),
-            label: 'Me',
+            icon: const Icon(Icons.person_outline),
+            selectedIcon: const Icon(Icons.person),
+            label: context.tr('me', 'Me'),
           ),
         ],
       ),
@@ -139,24 +154,113 @@ class FeedScreen extends StatefulWidget {
 
 class _FeedScreenState extends State<FeedScreen> {
   int current = 0;
+  bool followingFeed = false;
+
+  void _selectFeed(bool following) {
+    if (followingFeed == following) return;
+    setState(() {
+      followingFeed = following;
+      current = 0;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     if (widget.controller.dramas.isEmpty) {
-      return const Center(child: Text('No dramas yet'));
+      return Center(child: Text(context.tr('noDramas', 'No dramas yet')));
     }
+    final dramas = followingFeed
+        ? widget.controller.dramas
+              .where((drama) => widget.controller.following.contains(drama.id))
+              .toList()
+        : widget.controller.dramas;
+    if (dramas.isEmpty) {
+      return ColoredBox(
+        color: _ink,
+        child: SafeArea(
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(18, 8, 12, 0),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    _feedTab(
+                      context.tr('following', 'Following'),
+                      followingFeed,
+                      () => _selectFeed(true),
+                    ),
+                    const SizedBox(width: 22),
+                    _feedTab(
+                      context.tr('forYou', 'For You'),
+                      !followingFeed,
+                      () => _selectFeed(false),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(32),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.video_library_outlined,
+                          size: 54,
+                          color: Colors.white38,
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          context.tr('noFollowing', 'No followed dramas yet'),
+                          style: const TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          context.tr(
+                            'noFollowingHint',
+                            'Follow a drama from For You to keep it in this feed.',
+                          ),
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(color: Colors.white60),
+                        ),
+                        const SizedBox(height: 18),
+                        FilledButton(
+                          onPressed: () => _selectFeed(false),
+                          child: Text(
+                            context.tr('browseForYou', 'Browse For You'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    final activeIndex = current < dramas.length ? current : dramas.length - 1;
     return PageView.builder(
+      key: ValueKey(followingFeed),
       scrollDirection: Axis.vertical,
-      itemCount: widget.controller.dramas.length,
+      itemCount: dramas.length,
       onPageChanged: (value) {
         setState(() => current = value);
-        widget.controller.markWatched(widget.controller.dramas[value].id);
+        widget.controller.markWatched(dramas[value].id);
       },
       itemBuilder: (context, index) => DramaPage(
-        key: ValueKey(widget.controller.dramas[index].id),
-        active: current == index,
+        key: ValueKey(dramas[index].id),
+        active: activeIndex == index,
         controller: widget.controller,
-        drama: widget.controller.dramas[index],
+        drama: dramas[index],
+        followingFeed: followingFeed,
+        onFeedChanged: _selectFeed,
       ),
     );
   }
@@ -168,10 +272,14 @@ class DramaPage extends StatefulWidget {
     required this.active,
     required this.controller,
     required this.drama,
+    required this.followingFeed,
+    required this.onFeedChanged,
   });
   final bool active;
   final AppController controller;
   final Drama drama;
+  final bool followingFeed;
+  final ValueChanged<bool> onFeedChanged;
   @override
   State<DramaPage> createState() => _DramaPageState();
 }
@@ -441,6 +549,7 @@ class _DramaPageState extends State<DramaPage> {
   @override
   Widget build(BuildContext context) {
     final drama = detail ?? widget.drama;
+    final displayDrama = widget.drama;
     final engagement = widget.controller.interactions[drama.id] ?? summary;
     return Stack(
       fit: StackFit.expand,
@@ -491,9 +600,17 @@ class _DramaPageState extends State<DramaPage> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    _feedTab('Following', false),
+                    _feedTab(
+                      context.tr('following', 'Following'),
+                      widget.followingFeed,
+                      () => widget.onFeedChanged(true),
+                    ),
                     const SizedBox(width: 22),
-                    _feedTab('For You', true),
+                    _feedTab(
+                      context.tr('forYou', 'For You'),
+                      !widget.followingFeed,
+                      () => widget.onFeedChanged(false),
+                    ),
                     const Spacer(),
                     IconButton(
                       icon: const Icon(Icons.search, size: 27),
@@ -509,16 +626,39 @@ class _DramaPageState extends State<DramaPage> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(
-                            drama.title,
-                            style: const TextStyle(
-                              fontSize: 24,
-                              fontWeight: FontWeight.w800,
-                            ),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  displayDrama.title,
+                                  style: const TextStyle(
+                                    fontSize: 24,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              TextButton.icon(
+                                onPressed: () =>
+                                    widget.controller.toggleFollowing(drama.id),
+                                icon: Icon(
+                                  widget.controller.following.contains(drama.id)
+                                      ? Icons.check
+                                      : Icons.add,
+                                  size: 17,
+                                ),
+                                label: Text(
+                                  widget.controller.following.contains(drama.id)
+                                      ? context.tr('followed', 'Following')
+                                      : context.tr('follow', 'Follow'),
+                                ),
+                              ),
+                            ],
                           ),
                           const SizedBox(height: 8),
                           Text(
-                            'EP ${episode?.number ?? 1}  ·  ${drama.totalEpisodes} episodes',
+                            '${context.isChinese ? '第' : 'EP '}${episode?.number ?? 1}${context.isChinese ? '集' : ''}  ·  ${displayDrama.totalEpisodes} ${context.tr('episodeCount', 'episodes')}',
                             style: const TextStyle(
                               fontSize: 13,
                               color: Colors.white70,
@@ -526,7 +666,7 @@ class _DramaPageState extends State<DramaPage> {
                           ),
                           const SizedBox(height: 9),
                           Text(
-                            drama.summary,
+                            displayDrama.summary,
                             maxLines: 3,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(fontSize: 14, height: 1.35),
@@ -535,7 +675,7 @@ class _DramaPageState extends State<DramaPage> {
                           FilledButton.tonalIcon(
                             onPressed: () => _showEpisodes(context, drama),
                             icon: const Icon(Icons.grid_view_rounded, size: 18),
-                            label: const Text('Episodes'),
+                            label: Text(context.tr('episodes', 'Episodes')),
                           ),
                         ],
                       ),
@@ -549,7 +689,12 @@ class _DramaPageState extends State<DramaPage> {
                               : Icons.favorite_border,
                           _compactCount(engagement?.likeCount ?? 0),
                           () async {
-                            if (!await _requireLogin(context, 'Like')) return;
+                            if (!await _requireLogin(
+                              context,
+                              context.tr('like', 'Like'),
+                            )) {
+                              return;
+                            }
                             try {
                               await widget.controller.toggleLike(drama.id);
                             } catch (cause) {
@@ -563,9 +708,14 @@ class _DramaPageState extends State<DramaPage> {
                           widget.controller.favorites.contains(drama.id)
                               ? Icons.bookmark
                               : Icons.bookmark_border,
-                          'Save',
+                          context.tr('save', 'Save'),
                           () async {
-                            if (!await _requireLogin(context, 'Save')) return;
+                            if (!await _requireLogin(
+                              context,
+                              context.tr('save', 'Save'),
+                            )) {
+                              return;
+                            }
                             try {
                               await widget.controller.toggleFavorite(drama.id);
                             } catch (cause) {
@@ -579,7 +729,10 @@ class _DramaPageState extends State<DramaPage> {
                           Icons.chat_bubble_outline,
                           _compactCount(engagement?.commentCount ?? 0),
                           () async {
-                            if (!await _requireLogin(context, 'Comment')) {
+                            if (!await _requireLogin(
+                              context,
+                              context.tr('comments', 'Comment'),
+                            )) {
                               return;
                             }
                             if (!context.mounted) return;
@@ -588,7 +741,7 @@ class _DramaPageState extends State<DramaPage> {
                         ),
                         _action(
                           Icons.share_outlined,
-                          'Share',
+                          context.tr('share', 'Share'),
                           () => _share(context, drama),
                         ),
                       ],
@@ -608,7 +761,7 @@ class _DramaPageState extends State<DramaPage> {
           top: MediaQuery.paddingOf(context).top + 58,
           right: 12,
           child: PopupMenuButton<double>(
-            tooltip: 'Playback speed',
+            tooltip: context.tr('playbackSpeed', 'Playback speed'),
             initialValue: speed,
             onSelected: (value) async {
               speed = value;
@@ -628,7 +781,7 @@ class _DramaPageState extends State<DramaPage> {
           top: MediaQuery.paddingOf(context).top + 58,
           right: 78,
           child: IconButton.filledTonal(
-            tooltip: 'Subtitles and dubbing',
+            tooltip: context.tr('tracks', 'Subtitles and dubbing'),
             onPressed: episode?.tracks.isEmpty == false
                 ? () => _showTracks(context)
                 : null,
@@ -641,7 +794,7 @@ class _DramaPageState extends State<DramaPage> {
             child: FilledButton.tonalIcon(
               onPressed: _play,
               icon: const Icon(Icons.refresh),
-              label: const Text('Retry playback'),
+              label: Text(context.tr('retryPlayback', 'Retry playback')),
             ),
           ),
         if (episode?.locked == true || previewEnded)
@@ -649,7 +802,10 @@ class _DramaPageState extends State<DramaPage> {
             child: _UnlockCard(
               points: episode?.pointsAmount ?? drama.pointsAmount ?? 0,
               buy: () async {
-                final authenticated = await _requireLogin(context, 'Unlock');
+                final authenticated = await _requireLogin(
+                  context,
+                  context.tr('unlock', 'Unlock'),
+                );
                 if (!context.mounted) return;
                 if (authenticated) {
                   try {
@@ -682,7 +838,7 @@ class _DramaPageState extends State<DramaPage> {
                 if (await _showLogin(context, widget.controller)) _play();
               },
               icon: const Icon(Icons.play_arrow),
-              label: const Text('Sign in to watch'),
+              label: Text(context.tr('signInToWatch', 'Sign in to watch')),
             ),
           ),
       ],
@@ -745,13 +901,16 @@ class _DramaPageState extends State<DramaPage> {
     return _showLogin(
       context,
       widget.controller,
-      reason: '$action requires an account',
+      reason: context.isChinese ? '$action需要登录' : '$action requires an account',
     );
   }
 
   Future<void> _watchAdUnlock(BuildContext context) async {
     final selected = episode;
-    if (selected == null || !await _requireLogin(context, 'Watch ad')) return;
+    if (selected == null ||
+        !await _requireLogin(context, context.tr('watchAd', 'Watch ad'))) {
+      return;
+    }
     if (!context.mounted) return;
     try {
       final challenge = await widget.controller.createRewardedChallenge(
@@ -841,13 +1000,20 @@ class _DramaPageState extends State<DramaPage> {
             child: Column(
               children: [
                 Text(
-                  'Comments · ${comments.length}',
+                  '${context.tr('comments', 'Comments')} · ${comments.length}',
                   style: Theme.of(context).textTheme.titleLarge,
                 ),
                 const SizedBox(height: 10),
                 Expanded(
                   child: comments.isEmpty
-                      ? const Center(child: Text('Be the first to comment'))
+                      ? Center(
+                          child: Text(
+                            context.tr(
+                              'firstComment',
+                              'Be the first to comment',
+                            ),
+                          ),
+                        )
                       : ListView.builder(
                           itemCount: comments.length,
                           itemBuilder: (_, index) {
@@ -856,7 +1022,10 @@ class _DramaPageState extends State<DramaPage> {
                               leading: const CircleAvatar(
                                 child: Icon(Icons.person),
                               ),
-                              title: Text(comment.username ?? 'Viewer'),
+                              title: Text(
+                                comment.username ??
+                                    context.tr('viewer', 'Viewer'),
+                              ),
                               subtitle: Text(comment.body),
                             );
                           },
@@ -868,8 +1037,8 @@ class _DramaPageState extends State<DramaPage> {
                       child: TextField(
                         controller: input,
                         maxLength: 2000,
-                        decoration: const InputDecoration(
-                          hintText: 'Add a comment',
+                        decoration: InputDecoration(
+                          hintText: context.tr('addComment', 'Add a comment'),
                           counterText: '',
                         ),
                       ),
@@ -937,7 +1106,7 @@ class _DramaPageState extends State<DramaPage> {
               Padding(
                 padding: const EdgeInsets.all(20),
                 child: Text(
-                  '${drama.title} · Episodes',
+                  '${drama.title} · ${context.tr('episodes', 'Episodes')}',
                   style: Theme.of(context).textTheme.titleLarge
                       ?.copyWith(fontWeight: FontWeight.bold),
                 ),
@@ -1024,7 +1193,10 @@ class _TrackPickerState extends State<_TrackPicker> {
         shrinkWrap: true,
         padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
         children: [
-          Text('Subtitles', style: Theme.of(context).textTheme.titleLarge),
+          Text(
+            context.tr('subtitles', 'Subtitles'),
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
           RadioGroup<String?>(
             groupValue: subtitle?.id,
             onChanged: (id) => setState(() {
@@ -1034,7 +1206,10 @@ class _TrackPickerState extends State<_TrackPicker> {
             }),
             child: Column(
               children: [
-                const RadioListTile<String?>(title: Text('Off'), value: null),
+                RadioListTile<String?>(
+                  title: Text(context.tr('off', 'Off')),
+                  value: null,
+                ),
                 ...subtitles.map(
                   (track) => RadioListTile<String?>(
                     title: Text(track.label),
@@ -1046,7 +1221,10 @@ class _TrackPickerState extends State<_TrackPicker> {
             ),
           ),
           const Divider(height: 32),
-          Text('Dubbing', style: Theme.of(context).textTheme.titleLarge),
+          Text(
+            context.tr('dubbing', 'Dubbing'),
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
           RadioGroup<String?>(
             groupValue: dubbing?.id,
             onChanged: (id) => setState(() {
@@ -1056,8 +1234,8 @@ class _TrackPickerState extends State<_TrackPicker> {
             }),
             child: Column(
               children: [
-                const RadioListTile<String?>(
-                  title: Text('Original audio'),
+                RadioListTile<String?>(
+                  title: Text(context.tr('originalAudio', 'Original audio')),
                   value: null,
                 ),
                 ...dubbings.map(
@@ -1074,7 +1252,7 @@ class _TrackPickerState extends State<_TrackPicker> {
           FilledButton(
             onPressed: () =>
                 Navigator.pop(context, (dubbing: dubbing, subtitle: subtitle)),
-            child: const Text('Apply'),
+            child: Text(context.tr('apply', 'Apply')),
           ),
         ],
       ),
@@ -1091,7 +1269,7 @@ class TheaterScreen extends StatelessWidget {
     child: CustomScrollView(
       slivers: [
         SliverAppBar.large(
-          title: const Text('Drama Theater'),
+          title: Text(context.tr('dramaTheater', 'Drama Theater')),
           backgroundColor: _ink,
         ),
         SliverToBoxAdapter(
@@ -1101,13 +1279,19 @@ class TheaterScreen extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 16),
               scrollDirection: Axis.horizontal,
               children:
-                  ['Trending', 'Romance', 'Revenge', 'Billionaire', 'Fantasy']
+                  [
+                        ('trending', 'Trending'),
+                        ('romance', 'Romance'),
+                        ('revenge', 'Revenge'),
+                        ('billionaire', 'Billionaire'),
+                        ('fantasy', 'Fantasy'),
+                      ]
                       .map(
-                        (label) => Padding(
+                        (item) => Padding(
                           padding: const EdgeInsets.only(right: 8),
                           child: FilterChip(
-                            label: Text(label),
-                            selected: label == 'Trending',
+                            label: Text(context.tr(item.$1, item.$2)),
+                            selected: item.$1 == 'trending',
                             onSelected: (_) {},
                           ),
                         ),
@@ -1145,7 +1329,7 @@ class TheaterScreen extends StatelessWidget {
                     style: const TextStyle(fontWeight: FontWeight.w700),
                   ),
                   Text(
-                    '${drama.totalEpisodes} episodes',
+                    '${drama.totalEpisodes} ${context.tr('episodeCount', 'episodes')}',
                     style: const TextStyle(color: Colors.white54, fontSize: 12),
                   ),
                 ],
@@ -1171,9 +1355,9 @@ class _RewardsScreenState extends State<RewardsScreen> {
     child: ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        const Text(
-          'Rewards',
-          style: TextStyle(fontSize: 32, fontWeight: FontWeight.w800),
+        Text(
+          context.tr('rewards', 'Rewards'),
+          style: const TextStyle(fontSize: 32, fontWeight: FontWeight.w800),
         ),
         const SizedBox(height: 18),
         FutureBuilder<PointWallet>(
@@ -1189,16 +1373,16 @@ class _RewardsScreenState extends State<RewardsScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'Coin balance',
-                  style: TextStyle(fontSize: 14, color: Colors.white70),
+                Text(
+                  context.tr('coinBalance', 'Coin balance'),
+                  style: const TextStyle(fontSize: 14, color: Colors.white70),
                 ),
                 const SizedBox(height: 4),
                 Text(
                   widget.controller.session == null
-                      ? 'Sign in to view'
+                      ? context.tr('signInToView', 'Sign in to view')
                       : snapshot.hasError
-                      ? 'Unavailable'
+                      ? context.tr('unavailable', 'Unavailable')
                       : snapshot.data?.balancePoints ?? '…',
                   style: const TextStyle(
                     fontSize: 28,
@@ -1210,17 +1394,20 @@ class _RewardsScreenState extends State<RewardsScreen> {
           ),
         ),
         const SizedBox(height: 26),
-        const ListTile(
-          leading: Icon(Icons.play_circle_fill),
-          title: Text('Rewarded episode unlocks'),
+        ListTile(
+          leading: const Icon(Icons.play_circle_fill),
+          title: Text(context.tr('rewardUnlocks', 'Rewarded episode unlocks')),
           subtitle: Text(
-            'Watch an ad on a locked episode to unlock that episode directly.',
+            context.tr(
+              'rewardUnlocksHint',
+              'Watch an ad on a locked episode to unlock that episode directly.',
+            ),
           ),
         ),
         const SizedBox(height: 24),
         FilledButton(
           onPressed: () => _openStore(context),
-          child: const Text('Get more coins'),
+          child: Text(context.tr('moreCoins', 'Get more coins')),
         ),
       ],
     ),
@@ -1251,20 +1438,23 @@ class LibraryScreen extends StatelessWidget {
         length: 2,
         child: Column(
           children: [
-            const Padding(
+            Padding(
               padding: EdgeInsets.fromLTRB(20, 20, 20, 8),
               child: Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
-                  'My Library',
-                  style: TextStyle(fontSize: 30, fontWeight: FontWeight.w800),
+                  context.tr('myLibrary', 'My Library'),
+                  style: const TextStyle(
+                    fontSize: 30,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
               ),
             ),
-            const TabBar(
+            TabBar(
               tabs: [
-                Tab(text: 'Watch History'),
-                Tab(text: 'Favorites'),
+                Tab(text: context.tr('watchHistory', 'Watch History')),
+                Tab(text: context.tr('favorites', 'Favorites')),
               ],
             ),
             Expanded(
@@ -1305,7 +1495,7 @@ class ProfileScreen extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    controller.session?.email ?? 'Guest',
+                    controller.session?.email ?? context.tr('guest', 'Guest'),
                     style: const TextStyle(
                       fontSize: 22,
                       fontWeight: FontWeight.w800,
@@ -1313,8 +1503,11 @@ class ProfileScreen extends StatelessWidget {
                   ),
                   Text(
                     controller.session == null
-                        ? 'Sign in to sync purchases and history'
-                        : 'Account connected',
+                        ? context.tr(
+                            'signInSync',
+                            'Sign in to sync purchases and history',
+                          )
+                        : context.tr('accountConnected', 'Account connected'),
                     style: const TextStyle(color: Colors.white60),
                   ),
                 ],
@@ -1323,47 +1516,51 @@ class ProfileScreen extends StatelessWidget {
             if (controller.session == null)
               FilledButton(
                 onPressed: () => _showLogin(context, controller),
-                child: const Text('Sign in'),
+                child: Text(context.tr('signIn', 'Sign in')),
               ),
           ],
         ),
         const SizedBox(height: 26),
         _profileTile(
           Icons.workspace_premium_outlined,
-          'Membership',
-          'Plans and benefits',
+          context.tr('membership', 'Membership'),
+          context.tr('plansBenefits', 'Plans and benefits'),
           onTap: () => _openStoreForController(context, controller),
         ),
         _profileTile(
           Icons.monetization_on_outlined,
-          'Coins',
-          'Balance and transactions',
+          context.tr('coins', 'Coins'),
+          context.tr('balanceTransactions', 'Balance and transactions'),
           onTap: () => _showWallet(context, controller),
         ),
         _profileTile(
           Icons.notifications_none,
-          'Messages',
-          'Updates and replies',
+          context.tr('messages', 'Messages'),
+          context.tr('updatesReplies', 'Updates and replies'),
           onTap: () => _showInbox(context, controller),
         ),
         _profileTile(
           Icons.language,
-          'Language',
-          controller.locale,
+          context.tr('language', 'Language'),
+          localeNames[controller.locale] ?? controller.locale,
           onTap: () => _languageSheet(context, controller),
         ),
         _profileTile(
           Icons.settings_outlined,
-          'Settings',
-          'Playback, subtitles and privacy',
+          context.tr('settings', 'Settings'),
+          context.tr('settingsHint', 'Playback, subtitles and privacy'),
         ),
-        _profileTile(Icons.help_outline, 'Help & support', 'FAQ and contact'),
+        _profileTile(
+          Icons.help_outline,
+          context.tr('help', 'Help & support'),
+          context.tr('helpHint', 'FAQ and contact'),
+        ),
         if (controller.session != null)
           Padding(
             padding: const EdgeInsets.only(top: 18),
             child: OutlinedButton(
               onPressed: controller.logout,
-              child: const Text('Sign out'),
+              child: Text(context.tr('signOut', 'Sign out')),
             ),
           ),
       ],
@@ -1375,7 +1572,8 @@ class DramaSearch extends SearchDelegate<void> {
   DramaSearch(this.controller);
   final AppController controller;
   @override
-  String get searchFieldLabel => 'Search dramas';
+  String get searchFieldLabel =>
+      controller.locale.startsWith('zh') ? '搜索短剧' : 'Search dramas';
   @override
   List<Widget> buildActions(BuildContext context) => [
     IconButton(onPressed: () => query = '', icon: const Icon(Icons.clear)),
@@ -1410,10 +1608,10 @@ class _DramaList extends StatelessWidget {
   final List<Drama> items;
   @override
   Widget build(BuildContext context) => items.isEmpty
-      ? const Center(
+      ? Center(
           child: Text(
-            'Nothing here yet',
-            style: TextStyle(color: Colors.white54),
+            context.tr('nothingHere', 'Nothing here yet'),
+            style: const TextStyle(color: Colors.white54),
           ),
         )
       : ListView.separated(
@@ -1446,7 +1644,7 @@ class _DramaList extends StatelessWidget {
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        '${drama.totalEpisodes} episodes',
+                        '${drama.totalEpisodes} ${context.tr('episodeCount', 'episodes')}',
                         style: const TextStyle(color: Colors.white54),
                       ),
                       const SizedBox(height: 8),
@@ -1542,15 +1740,17 @@ class _UnlockCard extends StatelessWidget {
       children: [
         const Icon(Icons.lock_rounded, size: 36, color: _pink),
         const SizedBox(height: 12),
-        const Text(
-          'Continue watching',
-          style: TextStyle(fontSize: 19, fontWeight: FontWeight.bold),
+        Text(
+          context.tr('continueWatching', 'Continue watching'),
+          style: const TextStyle(fontSize: 19, fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 6),
         Text(
           points > 0
-              ? 'Unlock this episode for $points coins'
-              : 'Choose an unlock option',
+              ? context.isChinese
+                    ? '使用 $points 金币解锁本集'
+                    : 'Unlock this episode for $points coins'
+              : context.tr('chooseUnlock', 'Choose an unlock option'),
           textAlign: TextAlign.center,
         ),
         const SizedBox(height: 16),
@@ -1559,7 +1759,9 @@ class _UnlockCard extends StatelessWidget {
           child: FilledButton.icon(
             onPressed: watchAd,
             icon: const Icon(Icons.play_circle_fill),
-            label: const Text('Watch ad · unlock 1 episode'),
+            label: Text(
+              context.tr('watchAdUnlock', 'Watch ad · unlock 1 episode'),
+            ),
           ),
         ),
         const SizedBox(height: 8),
@@ -1568,7 +1770,11 @@ class _UnlockCard extends StatelessWidget {
           child: OutlinedButton(
             onPressed: buy,
             child: Text(
-              points > 0 ? 'Unlock for $points coins' : 'Purchase options',
+              points > 0
+                  ? context.isChinese
+                        ? '$points 金币解锁'
+                        : 'Unlock for $points coins'
+                  : context.tr('purchaseOptions', 'Purchase options'),
             ),
           ),
         ),
@@ -1627,7 +1833,10 @@ class _ErrorScreen extends StatelessWidget {
             const SizedBox(height: 16),
             Text(message, textAlign: TextAlign.center),
             const SizedBox(height: 16),
-            FilledButton(onPressed: retry, child: const Text('Try again')),
+            FilledButton(
+              onPressed: retry,
+              child: Text(context.tr('tryAgain', 'Try again')),
+            ),
           ],
         ),
       ),
@@ -1635,28 +1844,39 @@ class _ErrorScreen extends StatelessWidget {
   );
 }
 
-Widget _feedTab(String label, bool selected) => Column(
-  mainAxisSize: MainAxisSize.min,
-  children: [
-    Text(
-      label,
-      style: TextStyle(
-        fontSize: selected ? 17 : 15,
-        fontWeight: selected ? FontWeight.w800 : FontWeight.w500,
-        color: selected ? Colors.white : Colors.white60,
+Widget _feedTab(String label, bool selected, VoidCallback onTap) => Semantics(
+  selected: selected,
+  button: true,
+  child: InkWell(
+    borderRadius: BorderRadius.circular(12),
+    onTap: onTap,
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 6),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: selected ? 17 : 15,
+              fontWeight: selected ? FontWeight.w800 : FontWeight.w500,
+              color: selected ? Colors.white : Colors.white60,
+            ),
+          ),
+          const SizedBox(height: 4),
+          if (selected)
+            Container(
+              width: 20,
+              height: 3,
+              decoration: BoxDecoration(
+                color: _pink,
+                borderRadius: BorderRadius.circular(3),
+              ),
+            ),
+        ],
       ),
     ),
-    const SizedBox(height: 4),
-    if (selected)
-      Container(
-        width: 20,
-        height: 3,
-        decoration: BoxDecoration(
-          color: _pink,
-          borderRadius: BorderRadius.circular(3),
-        ),
-      ),
-  ],
+  ),
 );
 
 Widget _action(IconData icon, String label, VoidCallback action) => Padding(
@@ -1716,27 +1936,37 @@ Future<bool> _showLogin(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(
-              reason ?? 'Welcome back',
+              reason ?? context.tr('welcomeBack', 'Welcome back'),
               style: const TextStyle(fontSize: 23, fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 8),
             Text(
               controller.repository.demoMode
-                  ? 'Demo account is ready. Tap continue to test likes, comments and unlocking.'
-                  : 'Your purchases, favorites and history stay with you.',
+                  ? context.tr(
+                      'demoReady',
+                      'Demo account is ready. Tap continue to test likes, comments and unlocking.',
+                    )
+                  : context.tr(
+                      'accountHint',
+                      'Your purchases, favorites and history stay with you.',
+                    ),
               style: TextStyle(color: Colors.white60),
             ),
             const SizedBox(height: 18),
             TextField(
               controller: email,
               keyboardType: TextInputType.emailAddress,
-              decoration: const InputDecoration(labelText: 'Email'),
+              decoration: InputDecoration(
+                labelText: context.tr('email', 'Email'),
+              ),
             ),
             const SizedBox(height: 12),
             TextField(
               controller: password,
               obscureText: true,
-              decoration: const InputDecoration(labelText: 'Password'),
+              decoration: InputDecoration(
+                labelText: context.tr('password', 'Password'),
+              ),
             ),
             if (error != null)
               Padding(
@@ -1756,7 +1986,7 @@ Future<bool> _showLogin(
                   setState(() => error = cause.toString());
                 }
               },
-              child: const Text('Continue with email'),
+              child: Text(context.tr('continueEmail', 'Continue with email')),
             ),
           ],
         ),
@@ -1775,20 +2005,20 @@ void _languageSheet(BuildContext context, AppController controller) =>
         shrinkWrap: true,
         padding: const EdgeInsets.all(20),
         children: [
-          const Text(
-            'Language',
-            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+          Text(
+            context.tr('language', 'Language'),
+            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
           ),
           ...controller.config.supportedLocales.map(
             (locale) => ListTile(
               selected: locale == controller.locale,
-              title: Text(locale),
+              title: Text(localeNames[locale] ?? locale),
               trailing: locale == controller.locale
                   ? const Icon(Icons.check, color: _purple)
                   : null,
-              onTap: () {
-                controller.setLocale(locale);
-                Navigator.pop(context);
+              onTap: () async {
+                await controller.setLocale(locale);
+                if (context.mounted) Navigator.pop(context);
               },
             ),
           ),
