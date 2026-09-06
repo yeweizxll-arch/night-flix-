@@ -709,6 +709,27 @@ describe('customer authentication, OTP, devices, and playback domain', () => {
     )).resolves.toEqual({ removed: true });
   });
 
+  it('persists following independently from favorites and isolates accounts and tenants', async () => {
+    const principal = await authentication.authenticateAccess(tenantA, activeSession.accessToken);
+    await playback.setFollowing(principal, tenantDramaId, true);
+    await playback.setFollowing(principal, tenantDramaId, true);
+    expect((await playback.following(principal, 1)).items).toEqual([{ dramaId: tenantDramaId }]);
+    expect((await playback.listFavorites(principal, 1, 20)).items).toEqual([]);
+    expect((await playback.following({ ...principal, accountId: accountASecond }, 1)).items).toEqual([]);
+    expect((await playback.following({ ...principal, tenantId: tenantB, accountId: accountB }, 1)).items).toEqual([]);
+    for (const id of [tenantBDramaId, unlicensedDramaId]) {
+      await expect(playback.setFollowing(principal, id, true)).rejects.toBeInstanceOf(NotFoundException);
+    }
+    await database.exec(`update dramas set emergency_takedown_at = statement_timestamp() where id = '${tenantDramaId}'`);
+    try {
+      await expect(playback.setFollowing(principal, tenantDramaId, true)).rejects.toBeInstanceOf(NotFoundException);
+      await playback.setFollowing(principal, tenantDramaId, false);
+      expect((await playback.following(principal, 1)).total).toBe(0);
+    } finally {
+      await database.exec(`update dramas set emergency_takedown_at = null where id = '${tenantDramaId}'`);
+    }
+  });
+
   it('resolves free, membership, drama, and episode playback access per account', async () => {
     const principal = await authentication.authenticateAccess(
       tenantA,

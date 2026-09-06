@@ -43,6 +43,12 @@ class WholeDramaPriceRepository extends DramaRepository {
   Future<List<Drama>> dramas({String locale = 'en-US', String? query}) async =>
       [paidDrama];
   @override
+  Future<List<Drama>> discover({
+    required String locale,
+    String sort = 'recommended',
+    String? category,
+  }) async => [paidDrama];
+  @override
   Future<Drama> detail(Drama drama, String locale) async => drama;
   @override
   Future<Episode> playback(Episode episode, String accessToken) async =>
@@ -194,9 +200,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Drama'));
     await tester.pumpAndSettle();
-    await tester.tap(
-      find.byKey(const ValueKey('theater-category-romance')),
-    );
+    await tester.tap(find.byKey(const ValueKey('theater-category-romance')));
     await tester.pumpAndSettle();
     expect(
       find.byKey(const ValueKey('theater-category-romance')),

@@ -93,6 +93,43 @@ export class PlaybackService {
     });
   }
 
+  async following(principal: CustomerPrincipal, pageValue: number) {
+    const page = boundedInteger(pageValue, 1, 1, 10000);
+    return this.database.inTenantContext(principal.tenantId, async sql => {
+      await assertCustomerSiteAvailable(sql, principal.tenantId);
+      const rows = await sql<Array<{ drama_id: string; total: number }>>`
+        select drama_id, count(*) over()::integer as total from customer_drama_follows
+        where tenant_id = ${principal.tenantId} and account_id = ${principal.accountId}
+        order by created_at desc, drama_id desc limit 100 offset ${(page - 1) * 100}
+      `;
+      return { items: rows.map(row => ({ dramaId: row.drama_id })), total: rows[0]?.total ?? 0, page, pageSize: 100 };
+    });
+  }
+
+  async setFollowing(principal: CustomerPrincipal, dramaId: string, followed: boolean) {
+    assertUuid(dramaId, 'dramaId');
+    return this.database.inTenantContext(principal.tenantId, async sql => {
+      await assertCustomerSiteAvailable(sql, principal.tenantId);
+      if (followed) {
+        const rows = await sql<{ id: string }[]>`
+          select id from dramas where id = ${dramaId} and status = 'published' and deleted_at is null
+            and emergency_takedown_at is null and app.customer_region_allowed(${principal.tenantId}, id)
+            and (release_at is null or release_at <= statement_timestamp())
+            and (unpublish_at is null or unpublish_at > statement_timestamp())
+            and ((owner_type = 'tenant' and owner_tenant_id = ${principal.tenantId})
+              or (owner_type = 'platform' and app.tenant_drama_published(id)))
+        `;
+        if (!rows[0]) throw new NotFoundException('Published drama is unavailable');
+        await sql`insert into customer_drama_follows (tenant_id, account_id, drama_id)
+          values (${principal.tenantId}, ${principal.accountId}, ${dramaId}) on conflict do nothing`;
+      } else {
+        await sql`delete from customer_drama_follows where tenant_id = ${principal.tenantId}
+          and account_id = ${principal.accountId} and drama_id = ${dramaId}`;
+      }
+      return { followed };
+    });
+  }
+
   async listHistory(
     principal: CustomerPrincipal,
     pageValue: number,

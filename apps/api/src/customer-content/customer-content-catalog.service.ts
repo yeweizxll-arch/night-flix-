@@ -39,6 +39,8 @@ interface DramaCatalogRow {
   title: string;
   total_count?: number;
   total_episodes: number;
+  heat?: number;
+  published_at?: Date | string;
 }
 
 @Injectable()
@@ -51,6 +53,7 @@ export class CustomerContentCatalogService {
   async listDramas(
     tenantId: string,
     rawQuery: CustomerDramaCatalogQuery,
+    accountId?: string,
   ): Promise<{
     items: CustomerDramaCatalogItem[];
     page: number;
@@ -58,15 +61,52 @@ export class CustomerContentCatalogService {
     total: number;
   }> {
     assertUuid(tenantId, 'tenantId');
+    if (accountId !== undefined) assertUuid(accountId, 'accountId');
     const query = catalogQuery(rawQuery);
     return this.database.inTenantContext(tenantId, async (transaction) => {
       const context = await this.requireAvailableTenant(transaction, tenantId);
       const requestedLocale = query.locale ?? context.defaultLocale;
       const rows = await transaction<DramaCatalogRow[]>`
+        with activity as (
+          -- One contribution per account/drama/type. Episode count and repeated
+          -- progress pings cannot multiply a show's popularity.
+          select drama_id, 100 as weight, max(updated_at) as happened_at
+          from watch_progress
+          where tenant_id = ${tenantId} and (position_seconds >= 10 or completed)
+          group by drama_id, account_id
+          union all
+          select drama_id, 200, created_at from customer_drama_likes
+          where tenant_id = ${tenantId}
+          union all
+          select drama_id, 300, created_at from customer_favorites
+          where tenant_id = ${tenantId}
+          union all
+          select drama_id, 100, max(created_at) from interaction_comments
+          where tenant_id = ${tenantId} and status = 'visible'
+          group by drama_id, account_id
+        ), heat as (
+          select drama_id, floor(sum(weight * power(0.5,
+            greatest(0, extract(epoch from (statement_timestamp() - happened_at)))
+            / 604800.0)))::integer as score
+          from activity
+          where happened_at > statement_timestamp() - interval '90 days'
+          group by drama_id
+        ), preferences as (
+          select watched.category_id, count(distinct progress.drama_id)::integer as affinity
+          from watch_progress as progress
+          join dramas as watched on watched.id = progress.drama_id
+          where progress.tenant_id = ${tenantId}
+            and progress.account_id = ${accountId ?? null}::uuid
+            and (progress.position_seconds >= 10 or progress.completed)
+            and progress.updated_at > statement_timestamp() - interval '30 days'
+          group by watched.category_id
+        )
         select
           drama.id,
           drama.code::text,
           drama.total_episodes,
+          coalesce(heat.score, 0) as heat,
+          coalesce(publication.published_at, drama.first_published_at, drama.release_at, drama.created_at) as published_at,
           (
             select point_price.points_amount
             from content_point_prices as point_price
@@ -82,6 +122,12 @@ export class CustomerContentCatalogService {
             as cover_media_id,
           count(*) over()::integer as total_count
         from dramas as drama
+        left join heat on heat.drama_id = drama.id
+        left join tenant_drama_discovery as discovery
+          on discovery.tenant_id = ${tenantId} and discovery.drama_id = drama.id
+        left join tenant_public_drama_publications as publication
+          on publication.tenant_id = ${tenantId} and publication.drama_id = drama.id
+        left join preferences on preferences.category_id = drama.category_id
         inner join lateral (
           select selected.locale, selected.title, selected.summary
           from drama_translations as selected
@@ -166,7 +212,15 @@ export class CustomerContentCatalogService {
                 )
             )
           )
-        order by coalesce(drama.release_at, drama.created_at) desc, drama.id desc
+        order by
+          case when ${query.sort} <> 'latest'
+            then coalesce(nullif(discovery.pinned_rank, 0), 2147483647) else 0 end,
+          case when ${query.sort} = 'recommended'
+            then coalesce(heat.score, 0) + coalesce(discovery.weight, 0)
+              + least(coalesce(preferences.affinity, 0), 5) * 200
+            when ${query.sort} = 'popular' then coalesce(heat.score, 0) + coalesce(discovery.weight, 0)
+            else 0 end desc,
+          coalesce(publication.published_at, drama.first_published_at, drama.release_at, drama.created_at) desc, drama.id desc
         limit ${query.pageSize} offset ${(query.page - 1) * query.pageSize}
       `;
       return {
@@ -390,7 +444,12 @@ function catalogQuery(raw: CustomerDramaCatalogQuery) {
   const q = optionalText(raw.q, 'q', 1, 100);
   const category = optionalSelector(raw.category, 'category');
   const tag = optionalSelector(raw.tag, 'tag');
+  const sort = raw.sort ?? 'latest';
+  if (!['latest', 'popular', 'recommended'].includes(sort as string)) {
+    throw new BadRequestException('sort must be latest, popular or recommended');
+  }
   return {
+    sort: sort as string,
     categoryCode: category?.code,
     categoryId: category?.id,
     locale: optionalLocale(raw.locale),
@@ -476,6 +535,8 @@ function mapDrama(row: DramaCatalogRow): CustomerDramaCatalogItem {
     summary: row.summary,
     title: row.title,
     totalEpisodes: row.total_episodes,
+    ...(row.heat === undefined ? {} : { heat: row.heat }),
+    ...(row.published_at === undefined ? {} : { publishedAt: new Date(row.published_at).toISOString() }),
   };
 }
 

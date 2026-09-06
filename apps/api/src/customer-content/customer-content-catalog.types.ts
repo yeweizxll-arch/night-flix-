@@ -12,6 +12,8 @@ export interface CustomerDramaCatalogItem {
   summary: string;
   title: string;
   totalEpisodes: number;
+  heat?: number;
+  publishedAt?: string;
 }
 
 export interface CustomerEpisodeCatalogItem {
@@ -46,4 +48,5 @@ export interface CustomerDramaCatalogQuery {
   pageSize?: unknown;
   q?: unknown;
   tag?: unknown;
+  sort?: unknown;
 }

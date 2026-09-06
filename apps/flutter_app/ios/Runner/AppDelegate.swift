@@ -1,12 +1,14 @@
 import Flutter
 import UIKit
 import UserNotifications
+import Vision
 
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
   private var pushChannel: FlutterMethodChannel?
   private var pendingPushLink: String?
   private var pushReady = false
+  private var recognitionChannel: FlutterMethodChannel?
 
   func recordPushLink(_ payload: [AnyHashable: Any]) {
     guard let link = payload["deepLink"] as? String, link.count < 2048 else { return }
@@ -33,6 +35,38 @@ import UserNotifications
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "NightFlixTextRecognition") {
+      let channel = FlutterMethodChannel(name: "nightflix/text-recognition", binaryMessenger: registrar.messenger())
+      recognitionChannel = channel
+      channel.setMethodCallHandler { call, result in
+        guard call.method == "recognize" else { result(FlutterMethodNotImplemented); return }
+        guard let args = call.arguments as? [String: Any], let path = args["path"] as? String else {
+          result(FlutterError(code: "INVALID_IMAGE", message: "Invalid image", details: nil)); return
+        }
+        let url = URL(fileURLWithPath: path).standardizedFileURL
+        let roots = [NSTemporaryDirectory()] + FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).map { $0.path + "/" }
+        guard roots.contains(where: { url.path.hasPrefix($0) }) else {
+          result(FlutterError(code: "INVALID_IMAGE", message: "Invalid image", details: nil)); return
+        }
+        DispatchQueue.global(qos: .userInitiated).async {
+          do {
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .accurate
+            request.usesLanguageCorrection = true
+            let supported = try request.supportedRecognitionLanguages()
+            let preferred = [args["locale"] as? String ?? "en-US", "zh-Hans", "en-US"].filter { supported.contains($0) }
+            if !preferred.isEmpty {
+              request.recognitionLanguages = preferred.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
+            }
+            try VNImageRequestHandler(url: url).perform([request])
+            let lines = (request.results ?? []).prefix(100).compactMap { $0.topCandidates(1).first?.string }
+            DispatchQueue.main.async { result(lines) }
+          } catch {
+            DispatchQueue.main.async { result(FlutterError(code: "RECOGNITION_FAILED", message: "Could not read image text", details: nil)) }
+          }
+        }
+      }
+    }
     if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "NightFlixApnsLinks") {
       let channel = FlutterMethodChannel(name: "nightflix/apns-links", binaryMessenger: registrar.messenger())
       pushChannel = channel

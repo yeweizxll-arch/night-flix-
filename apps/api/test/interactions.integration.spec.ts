@@ -551,6 +551,32 @@ describe('customer interactions and moderation security', () => {
       await database.exec('rollback; reset role');
     }
   });
+
+  it('provides guest counts without exposing personal state and isolates feedback/replies with replay safety', async () => {
+    const authenticated = await interactions.dramaSummary(principalA, dramaA);
+    const guest = await interactions.dramaSummary({ tenantId: tenantA }, dramaA);
+    expect(guest).toMatchObject({ commentCount: authenticated.commentCount,
+      likeCount: authenticated.likeCount, favoriteCount: authenticated.favoriteCount,
+      isFavorite: false, isLiked: false });
+    await expect(interactions.dramaSummary({ tenantId: tenantB }, dramaA)).rejects.toBeInstanceOf(NotFoundException);
+    const metadata = customerCommand('feedback-replay-0001');
+    const input = { body: 'Cannot play episode 12', locale: 'zh-CN' };
+    const created = await interactions.sendFeedback(principalA, input, metadata);
+    expect(await interactions.sendFeedback(principalA, input, metadata)).toEqual(created);
+    await expect(interactions.sendFeedback(principalA, { ...input, body: 'changed' }, metadata)).rejects.toBeInstanceOf(ConflictException);
+    expect((await interactions.feedback(tenantA, accountA, 1)).items.map(item => item.id)).toContain(created.id);
+    expect((await interactions.feedback(tenantA, accountA2, 1)).items).toHaveLength(0);
+    expect((await interactions.feedback(tenantB, undefined, 1)).items).toHaveLength(0);
+    await expect(interactions.replyFeedback(tenantB, created.id, { reply: 'wrong tenant' },
+      staffCommand('tenant', tenantStaff, 'feedback-reply-wrong'))).rejects.toBeInstanceOf(NotFoundException);
+    const response = { reply: 'Please retry. Playback has been restored.' };
+    await interactions.replyFeedback(tenantA, created.id, response, staffCommand('tenant', tenantStaff, 'feedback-reply-0001'));
+    await interactions.replyFeedback(tenantA, created.id, response, staffCommand('tenant', tenantStaff, 'feedback-reply-0001'));
+    const inbox = await database.query<{ count: number }>(`select count(*)::integer from customer_inbox_messages
+      where tenant_id = '${tenantA}' and account_id = '${accountA}' and title = '客服回复'`);
+    expect(inbox.rows[0]?.count).toBe(1);
+    expect((await interactions.feedback(tenantA, accountA, 1)).items.find(item => item.id === created.id)?.reply).toBe(response.reply);
+  });
 });
 
 function customerCommand(

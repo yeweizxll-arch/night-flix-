@@ -39,6 +39,8 @@ const EXPORT_SECTIONS = [
   'bulletComments',
   'watchProgress',
   'favorites',
+  'following',
+  'feedback',
   'notifications',
 ] as const;
 type ExportSection = (typeof EXPORT_SECTIONS)[number];
@@ -537,6 +539,24 @@ async function exportSection(
       select id, drama_id as "dramaId", episode_id as "episodeId",
         position_seconds as "positionSeconds", completed, created_at
       from watch_progress where tenant_id = ${principal.tenantId}
+        and account_id = ${principal.accountId}
+        and (${boundaryAt}::timestamptz is null
+          or (created_at, id) < (${boundaryAt}, ${boundaryId}::uuid))
+      order by created_at desc, id desc limit ${limit}
+    `;
+  } else if (section === 'following') {
+    rows = await transaction<typeof rows>`
+      select drama_id as id, drama_id as "dramaId", created_at
+      from customer_drama_follows where tenant_id = ${principal.tenantId}
+        and account_id = ${principal.accountId}
+        and (${boundaryAt}::timestamptz is null
+          or (created_at, drama_id) < (${boundaryAt}, ${boundaryId}::uuid))
+      order by created_at desc, drama_id desc limit ${limit}
+    `;
+  } else if (section === 'feedback') {
+    rows = await transaction<typeof rows>`
+      select id, locale, body, reply, replied_at as "repliedAt", created_at
+      from customer_feedback where tenant_id = ${principal.tenantId}
         and account_id = ${principal.accountId}
         and (${boundaryAt}::timestamptz is null
           or (created_at, id) < (${boundaryAt}, ${boundaryId}::uuid))

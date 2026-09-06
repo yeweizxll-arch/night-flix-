@@ -41,14 +41,16 @@ describe('CustomerInteractionController', () => {
     }
   });
 
-  it('requires a verified bearer token even though the route is Public', async () => {
+  it('allows guest reads but requires authentication for writes', async () => {
     const listComments = vi.fn(async () => ({ items: [] }));
     const authenticateAccess = vi.fn(async () => ({ accountId, tenantId }));
     const controller = customerController({ listComments }, { authenticateAccess });
-    await expect(controller.listComments({}, request())).rejects.toBeInstanceOf(
+    await expect(controller.addLike(accountId, request())).rejects.toBeInstanceOf(
       UnauthorizedException,
     );
     expect(authenticateAccess).not.toHaveBeenCalled();
+    await controller.listComments({}, request());
+    expect(listComments).toHaveBeenCalledWith({ tenantId }, {});
     await controller.listComments(
       { dramaId: '33333333-3333-4333-8333-333333333333' },
       request({ authorization: `Bearer ${accessToken}` }),

@@ -1,6 +1,7 @@
 import { PGlite, type Transaction } from '@electric-sql/pglite';
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
@@ -10,6 +11,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { uuidV7 } from '../src/common/uuid-v7';
 import { CustomerContentCatalogService } from '../src/customer-content/customer-content-catalog.service';
+import { TenantDramaDiscoveryService } from '../src/content/tenant-drama-discovery';
 import type {
   DatabaseService,
   DatabaseTransaction,
@@ -36,6 +38,7 @@ const licensedEpisode = '018f2f45-7f5e-7e70-b17f-f6e773576112';
 
 let database: PGlite;
 let catalog: CustomerContentCatalogService;
+let discovery: TenantDramaDiscoveryService;
 
 function transactionTag(transaction: Transaction): DatabaseTransaction {
   const tag = async (
@@ -186,6 +189,7 @@ describe('anonymous customer content catalog', () => {
       }),
     } as unknown as DatabaseService;
     catalog = new CustomerContentCatalogService(databaseService);
+    discovery = new TenantDramaDiscoveryService(databaseService);
   }, 30_000);
 
   afterAll(async () => {
@@ -343,5 +347,66 @@ describe('anonymous customer content catalog', () => {
       licensedDrama,
     ].sort());
     await database.exec('rollback; reset role');
+  });
+
+  it('uses real activity and tenant weights without falsifying heat or bypassing availability', async () => {
+    const account = uuidV7();
+    await database.exec(`insert into customer_accounts (id, tenant_id, username, password_hash)
+      values ('${account}', '${tenantA}', 'ranking-viewer', '${'p'.repeat(64)}');
+      insert into customer_drama_likes (tenant_id, account_id, drama_id)
+      values ('${tenantA}', '${account}', '${percentDrama}');`);
+    const popular = await catalog.listDramas(tenantA, { sort: 'popular' });
+    expect(popular.items[0]?.id).toBe(percentDrama);
+    expect(popular.items[0]?.heat).toBeGreaterThanOrEqual(199);
+    const latest = await catalog.listDramas(tenantA, { sort: 'latest' });
+    expect(latest.items[0]?.id).toBe(licensedDrama);
+
+    const weighted = await discovery.set(tenantA, defaultDrama,
+      { weight: 500, pinnedRank: 0, expectedVersion: 0 }, platformStaff, uuidV7());
+    expect(weighted.version).toBe(1);
+    const weightedList = await catalog.listDramas(tenantA, { sort: 'popular' });
+    expect(weightedList.items[0]).toMatchObject({ id: defaultDrama, heat: 0 });
+    await expect(discovery.set(tenantA, defaultDrama,
+      { weight: 1, pinnedRank: 0, expectedVersion: 0 }, platformStaff, uuidV7()))
+      .rejects.toBeInstanceOf(ConflictException);
+    await expect(discovery.set(tenantA, tenantBDrama,
+      { weight: 100000, pinnedRank: 1, expectedVersion: 0 }, platformStaff, uuidV7()))
+      .rejects.toBeInstanceOf(NotFoundException);
+
+    await discovery.set(tenantA, licensedDrama,
+      { weight: -100, pinnedRank: 1, expectedVersion: 0 }, platformStaff, uuidV7());
+    expect((await catalog.listDramas(tenantA, { sort: 'popular' })).items[0]?.id).toBe(licensedDrama);
+    expect(await discovery.get(tenantB, licensedDrama)).toEqual({ weight: 0, pinnedRank: 0, version: 0 });
+    expect((await catalog.listDramas(tenantB, { sort: 'popular' })).items.map(item => item.id)).toEqual([tenantBDrama]);
+    await database.exec(`update dramas set emergency_takedown_at = statement_timestamp()
+      where id = '${licensedDrama}'`);
+    try {
+      expect((await catalog.listDramas(tenantA, { sort: 'popular' })).items.map(item => item.id)).not.toContain(licensedDrama);
+    } finally {
+      await database.exec(`update dramas set emergency_takedown_at = null where id = '${licensedDrama}';
+        delete from tenant_drama_discovery; delete from customer_drama_likes where account_id = '${account}';`);
+    }
+    const audit = await database.query<{ count: number }>(`select count(*)::integer from audit_logs
+      where action = 'content.discovery.update' and tenant_id = '${tenantA}'`);
+    expect(audit.rows[0]?.count).toBe(2);
+    await expect(catalog.listDramas(tenantA, { sort: 'fake' })).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('deduplicates episode progress for heat and uses category affinity only for the authenticated viewer', async () => {
+    const account = uuidV7();
+    await database.exec(`insert into customer_accounts (id, tenant_id, username, password_hash)
+      values ('${account}', '${tenantA}', 'preference-viewer', '${'p'.repeat(64)}');
+      insert into watch_progress (id, tenant_id, account_id, drama_id, episode_id, position_seconds, completed)
+      values ('${uuidV7()}', '${tenantA}', '${account}', '${percentDrama}', '${publishedEpisode}', 20, false);`);
+    const first = await catalog.listDramas(tenantA, { sort: 'popular' });
+    expect(first.items.find(item => item.id === percentDrama)?.heat).toBeGreaterThanOrEqual(99);
+    await database.exec(`update watch_progress set position_seconds = 21
+      where tenant_id = '${tenantA}' and account_id = '${account}'`);
+    const second = await catalog.listDramas(tenantA, { sort: 'popular' });
+    expect(second.items.find(item => item.id === percentDrama)?.heat).toBeLessThanOrEqual(100);
+    await discovery.set(tenantA, defaultDrama, { weight: 150, pinnedRank: 0, expectedVersion: 0 }, platformStaff, uuidV7());
+    expect((await catalog.listDramas(tenantA, { sort: 'recommended' })).items[0]?.id).toBe(defaultDrama);
+    expect((await catalog.listDramas(tenantA, { sort: 'recommended' }, account)).items[0]?.id).toBe(percentDrama);
+    await database.exec(`delete from tenant_drama_discovery; delete from watch_progress where account_id = '${account}';`);
   });
 });

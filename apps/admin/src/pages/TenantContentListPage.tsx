@@ -25,6 +25,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError } from '../api/http';
 import { useAuth } from '../auth/AuthProvider';
 import { BatchEpisodeUploadModal } from './BatchEpisodeUploadModal';
+import { DramaRankingButton } from './DramaRankingButton';
 import { uploadEpisodeFile } from './batch-episodes';
 import { readVideoDuration } from './video-duration';
 import {
@@ -1251,6 +1252,7 @@ function DramaList({
             return (
               <Space wrap>
                 <Button size="small" onClick={() => onDetail(record)}>详情</Button>
+                {canUpdate && !record.deletedAt ? <DramaRankingButton dramaId={record.id} /> : null}
                 {canUpdate && editable ? <Button size="small" onClick={() => onEdit(record)}>编辑</Button> : null}
                 {canUpdate && editable ? (
                   <Popconfirm description="由本代理商自行确认内容可发布，无需总部审核。封面及剧集须已就绪。" onConfirm={() => onAction(record, 'publish')} title="确认上架？">

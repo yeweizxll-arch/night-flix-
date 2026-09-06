@@ -30,8 +30,13 @@ export class CustomerContentCatalogController {
 
   @Get('dramas')
   @PublicEndpoint()
-  list(@Query() query: CustomerDramaCatalogQuery) {
-    return this.catalog.listDramas(this.verifiedTenantId(), query);
+  async list(@Query() query: CustomerDramaCatalogQuery, @Req() request?: FastifyRequest) {
+    const tenantId = this.verifiedTenantId();
+    if (request?.headers.authorization !== undefined) {
+      const principal = await this.authentication.authenticateAccess(tenantId, bearerToken(request));
+      return this.catalog.listDramas(tenantId, query, principal.accountId);
+    }
+    return this.catalog.listDramas(tenantId, query);
   }
 
   @Get('dramas/:dramaId')

@@ -119,6 +119,24 @@ export class PlaybackController {
     );
   }
 
+  @Get('following')
+  @PublicEndpoint()
+  async following(@Query('page') page: unknown, @Req() request: FastifyRequest) {
+    return this.playback.following(await this.principal(request), Number(page ?? 1));
+  }
+
+  @Post('following/:dramaId')
+  @PublicEndpoint()
+  async follow(@Param('dramaId') id: string, @Req() request: FastifyRequest) {
+    return this.playback.setFollowing(await this.principal(request), id, true);
+  }
+
+  @Delete('following/:dramaId')
+  @PublicEndpoint()
+  async unfollow(@Param('dramaId') id: string, @Req() request: FastifyRequest) {
+    return this.playback.setFollowing(await this.principal(request), id, false);
+  }
+
   @Post('favorites/:dramaId')
   @PublicEndpoint()
   async addFavorite(

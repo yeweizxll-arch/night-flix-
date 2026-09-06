@@ -2,6 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>Select a screenshot to recognize a drama title on this device. Images are not uploaded.</string>
+    <key>NSCameraUsageDescription</key>
+    <string>Take a picture to recognize the drama title on this device.</string>
     <key>FlutterDeepLinkingEnabled</key><false/>
     <key>UIBackgroundModes</key><array><string>remote-notification</string></array>
     <!-- NIGHTFLIX_TENANT_URL_TYPES -->

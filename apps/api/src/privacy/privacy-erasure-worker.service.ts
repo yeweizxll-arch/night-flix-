@@ -188,6 +188,14 @@ export class PrivacyErasureWorkerService {
         where tenant_id = ${request.tenant_id} and account_id = ${request.account_id}
       `;
       await transaction`
+        delete from customer_feedback
+        where tenant_id = ${request.tenant_id} and account_id = ${request.account_id}
+      `;
+      await transaction`
+        delete from customer_drama_follows
+        where tenant_id = ${request.tenant_id} and account_id = ${request.account_id}
+      `;
+      await transaction`
         update interaction_comments set body = '[content erased]',
           sensitive_match_ids = '{}'::uuid[], version = version + 1
         where tenant_id = ${request.tenant_id} and account_id = ${request.account_id}

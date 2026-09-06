@@ -9,9 +9,12 @@ import {
 } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import type postgres from 'postgres';
+import { SUPPORTED_APP_LOCALES } from '@drama/contracts';
 
 import { uuidV7 } from '../common/uuid-v7';
 import type { CustomerPrincipal } from '../customer-auth/customer-auth.types';
+import type { PlaybackViewer } from '../playback/playback.types';
+import { assertCustomerSiteAvailable } from '../customer-auth/customer-site-policy';
 import {
   DatabaseService,
   type DatabaseTransaction,
@@ -31,6 +34,7 @@ import type {
   SensitiveWordResponse,
 } from './interaction.types';
 import { InteractionRateLimiterService } from './interaction-rate-limiter.service';
+import { lockPublicDistribution } from '../public-drama-pool/public-distribution';
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -86,14 +90,79 @@ export class InteractionService {
     private readonly rateLimiter: InteractionRateLimiterService,
   ) {}
 
+  async sendFeedback(principal: CustomerPrincipal, raw: Record<string, unknown>, metadata: InteractionCommandMetadata) {
+    this.assertPrincipal(principal);
+    const body = optionalText(raw?.body, 'body', 1, 2000);
+    const locale = raw?.locale;
+    if (!body || typeof locale !== 'string' || !SUPPORTED_APP_LOCALES.includes(locale as typeof SUPPORTED_APP_LOCALES[number])) {
+      throw new BadRequestException('Feedback body and supported locale are required');
+    }
+    await this.rateLimiter.consume({ accountId: principal.accountId, tenantId: principal.tenantId, ip: metadata.ip, operation: 'report' });
+    return this.database.inTenantContext(principal.tenantId, async sql => {
+      await this.requireCustomerSite(sql, principal);
+      const command = await this.beginCommand<{ id: string }>(sql, {
+        ...metadata, request: { body, locale }, routeKey: 'customer.feedback.create', tenantId: principal.tenantId,
+      });
+      if (command.cached) return command.cached;
+      const id = uuidV7();
+      await sql`insert into customer_feedback (id, tenant_id, account_id, locale, body)
+        values (${id}, ${principal.tenantId}, ${principal.accountId}, ${locale}, ${body})`;
+      const result = { id };
+      await this.completeCommand(sql, command.id, result, 201, { resourceId: id, resourceType: 'customer_feedback' });
+      return result;
+    });
+  }
+
+  async feedback(tenantId: string, accountId: string | undefined, pageValue: unknown) {
+    assertUuid(tenantId, 'tenantId');
+    if (accountId !== undefined) assertUuid(accountId, 'accountId');
+    const page = integer(pageValue, 'page', 1, 1, 10000);
+    return this.database.inTenantContext(tenantId, async sql => {
+      if (accountId) await this.requireReadSite(sql, { tenantId, accountId });
+      const items = await sql<Array<{ id: string; body: string; reply: string | null; created_at: Date; replied_at: Date | null }>>`
+        select id, body, reply, created_at, replied_at from customer_feedback
+        where tenant_id = ${tenantId} and (${accountId ?? null}::uuid is null or account_id = ${accountId ?? null}::uuid)
+        order by created_at desc, id desc limit 30 offset ${(page - 1) * 30}
+      `;
+      return { items: items.map(row => ({ id: row.id, body: row.body, reply: row.reply,
+        createdAt: iso(row.created_at), repliedAt: row.replied_at ? iso(row.replied_at) : null })), page, pageSize: 30 };
+    });
+  }
+
+  async replyFeedback(tenantId: string, id: string, raw: Record<string, unknown>, metadata: InteractionCommandMetadata) {
+    assertUuid(id, 'feedbackId');
+    const reply = optionalText(raw?.reply, 'reply', 1, 2000);
+    if (!reply) throw new BadRequestException('Reply is required');
+    return this.database.inTenantContext(tenantId, async sql => {
+      const rows = await sql<Array<{ account_id: string; locale: string; reply: string | null }>>`
+        select account_id, locale, reply from customer_feedback where tenant_id = ${tenantId} and id = ${id} for update
+      `;
+      const row = rows[0];
+      if (!row) throw new NotFoundException('Feedback is unavailable');
+      if (row.reply !== null) {
+        if (row.reply !== reply) throw new ConflictException('Feedback already replied');
+        return { id, replied: true };
+      }
+      await sql`update customer_feedback set reply = ${reply}, replied_at = statement_timestamp()
+        where tenant_id = ${tenantId} and id = ${id}`;
+      await sql`insert into customer_inbox_messages (id, tenant_id, account_id, category, source_type, locale, title, body)
+        values (${id}, ${tenantId}, ${row.account_id}, 'transactional', 'system', ${row.locale},
+          ${row.locale.startsWith('zh') ? '客服回复' : 'Support reply'}, ${reply})`;
+      await sql`insert into audit_logs (id, scope_type, tenant_id, actor_type, actor_id, action,
+        resource_type, resource_id, request_id) values (${uuidV7()}, 'tenant', ${tenantId}, 'tenant_staff',
+        ${metadata.actorId}, 'customer.feedback.reply', 'customer_feedback', ${id}, ${metadata.requestId})`;
+      return { id, replied: true };
+    });
+  }
+
   async dramaSummary(
-    principal: CustomerPrincipal,
+    principal: PlaybackViewer,
     dramaId: string,
   ): Promise<DramaInteractionSummaryResponse> {
-    this.assertPrincipal(principal);
+    assertUuid(principal.tenantId, 'tenantId');
     assertUuid(dramaId, 'dramaId');
     return this.database.inTenantContext(principal.tenantId, async (transaction) => {
-      await this.requireCustomerSite(transaction, principal);
+      await this.requireReadSite(transaction, principal);
       await this.requirePublishedContent(transaction, principal.tenantId, dramaId, undefined);
       const rows = await transaction<Array<{
         comment_count: number;
@@ -111,11 +180,11 @@ export class InteractionService {
             as favorite_count,
           exists (select 1 from customer_favorites
             where tenant_id = ${principal.tenantId}
-              and account_id = ${principal.accountId} and drama_id = ${dramaId})
+              and account_id = ${principal.accountId ?? null}::uuid and drama_id = ${dramaId})
             as is_favorite,
           exists (select 1 from customer_drama_likes
             where tenant_id = ${principal.tenantId}
-              and account_id = ${principal.accountId} and drama_id = ${dramaId})
+              and account_id = ${principal.accountId ?? null}::uuid and drama_id = ${dramaId})
             as is_liked,
           (select count(*)::integer from customer_drama_likes
             where tenant_id = ${principal.tenantId} and drama_id = ${dramaId})
@@ -190,13 +259,13 @@ export class InteractionService {
   }
 
   async listComments(
-    principal: CustomerPrincipal,
+    principal: PlaybackViewer,
     rawQuery: Record<string, unknown>,
   ): Promise<{ items: InteractionItemResponse[]; page: number; pageSize: number }> {
     const query = contentQuery(rawQuery, true);
-    this.assertPrincipal(principal);
+    assertUuid(principal.tenantId, 'tenantId');
     return this.database.inTenantContext(principal.tenantId, async (transaction) => {
-      await this.requireCustomerSite(transaction, principal);
+      await this.requireReadSite(transaction, principal);
       await this.requirePublishedContent(
         transaction,
         principal.tenantId,
@@ -232,7 +301,8 @@ export class InteractionService {
           comment.id
         limit ${query.pageSize} offset ${(query.page - 1) * query.pageSize}
       `;
-      return { items: rows.map(mapInteraction), page: query.page, pageSize: query.pageSize };
+      return { items: rows.map(row => ({ ...mapInteraction(row),
+        isOwn: row.account_id === principal.accountId })), page: query.page, pageSize: query.pageSize };
     });
   }
 
@@ -296,7 +366,7 @@ export class InteractionService {
         returning id, drama_id, episode_id, account_id, parent_id, body,
           status, created_at
       `;
-      const response = mapInteraction(requiredRow(rows[0], 'Comment was not created'));
+      const response = { ...mapInteraction(requiredRow(rows[0], 'Comment was not created')), isOwn: true };
       await this.recordCustomerMutation(transaction, safeMetadata, {
         eventType: 'InteractionCommentCreated',
         matchCount: matchIds.length,
@@ -939,6 +1009,15 @@ export class InteractionService {
     return this.database.inTenantContext(requiredString(tenantId, 'tenantId'), callback);
   }
 
+  private async requireReadSite(transaction: DatabaseTransaction, principal: PlaybackViewer) {
+    if (principal.accountId !== undefined) {
+      assertUuid(principal.accountId, 'accountId');
+      await this.requireCustomerSite(transaction, principal as CustomerPrincipal);
+    } else {
+      await assertCustomerSiteAvailable(transaction, principal.tenantId);
+    }
+  }
+
   private assertPrincipal(principal: CustomerPrincipal): void {
     if (!principal || typeof principal !== 'object') {
       throw new ForbiddenException('Customer principal is required');
@@ -980,6 +1059,8 @@ export class InteractionService {
       where drama.id = ${dramaId}
         and drama.status = 'published'
         and drama.deleted_at is null
+        and drama.emergency_takedown_at is null
+        and app.customer_region_allowed(${tenantId}, drama.id)
         and (drama.release_at is null or drama.release_at <= statement_timestamp())
         and (drama.unpublish_at is null or drama.unpublish_at > statement_timestamp())
         and (
@@ -1007,34 +1088,12 @@ export class InteractionService {
             )
           )
         )
-      for share of drama
+        and app.lock_customer_row('dramas', drama.id, to_jsonb(drama.*))
     `;
     const drama = dramas[0];
     if (!drama) throw new NotFoundException('Published content is unavailable');
     if (drama.owner_type === 'platform') {
-      const licenses = await transaction<{ id: string }[]>`
-        select license.id
-        from content_licenses as license
-        inner join content_license_items as item
-          on item.tenant_id = license.tenant_id and item.license_id = license.id
-        where license.tenant_id = ${tenantId}
-          and item.drama_id = ${dramaId}
-          and license.status in ('scheduled', 'active')
-          and license.starts_at <= statement_timestamp()
-          and license.expires_at > statement_timestamp()
-        order by license.id limit 1
-        for share of license, item
-      `;
-      if (!licenses[0]) {
-        const publications = await transaction<{ id: string }[]>`
-          select id from tenant_public_drama_publications
-          where tenant_id = ${tenantId} and drama_id = ${dramaId}
-            and status = 'published' for share
-        `;
-        if (!publications[0]) {
-          throw new NotFoundException('Published content is unavailable');
-        }
-      }
+      await lockPublicDistribution(transaction, tenantId, dramaId);
     }
     if (!episodeId) return undefined;
     const episodes = await transaction<{ duration_seconds: number }[]>`
@@ -1043,7 +1102,7 @@ export class InteractionService {
         and status = 'published' and deleted_at is null
         and (release_at is null or release_at <= statement_timestamp())
         and (unpublish_at is null or unpublish_at > statement_timestamp())
-      for share
+        and app.lock_customer_row('episodes', episodes.id, to_jsonb(episodes.*))
     `;
     const episode = episodes[0];
     if (!episode) throw new NotFoundException('Published episode is unavailable');

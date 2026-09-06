@@ -51,7 +51,21 @@ export class CustomerInteractionController {
     @Query() query: Record<string, unknown>,
     @Req() request: FastifyRequest,
   ) {
-    return this.interactions.listComments(await this.principal(request), query);
+    return this.interactions.listComments(await this.viewer(request), query);
+  }
+
+  @Get('feedback')
+  @PublicEndpoint()
+  async feedback(@Query('page') page: unknown, @Req() request: FastifyRequest) {
+    const principal = await this.principal(request);
+    return this.interactions.feedback(principal.tenantId, principal.accountId, page);
+  }
+
+  @Post('feedback')
+  @PublicEndpoint()
+  async sendFeedback(@Body() input: Record<string, unknown>, @Req() request: FastifyRequest) {
+    const principal = await this.principal(request);
+    return this.interactions.sendFeedback(principal, input, customerMetadata(principal, request, oneIdempotencyKey(request)));
   }
 
   @Get('dramas/:dramaId/summary')
@@ -60,7 +74,7 @@ export class CustomerInteractionController {
     @Param('dramaId') dramaId: string,
     @Req() request: FastifyRequest,
   ) {
-    return this.interactions.dramaSummary(await this.principal(request), dramaId);
+    return this.interactions.dramaSummary(await this.viewer(request), dramaId);
   }
 
   @Post('dramas/:dramaId/like')
@@ -171,6 +185,14 @@ export class CustomerInteractionController {
     );
   }
 
+  private async viewer(request: FastifyRequest) {
+    if (request.headers.authorization !== undefined) return this.principal(request);
+    const context = this.tenantContext.current();
+    if (!context?.tenantId) throw new BadRequestException('A verified tenant domain is required');
+    if (context.tenantStatus !== 'active') throw new ForbiddenException('Tenant is not available');
+    return { tenantId: context.tenantId };
+  }
+
   private async principal(request: FastifyRequest): Promise<CustomerPrincipal> {
     const context = this.tenantContext.current();
     if (!context?.tenantId) {
@@ -192,6 +214,19 @@ export class TenantInteractionController {
     @Inject(InteractionService)
     private readonly interactions: InteractionService,
   ) {}
+
+  @Get('feedback')
+  @RequirePermissions({ mode: 'read', permissions: ['tenant.interaction.read'], scope: 'tenant' })
+  feedback(@Query('page') page: unknown, @CurrentPrincipal() principal: AccessPrincipal) {
+    return this.interactions.feedback(tenantId(principal), undefined, page);
+  }
+
+  @Post('feedback/:feedbackId/reply')
+  @RequirePermissions({ mode: 'write', permissions: ['tenant.interaction.manage'], scope: 'tenant' })
+  replyFeedback(@Param('feedbackId') id: string, @Body() input: Record<string, unknown>,
+    @CurrentPrincipal() principal: AccessPrincipal, @Req() request: FastifyRequest) {
+    return this.interactions.replyFeedback(tenantId(principal), id, input, staffMetadata('tenant', principal, request));
+  }
 
   @Get('moderation')
   @RequirePermissions({

@@ -31,17 +31,17 @@ describe('CustomerContentCatalogController', () => {
       tenantStatus: 'active',
     });
 
-    controller.list({ locale: 'ja-JP' });
+    await controller.list({ locale: 'ja-JP' });
     expect(listDramas).toHaveBeenCalledWith(tenantId, { locale: 'ja-JP' });
     await controller.detail(dramaId, 'fr-FR', { headers: {} } as FastifyRequest);
     expect(getDrama).toHaveBeenCalledWith(tenantId, dramaId, 'fr-FR', undefined);
 
-    expect(() => makeController({}, undefined).list({}))
-      .toThrow(BadRequestException);
-    expect(() => makeController({}, {
+    await expect(makeController({}, undefined).list({}))
+      .rejects.toThrow(BadRequestException);
+    await expect(makeController({}, {
       tenantId,
       tenantStatus: 'suspended',
-    }).list({})).toThrow(ForbiddenException);
+    }).list({})).rejects.toThrow(ForbiddenException);
   });
 });
 

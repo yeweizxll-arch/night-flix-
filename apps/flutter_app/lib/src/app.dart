@@ -15,6 +15,9 @@ import 'native_purchases.dart';
 import 'mobile_links.dart';
 import 'tenant_ads.dart';
 import 'player_controls.dart';
+import 'drama_scanner.dart';
+
+part 'account_features.dart';
 
 const _ink = Color(0xff080911);
 const _purple = Color(0xff7558ff);
@@ -312,6 +315,7 @@ class FeedScreen extends StatefulWidget {
 
 class _FeedScreenState extends State<FeedScreen> {
   int current = 0;
+  int feedRevision = 0;
   bool followingFeed = false;
 
   void _selectFeed(bool following) {
@@ -404,21 +408,38 @@ class _FeedScreenState extends State<FeedScreen> {
       );
     }
     final activeIndex = current < dramas.length ? current : dramas.length - 1;
-    return PageView.builder(
-      key: ValueKey(followingFeed),
-      scrollDirection: Axis.vertical,
-      itemCount: dramas.length,
-      onPageChanged: (value) {
-        setState(() => current = value);
-        widget.controller.markWatched(dramas[value].id);
+    return RefreshIndicator(
+      onRefresh: () async {
+        try {
+          if (followingFeed) await widget.controller.refreshLibrary();
+          await widget.controller.refreshFeed();
+          if (mounted) {
+            setState(() {
+              current = 0;
+              feedRevision++;
+            });
+          }
+        } catch (cause) {
+          if (context.mounted) _message(context, friendlyError(context, cause));
+        }
       },
-      itemBuilder: (context, index) => DramaPage(
-        key: ValueKey(dramas[index].id),
-        active: widget.active && activeIndex == index,
-        controller: widget.controller,
-        drama: dramas[index],
-        followingFeed: followingFeed,
-        onFeedChanged: _selectFeed,
+      child: PageView.builder(
+        key: ValueKey('$followingFeed:$feedRevision'),
+        physics: const AlwaysScrollableScrollPhysics(),
+        scrollDirection: Axis.vertical,
+        itemCount: dramas.length,
+        onPageChanged: (value) {
+          setState(() => current = value);
+          widget.controller.markWatched(dramas[value].id);
+        },
+        itemBuilder: (context, index) => DramaPage(
+          key: ValueKey(dramas[index].id),
+          active: widget.active && activeIndex == index,
+          controller: widget.controller,
+          drama: dramas[index],
+          followingFeed: followingFeed,
+          onFeedChanged: _selectFeed,
+        ),
       ),
     );
   }
@@ -477,6 +498,7 @@ class _DramaPageState extends State<DramaPage>
   bool _rewardLoading = false;
   bool _wasAdBusy = false;
   bool _userPaused = false;
+  bool _useOriginalAudio = false;
 
   void _adsChanged() {
     final busy = adsFor(widget.controller).busy;
@@ -600,12 +622,10 @@ class _DramaPageState extends State<DramaPage>
         );
         episode = loaded.episodes.elementAtOrNull(index + 1) ?? episode;
       }
-      if (widget.controller.session != null) {
-        try {
-          summary = await widget.controller.loadInteractions(loaded.id);
-        } catch (_) {
-          // Playback remains available if engagement counters fail to load.
-        }
+      try {
+        summary = await widget.controller.loadInteractions(loaded.id);
+      } catch (_) {
+        // Guests can read actual counts too; a failed count request must not stop playback.
       }
       if (_canPlay) await _play();
     } catch (cause) {
@@ -618,6 +638,7 @@ class _DramaPageState extends State<DramaPage>
   }
 
   Future<void> _play({Duration? resumeAt}) async {
+    speed = widget.controller.playbackSpeed;
     final selected = episode;
     if (selected == null || !_canPlay) return;
     _playbackRefresh?.cancel();
@@ -660,7 +681,9 @@ class _DramaPageState extends State<DramaPage>
       setState(() => episode = playable);
       if (playable.playbackUrl == null) return;
       subtitleTrack = _availableTrack(playable, subtitleTrack, 'subtitle');
+      if (!widget.controller.subtitlesEnabled) subtitleTrack = null;
       dubbingTrack = _availableTrack(playable, dubbingTrack, 'dubbing');
+      if (_useOriginalAudio) dubbingTrack = null;
       Future<ClosedCaptionFile>? captions;
       if (subtitleTrack != null) {
         try {
@@ -793,8 +816,11 @@ class _DramaPageState extends State<DramaPage>
     unawaited(_saveVideoProgress(completed: true));
     if (episode?.preview == true) {
       if (mounted) setState(() => previewEnded = true);
-    } else {
+    } else if (widget.controller.autoAdvance) {
       _advanceEpisode();
+    } else {
+      _userPaused = true;
+      unawaited(_pausePlayers());
     }
   }
 
@@ -1023,8 +1049,26 @@ class _DramaPageState extends State<DramaPage>
                                 ),
                                 const SizedBox(width: 8),
                                 TextButton.icon(
-                                  onPressed: () => widget.controller
-                                      .toggleFollowing(drama.id),
+                                  onPressed: () async {
+                                    if (!await _requireLogin(
+                                      context,
+                                      context.tr('follow', 'Follow'),
+                                    )) {
+                                      return;
+                                    }
+                                    try {
+                                      await widget.controller.toggleFollowing(
+                                        drama.id,
+                                      );
+                                    } catch (cause) {
+                                      if (context.mounted) {
+                                        _message(
+                                          context,
+                                          friendlyError(context, cause),
+                                        );
+                                      }
+                                    }
+                                  },
                                   icon: Icon(
                                     widget.controller.following.contains(
                                           drama.id,
@@ -1130,12 +1174,6 @@ class _DramaPageState extends State<DramaPage>
                             Icons.chat_bubble_outline,
                             _compactCount(engagement?.commentCount ?? 0),
                             () async {
-                              if (!await _requireLogin(
-                                context,
-                                context.tr('comments', 'Comment'),
-                              )) {
-                                return;
-                              }
                               if (!context.mounted) return;
                               await _showComments(context, drama);
                             },
@@ -1173,6 +1211,7 @@ class _DramaPageState extends State<DramaPage>
               initialValue: speed,
               onSelected: (value) async {
                 speed = value;
+                await widget.controller.setPlaybackSettings(speed: value);
                 await video?.setPlaybackSpeed(value);
                 await dubbingAudio?.setPlaybackSpeed(value);
                 if (mounted) setState(() {});
@@ -1377,6 +1416,10 @@ class _DramaPageState extends State<DramaPage>
     final position = video?.value.position;
     subtitleTrack = result.subtitle;
     dubbingTrack = result.dubbing;
+    _useOriginalAudio = result.dubbing == null;
+    await widget.controller.setPlaybackSettings(
+      subtitlesEnabled: result.subtitle != null,
+    );
     await _play(resumeAt: position);
   }
 
@@ -1463,9 +1506,13 @@ class _DramaPageState extends State<DramaPage>
 
   Future<void> _showComments(BuildContext context, Drama drama) async {
     final input = TextEditingController();
+    var sending = false;
+    var page = 1;
+    var more = true;
     List<DramaComment> comments;
     try {
       comments = await widget.controller.comments(drama.id);
+      more = comments.length == 50;
     } catch (cause) {
       input.dispose();
       if (context.mounted) _message(context, friendlyError(context, cause));
@@ -1516,10 +1563,135 @@ class _DramaPageState extends State<DramaPage>
                                     context.tr('viewer', 'Viewer'),
                               ),
                               subtitle: Text(comment.body),
+                              trailing: PopupMenuButton<String>(
+                                onSelected: (action) async {
+                                  if (!await _requireLogin(
+                                    context,
+                                    context.tr('comments', 'Comments'),
+                                  )) {
+                                    return;
+                                  }
+                                  if (!context.mounted) return;
+                                  final confirmed = await showDialog<bool>(
+                                    context: context,
+                                    builder: (context) => AlertDialog(
+                                      title: Text(
+                                        action == 'delete'
+                                            ? (context.isChinese
+                                                  ? '删除这条评论？'
+                                                  : 'Delete this comment?')
+                                            : (context.isChinese
+                                                  ? '举报为不当内容？'
+                                                  : 'Report inappropriate content?'),
+                                      ),
+                                      actions: [
+                                        TextButton(
+                                          onPressed: () =>
+                                              Navigator.pop(context, false),
+                                          child: Text(
+                                            context.tr('cancel', 'Cancel'),
+                                          ),
+                                        ),
+                                        FilledButton(
+                                          onPressed: () =>
+                                              Navigator.pop(context, true),
+                                          child: Text(
+                                            context.tr('confirm', 'Confirm'),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                  if (confirmed != true) return;
+                                  try {
+                                    await widget.controller.repository
+                                        .moderateOwnComment(
+                                          comment.id,
+                                          reportReason: action == 'delete'
+                                              ? null
+                                              : 'abuse',
+                                        );
+                                    if (!context.mounted) return;
+                                    if (action == 'delete') {
+                                      setSheetState(
+                                        () => comments.removeWhere(
+                                          (item) => item.id == comment.id,
+                                        ),
+                                      );
+                                    }
+                                    _message(
+                                      context,
+                                      context.isChinese ? '已提交' : 'Submitted',
+                                    );
+                                    await widget.controller.loadInteractions(
+                                      drama.id,
+                                    );
+                                  } catch (cause) {
+                                    if (context.mounted) {
+                                      _message(
+                                        context,
+                                        friendlyError(context, cause),
+                                      );
+                                    }
+                                  }
+                                },
+                                itemBuilder: (context) => [
+                                  if (comment.isOwn)
+                                    PopupMenuItem(
+                                      value: 'delete',
+                                      child: Text(
+                                        context.isChinese ? '删除' : 'Delete',
+                                      ),
+                                    ),
+                                  PopupMenuItem(
+                                    value: 'report',
+                                    child: Text(
+                                      context.isChinese ? '举报' : 'Report',
+                                    ),
+                                  ),
+                                ],
+                              ),
                             );
                           },
                         ),
                 ),
+                if (more)
+                  TextButton(
+                    onPressed: sending
+                        ? null
+                        : () async {
+                            setSheetState(() => sending = true);
+                            try {
+                              final batch = await widget.controller.comments(
+                                drama.id,
+                                page: page + 1,
+                              );
+                              if (!context.mounted) return;
+                              setSheetState(() {
+                                page++;
+                                more = batch.length == 50;
+                                final seen = comments
+                                    .map((item) => item.id)
+                                    .toSet();
+                                comments.addAll(
+                                  batch.where((item) => seen.add(item.id)),
+                                );
+                              });
+                            } catch (cause) {
+                              if (context.mounted) {
+                                _message(
+                                  context,
+                                  friendlyError(context, cause),
+                                );
+                              }
+                            } finally {
+                              if (context.mounted) {
+                                setSheetState(() => sending = false);
+                              }
+                            }
+                          },
+                    child: Text(context.isChinese ? '加载更多' : 'Load more'),
+                  ),
                 Row(
                   children: [
                     Expanded(
@@ -1534,27 +1706,51 @@ class _DramaPageState extends State<DramaPage>
                     ),
                     IconButton.filled(
                       icon: const Icon(Icons.send),
-                      onPressed: () async {
-                        final body = input.text.trim();
-                        if (body.isEmpty) return;
-                        try {
-                          final created = await widget.controller.createComment(
-                            drama.id,
-                            body,
-                          );
-                          input.clear();
-                          setSheetState(
-                            () => comments = [...comments, created],
-                          );
-                          summary = await widget.controller.loadInteractions(
-                            drama.id,
-                          );
-                        } catch (cause) {
-                          if (context.mounted) {
-                            _message(context, friendlyError(context, cause));
-                          }
-                        }
-                      },
+                      onPressed: sending
+                          ? null
+                          : () async {
+                              final body = input.text.trim();
+                              if (body.isEmpty) return;
+                              if (!await _requireLogin(
+                                context,
+                                context.tr('comments', 'Comments'),
+                              )) {
+                                return;
+                              }
+                              if (!context.mounted) return;
+                              setSheetState(() => sending = true);
+                              try {
+                                final created = await widget.controller
+                                    .createComment(drama.id, body);
+                                if (!context.mounted) return;
+                                input.clear();
+                                if (created.status == 'visible') {
+                                  setSheetState(
+                                    () => comments = [...comments, created],
+                                  );
+                                } else {
+                                  _message(
+                                    context,
+                                    context.isChinese
+                                        ? '评论已提交，等待代理商审核'
+                                        : 'Submitted for moderation',
+                                  );
+                                }
+                                summary = await widget.controller
+                                    .loadInteractions(drama.id);
+                              } catch (cause) {
+                                if (context.mounted) {
+                                  _message(
+                                    context,
+                                    friendlyError(context, cause),
+                                  );
+                                }
+                              } finally {
+                                if (context.mounted) {
+                                  setSheetState(() => sending = false);
+                                }
+                              }
+                            },
                     ),
                   ],
                 ),
@@ -1571,15 +1767,19 @@ class _DramaPageState extends State<DramaPage>
     final host = widget.controller.config.deepLinkHost;
     final link = host == null ? '' : ' https://$host/dramas/${drama.id}';
     final box = context.findRenderObject() as RenderBox?;
-    await SharePlus.instance.share(
-      ShareParams(
-        title: drama.title,
-        text: '${drama.title}$link',
-        sharePositionOrigin: box == null
-            ? null
-            : box.localToGlobal(Offset.zero) & box.size,
-      ),
-    );
+    try {
+      await SharePlus.instance.share(
+        ShareParams(
+          title: drama.title,
+          text: '${drama.title}$link',
+          sharePositionOrigin: box == null
+              ? null
+              : box.localToGlobal(Offset.zero) & box.size,
+        ),
+      );
+    } catch (cause) {
+      if (context.mounted) _message(context, friendlyError(context, cause));
+    }
   }
 
   Future<void> _showEpisodes(BuildContext context, Drama drama) async {
@@ -1764,6 +1964,7 @@ class _TheaterScreenState extends State<TheaterScreen> {
   void initState() {
     super.initState();
     _loadCategories();
+    _reload();
   }
 
   @override
@@ -1773,6 +1974,7 @@ class _TheaterScreenState extends State<TheaterScreen> {
       selected = 'trending';
       filtered = null;
       _loadCategories();
+      _reload();
     }
   }
 
@@ -1781,25 +1983,36 @@ class _TheaterScreenState extends State<TheaterScreen> {
     try {
       final loaded = await controller.repository.categories(requestedLocale);
       if (mounted && locale == requestedLocale) setState(() => genres = loaded);
-    } catch (_) {
-      /* The trending catalog remains accessible when categories fail. */
+    } catch (cause) {
+      if (mounted && locale == requestedLocale) {
+        _message(context, friendlyError(context, cause));
+      }
     }
   }
 
   Future<void> _select(String category) async {
+    selected = category;
+    mode = _TheaterMode.catalog;
+    await _reload();
+  }
+
+  Future<void> _reload() async {
     final request = ++revision;
     setState(() {
-      selected = category;
-      mode = _TheaterMode.catalog;
       busy = true;
       error = null;
     });
     try {
-      final result = category == 'trending'
-          ? null
-          : await controller.repository.categoryDramas(
-              category,
-              controller.locale,
+      if (mode == _TheaterMode.favorites) await controller.refreshLibrary();
+      final result = mode == _TheaterMode.favorites
+          ? {
+              ...{for (final d in controller.dramas) d.id: d},
+              ...controller.libraryDramas,
+            }.values.toList()
+          : await controller.repository.discover(
+              locale: controller.locale,
+              sort: mode == _TheaterMode.latest ? 'latest' : 'popular',
+              category: selected == 'trending' ? null : selected,
             );
       if (mounted && request == revision) setState(() => filtered = result);
     } catch (cause) {
@@ -1854,11 +2067,34 @@ class _TheaterScreenState extends State<TheaterScreen> {
     if (category != null && mounted) await _select(category);
   }
 
-  void _setMode(_TheaterMode value) {
-    setState(() {
-      mode = value;
-      error = null;
-    });
+  Future<void> _scan() async {
+    final theme = _lightPageTheme(context);
+    final query = await Navigator.push<String>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => Theme(
+          data: theme,
+          child: DramaScanner(locale: controller.locale),
+        ),
+      ),
+    );
+    if (!mounted || query == null) return;
+    await showSearch<void>(
+      context: context,
+      delegate: DramaSearch(controller),
+      query: query,
+    );
+  }
+
+  Future<void> _setMode(_TheaterMode value) async {
+    if (value == _TheaterMode.favorites &&
+        controller.session == null &&
+        !await _showLogin(context, controller)) {
+      return;
+    }
+    if (!mounted) return;
+    mode = value;
+    await _reload();
   }
 
   @override
@@ -1866,287 +2102,297 @@ class _TheaterScreenState extends State<TheaterScreen> {
     final catalog = filtered ?? controller.dramas;
     final items = switch (mode) {
       _TheaterMode.catalog => catalog,
-      _TheaterMode.ranking => [
-        ...catalog,
-      ]..sort((a, b) => b.totalEpisodes.compareTo(a.totalEpisodes)),
-      _TheaterMode.latest => catalog.reversed.toList(),
+      _TheaterMode.ranking => catalog,
+      _TheaterMode.latest => catalog,
       _TheaterMode.favorites =>
         catalog
-            .where((drama) => controller.following.contains(drama.id))
+            .where((drama) => controller.favorites.contains(drama.id))
             .toList(),
     };
     return SafeArea(
-      child: CustomScrollView(
-        slivers: [
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(14, 10, 14, 5),
-              child: Material(
-                color: Colors.white,
-                elevation: 0,
-                borderRadius: BorderRadius.circular(10),
-                child: InkWell(
-                  key: const ValueKey('theater-search'),
+      child: RefreshIndicator(
+        onRefresh: () async {
+          await _loadCategories();
+          await _reload();
+        },
+        child: CustomScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          slivers: [
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 10, 14, 5),
+                child: Material(
+                  color: Colors.white,
+                  elevation: 0,
                   borderRadius: BorderRadius.circular(10),
-                  onTap: () => showSearch<void>(
-                    context: context,
-                    delegate: DramaSearch(controller),
-                  ),
-                  child: SizedBox(
-                    height: 46,
-                    child: Row(
-                      children: [
-                        const SizedBox(width: 14),
-                        const Icon(
-                          Icons.search_rounded,
-                          size: 21,
-                          color: Colors.black38,
-                        ),
-                        const SizedBox(width: 9),
-                        Expanded(
-                          child: Text(
-                            context.tr('searchDramas', 'Search dramas'),
-                            style: const TextStyle(
-                              color: Colors.black38,
-                              fontSize: 15,
+                  child: InkWell(
+                    key: const ValueKey('theater-search'),
+                    borderRadius: BorderRadius.circular(10),
+                    onTap: () => showSearch<void>(
+                      context: context,
+                      delegate: DramaSearch(controller),
+                    ),
+                    child: SizedBox(
+                      height: 46,
+                      child: Row(
+                        children: [
+                          const SizedBox(width: 14),
+                          const Icon(
+                            Icons.search_rounded,
+                            size: 21,
+                            color: Colors.black38,
+                          ),
+                          const SizedBox(width: 9),
+                          Expanded(
+                            child: Text(
+                              context.tr('searchDramas', 'Search dramas'),
+                              style: const TextStyle(
+                                color: Colors.black38,
+                                fontSize: 15,
+                              ),
                             ),
                           ),
-                        ),
-                        Container(
-                          width: 1,
-                          height: 22,
-                          color: const Color(0xffececef),
-                        ),
-                        const SizedBox(width: 11),
-                        const Icon(
-                          Icons.camera_alt_outlined,
-                          size: 20,
-                          color: Colors.black45,
-                        ),
-                        const SizedBox(width: 5),
-                        Text(
-                          context.isChinese ? '识剧' : 'Scan',
-                          style: const TextStyle(
-                            color: Colors.black54,
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
+                          Container(
+                            width: 1,
+                            height: 22,
+                            color: const Color(0xffececef),
                           ),
-                        ),
-                        const SizedBox(width: 13),
-                      ],
+                          TextButton.icon(
+                            key: const ValueKey('theater-scan'),
+                            onPressed: _scan,
+                            icon: const Icon(
+                              Icons.camera_alt_outlined,
+                              size: 20,
+                              color: Colors.black45,
+                            ),
+                            label: Text(
+                              context.isChinese ? '识剧' : 'Scan',
+                              style: const TextStyle(color: Colors.black54),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
               ),
             ),
-          ),
-          SliverToBoxAdapter(
-            child: SizedBox(
-              height: 43,
-              child: ListView(
-                padding: const EdgeInsets.symmetric(horizontal: 9),
-                scrollDirection: Axis.horizontal,
-                children: [
-                  _TheaterTab(
-                    key: const ValueKey('theater-category-trending'),
-                    label: context.tr('allDramas', 'Discover'),
-                    active:
-                        mode == _TheaterMode.catalog && selected == 'trending',
-                    onTap: () => _select('trending'),
-                  ),
-                  ...genres.entries.map(
-                    (item) => _TheaterTab(
-                      key: ValueKey('theater-category-${item.key}'),
-                      label: controller.repository.demoMode
-                          ? context.tr(item.key, item.value)
-                          : item.value,
-                      active:
-                          mode == _TheaterMode.catalog && selected == item.key,
-                      onTap: () => _select(item.key),
-                    ),
-                  ),
-                  _TheaterTab(
-                    label: context.tr('trending', 'Trending'),
-                    active: mode == _TheaterMode.ranking,
-                    onTap: () => _setMode(_TheaterMode.ranking),
-                  ),
-                  _TheaterTab(
-                    label: context.tr('newReleases', 'New'),
-                    active: mode == _TheaterMode.latest,
-                    onTap: () => _setMode(_TheaterMode.latest),
-                  ),
-                  _TheaterTab(
-                    label: context.tr('favorites', 'Favorites'),
-                    active: mode == _TheaterMode.favorites,
-                    onTap: () => _setMode(_TheaterMode.favorites),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(14, 2, 14, 10),
-              child: Row(
-                children: [
-                  _TheaterQuickAction(
-                    key: const ValueKey('theater-filter'),
-                    color: const Color(0xff7558ff),
-                    icon: Icons.tune_rounded,
-                    label: context.tr('filters', 'Filters'),
-                    onTap: _showFilters,
-                  ),
-                  const SizedBox(width: 8),
-                  _TheaterQuickAction(
-                    key: const ValueKey('theater-ranking'),
-                    active: mode == _TheaterMode.ranking,
-                    color: const Color(0xffff8b42),
-                    icon: Icons.local_fire_department_rounded,
-                    label: context.tr('rankings', 'Ranking'),
-                    onTap: () => _setMode(_TheaterMode.ranking),
-                  ),
-                  const SizedBox(width: 8),
-                  _TheaterQuickAction(
-                    key: const ValueKey('theater-new'),
-                    active: mode == _TheaterMode.latest,
-                    color: const Color(0xff25d6c8),
-                    icon: Icons.play_circle_fill_rounded,
-                    label: context.tr('newReleases', 'New'),
-                    onTap: () => _setMode(_TheaterMode.latest),
-                  ),
-                  const SizedBox(width: 8),
-                  _TheaterQuickAction(
-                    key: const ValueKey('theater-favorites'),
-                    active: mode == _TheaterMode.favorites,
-                    color: const Color(0xffff4d8d),
-                    icon: Icons.bookmark_rounded,
-                    label: context.tr('favorites', 'Favorites'),
-                    onTap: () => _setMode(_TheaterMode.favorites),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          SliverToBoxAdapter(child: NativeAdPlacement(controller: controller)),
-          if (busy) const SliverToBoxAdapter(child: LinearProgressIndicator()),
-          if (error != null)
             SliverToBoxAdapter(
-              child: TextButton(
-                onPressed: () => _select(selected),
-                child: Text(
-                  context.tr('tryAgain', 'Try again'),
-                  style: const TextStyle(color: Color(0xffff6b35)),
+              child: SizedBox(
+                height: 43,
+                child: ListView(
+                  padding: const EdgeInsets.symmetric(horizontal: 9),
+                  scrollDirection: Axis.horizontal,
+                  children: [
+                    _TheaterTab(
+                      key: const ValueKey('theater-category-trending'),
+                      label: context.tr('allDramas', 'Discover'),
+                      active:
+                          mode == _TheaterMode.catalog &&
+                          selected == 'trending',
+                      onTap: () => _select('trending'),
+                    ),
+                    ...genres.entries.map(
+                      (item) => _TheaterTab(
+                        key: ValueKey('theater-category-${item.key}'),
+                        label: controller.repository.demoMode
+                            ? context.tr(item.key, item.value)
+                            : item.value,
+                        active:
+                            mode == _TheaterMode.catalog &&
+                            selected == item.key,
+                        onTap: () => _select(item.key),
+                      ),
+                    ),
+                    _TheaterTab(
+                      label: context.tr('trending', 'Trending'),
+                      active: mode == _TheaterMode.ranking,
+                      onTap: () => _setMode(_TheaterMode.ranking),
+                    ),
+                    _TheaterTab(
+                      label: context.tr('newReleases', 'New'),
+                      active: mode == _TheaterMode.latest,
+                      onTap: () => _setMode(_TheaterMode.latest),
+                    ),
+                    _TheaterTab(
+                      label: context.tr('favorites', 'Favorites'),
+                      active: mode == _TheaterMode.favorites,
+                      onTap: () => _setMode(_TheaterMode.favorites),
+                    ),
+                  ],
                 ),
               ),
             ),
-          if (items.isEmpty && !busy)
-            SliverFillRemaining(
-              child: Center(
-                child: Text(
-                  context.tr('noDramas', 'No dramas yet'),
-                  style: const TextStyle(color: Colors.black45),
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 2, 14, 10),
+                child: Row(
+                  children: [
+                    _TheaterQuickAction(
+                      key: const ValueKey('theater-filter'),
+                      color: const Color(0xff7558ff),
+                      icon: Icons.tune_rounded,
+                      label: context.tr('filters', 'Filters'),
+                      onTap: _showFilters,
+                    ),
+                    const SizedBox(width: 8),
+                    _TheaterQuickAction(
+                      key: const ValueKey('theater-ranking'),
+                      active: mode == _TheaterMode.ranking,
+                      color: const Color(0xffff8b42),
+                      icon: Icons.local_fire_department_rounded,
+                      label: context.tr('rankings', 'Ranking'),
+                      onTap: () => _setMode(_TheaterMode.ranking),
+                    ),
+                    const SizedBox(width: 8),
+                    _TheaterQuickAction(
+                      key: const ValueKey('theater-new'),
+                      active: mode == _TheaterMode.latest,
+                      color: const Color(0xff25d6c8),
+                      icon: Icons.play_circle_fill_rounded,
+                      label: context.tr('newReleases', 'New'),
+                      onTap: () => _setMode(_TheaterMode.latest),
+                    ),
+                    const SizedBox(width: 8),
+                    _TheaterQuickAction(
+                      key: const ValueKey('theater-favorites'),
+                      active: mode == _TheaterMode.favorites,
+                      color: const Color(0xffff4d8d),
+                      icon: Icons.bookmark_rounded,
+                      label: context.tr('favorites', 'Favorites'),
+                      onTap: () => _setMode(_TheaterMode.favorites),
+                    ),
+                  ],
                 ),
               ),
             ),
-          SliverPadding(
-            padding: const EdgeInsets.fromLTRB(14, 3, 14, 18),
-            sliver: SliverGrid.builder(
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                childAspectRatio: .56,
-                crossAxisSpacing: 10,
-                mainAxisSpacing: 12,
+            SliverToBoxAdapter(
+              child: NativeAdPlacement(controller: controller),
+            ),
+            if (busy)
+              const SliverToBoxAdapter(child: LinearProgressIndicator()),
+            if (error != null)
+              SliverToBoxAdapter(
+                child: TextButton(
+                  onPressed: _reload,
+                  child: Text(
+                    context.tr('tryAgain', 'Try again'),
+                    style: const TextStyle(color: Color(0xffff6b35)),
+                  ),
+                ),
               ),
-              itemCount: items.length,
-              itemBuilder: (context, index) {
-                final drama = items[index];
-                return Material(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(10),
-                  clipBehavior: Clip.antiAlias,
-                  child: InkWell(
-                    onTap: () => _openDrama(context, controller, drama),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: Stack(
-                            fit: StackFit.expand,
-                            children: [
-                              _CoverImage(controller: controller, drama: drama),
-                              Positioned(
-                                left: 8,
-                                bottom: 7,
-                                child: DecoratedBox(
-                                  decoration: BoxDecoration(
-                                    color: const Color(0x99000000),
-                                    borderRadius: BorderRadius.circular(16),
-                                  ),
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 7,
-                                      vertical: 3,
+            if (items.isEmpty && !busy)
+              SliverFillRemaining(
+                child: Center(
+                  child: Text(
+                    context.tr('noDramas', 'No dramas yet'),
+                    style: const TextStyle(color: Colors.black45),
+                  ),
+                ),
+              ),
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(14, 3, 14, 18),
+              sliver: SliverGrid.builder(
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 2,
+                  childAspectRatio: .56,
+                  crossAxisSpacing: 10,
+                  mainAxisSpacing: 12,
+                ),
+                itemCount: items.length,
+                itemBuilder: (context, index) {
+                  final drama = items[index];
+                  return Material(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(10),
+                    clipBehavior: Clip.antiAlias,
+                    child: InkWell(
+                      onTap: () => _openDrama(context, controller, drama),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: Stack(
+                              fit: StackFit.expand,
+                              children: [
+                                _CoverImage(
+                                  controller: controller,
+                                  drama: drama,
+                                ),
+                                Positioned(
+                                  left: 8,
+                                  bottom: 7,
+                                  child: DecoratedBox(
+                                    decoration: BoxDecoration(
+                                      color: const Color(0x99000000),
+                                      borderRadius: BorderRadius.circular(16),
                                     ),
-                                    child: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        const Icon(
-                                          Icons.local_fire_department_rounded,
-                                          color: Colors.white,
-                                          size: 13,
-                                        ),
-                                        const SizedBox(width: 2),
-                                        Text(
-                                          '${drama.totalEpisodes} ${context.tr('episodeCount', 'episodes')}',
-                                          style: const TextStyle(
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 7,
+                                        vertical: 3,
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          const Icon(
+                                            Icons.local_fire_department_rounded,
                                             color: Colors.white,
-                                            fontSize: 11,
-                                            fontWeight: FontWeight.w700,
+                                            size: 13,
                                           ),
-                                        ),
-                                      ],
+                                          const SizedBox(width: 2),
+                                          Text(
+                                            '${drama.heat} ${context.isChinese ? '热度' : 'heat'}',
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 11,
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
                                     ),
                                   ),
                                 ),
+                              ],
+                            ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(9, 8, 9, 0),
+                            child: Text(
+                              '${mode == _TheaterMode.ranking ? '${index + 1}. ' : ''}${drama.title}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Colors.black87,
+                                fontSize: 15,
+                                fontWeight: FontWeight.w800,
                               ),
-                            ],
-                          ),
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(9, 8, 9, 0),
-                          child: Text(
-                            drama.title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Colors.black87,
-                              fontSize: 15,
-                              fontWeight: FontWeight.w800,
                             ),
                           ),
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(9, 4, 9, 9),
-                          child: Text(
-                            drama.summary.isEmpty
-                                ? context.tr('newReleases', 'New release')
-                                : drama.summary,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Color(0xffd77a34),
-                              fontSize: 12,
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(9, 4, 9, 9),
+                            child: Text(
+                              drama.summary.isEmpty
+                                  ? context.tr('newReleases', 'New release')
+                                  : drama.summary,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Color(0xffd77a34),
+                                fontSize: 12,
+                              ),
                             ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
-                  ),
-                );
-              },
+                  );
+                },
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -2267,33 +2513,37 @@ class _RewardsScreenState extends State<RewardsScreen> {
           future: widget.controller.session == null
               ? null
               : widget.controller.wallet(),
-          builder: (context, snapshot) => Container(
-            padding: const EdgeInsets.all(22),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(colors: [_purple, _pink]),
-              borderRadius: BorderRadius.circular(22),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  context.tr('coinBalance', 'Coin balance'),
-                  style: const TextStyle(fontSize: 14, color: Colors.white70),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  widget.controller.session == null
-                      ? context.tr('signInToView', 'Sign in to view')
-                      : snapshot.hasError
-                      ? context.tr('unavailable', 'Unavailable')
-                      : snapshot.data?.balancePoints ?? '…',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 28,
-                    fontWeight: FontWeight.w800,
+          builder: (context, snapshot) => InkWell(
+            onTap: () => _showWallet(context, widget.controller),
+            borderRadius: BorderRadius.circular(22),
+            child: Container(
+              padding: const EdgeInsets.all(22),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(colors: [_purple, _pink]),
+                borderRadius: BorderRadius.circular(22),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    context.tr('coinBalance', 'Coin balance'),
+                    style: const TextStyle(fontSize: 14, color: Colors.white70),
                   ),
-                ),
-              ],
+                  const SizedBox(height: 4),
+                  Text(
+                    widget.controller.session == null
+                        ? context.tr('signInToView', 'Sign in to view')
+                        : snapshot.hasError
+                        ? context.tr('unavailable', 'Unavailable')
+                        : snapshot.data?.balancePoints ?? '…',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 28,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -2301,6 +2551,35 @@ class _RewardsScreenState extends State<RewardsScreen> {
         ListTile(
           leading: const Icon(Icons.play_circle_fill),
           title: Text(context.tr('rewardUnlocks', 'Rewarded episode unlocks')),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => showModalBottomSheet<void>(
+            context: context,
+            isScrollControlled: true,
+            useSafeArea: true,
+            showDragHandle: true,
+            builder: (context) => SizedBox(
+              height: MediaQuery.sizeOf(context).height * .75,
+              child: Column(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Text(
+                      context.tr(
+                        'rewardUnlocksHint',
+                        'Watch an ad on a locked episode to unlock that episode directly.',
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: _DramaList(
+                      controller: widget.controller,
+                      items: widget.controller.dramas,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
           subtitle: Text(
             context.tr(
               'rewardUnlocksHint',
@@ -2366,8 +2645,8 @@ class LibraryScreen extends StatelessWidget {
             Expanded(
               child: TabBarView(
                 children: [
-                  _DramaList(controller: controller, items: watched),
-                  _DramaList(controller: controller, items: saved),
+                  _refreshable(context, watched),
+                  _refreshable(context, saved),
                 ],
               ),
             ),
@@ -2376,6 +2655,32 @@ class LibraryScreen extends StatelessWidget {
       ),
     );
   }
+
+  Widget _refreshable(
+    BuildContext context,
+    List<Drama> items,
+  ) => RefreshIndicator(
+    onRefresh: () async {
+      try {
+        await controller.refreshLibrary();
+      } catch (error) {
+        if (context.mounted) _message(context, friendlyError(context, error));
+      }
+    },
+    child: items.isEmpty
+        ? ListView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            children: [
+              SizedBox(
+                height: 160,
+                child: Center(
+                  child: Text(context.tr('nothingHere', 'Nothing here yet')),
+                ),
+              ),
+            ],
+          )
+        : _DramaList(controller: controller, items: items),
+  );
 }
 
 class ProfileScreen extends StatelessWidget {
@@ -2435,7 +2740,8 @@ class ProfileScreen extends StatelessWidget {
           Icons.workspace_premium_outlined,
           context.tr('membership', 'Membership'),
           context.tr('plansBenefits', 'Plans and benefits'),
-          onTap: () => _openStoreForController(context, controller),
+          onTap: () =>
+              _openAccountRecords(context, controller, entitlements: true),
         ),
         _profileTile(
           Icons.monetization_on_outlined,
@@ -2459,6 +2765,7 @@ class ProfileScreen extends StatelessWidget {
           Icons.settings_outlined,
           context.tr('settings', 'Settings'),
           context.tr('settingsHint', 'Playback, subtitles and privacy'),
+          onTap: () => _openSettings(context, controller),
         ),
         ListenableBuilder(
           listenable: adsFor(controller),
@@ -2483,6 +2790,7 @@ class ProfileScreen extends StatelessWidget {
           Icons.help_outline,
           context.tr('help', 'Help & support'),
           context.tr('helpHint', 'FAQ and contact'),
+          onTap: () => _openHelp(context, controller),
         ),
         if (controller.session != null)
           Padding(
@@ -2622,6 +2930,7 @@ class _DramaList extends StatelessWidget {
           ),
         )
       : ListView.separated(
+          physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.all(16),
           itemCount: items.length,
           separatorBuilder: (_, _) => const SizedBox(height: 12),
@@ -2991,7 +3300,16 @@ Future<void> _openStoreForController(
     return;
   }
   final purchases = NativePurchaseScope.of(context) ?? purchasesFor(controller);
-  if (purchases == null) return;
+  if (purchases == null) {
+    _message(
+      context,
+      context.tr(
+        'storeUnavailable',
+        'Store unavailable. Please try again later.',
+      ),
+    );
+    return;
+  }
   try {
     await showNativeStore(context, purchases);
   } catch (_) {
@@ -3007,28 +3325,30 @@ Future<void> _openStoreForController(
   }
 }
 
-Future<void> _showWallet(BuildContext context, AppController controller) async {
+Future<void> _showWallet(BuildContext context, AppController controller) =>
+    _openAccountRecords(context, controller, entitlements: false);
+
+Future<void> _openAccountRecords(
+  BuildContext context,
+  AppController controller, {
+  required bool entitlements,
+}) async {
   if (controller.session == null && !await _showLogin(context, controller)) {
     return;
   }
   if (!context.mounted) return;
   try {
-    final wallet = await controller.wallet();
-    if (!context.mounted) return;
-    await showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(context.tr('coinBalance', 'Coin balance')),
-        content: Text(
-          wallet.balancePoints,
-          style: const TextStyle(fontSize: 30, fontWeight: FontWeight.bold),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text(context.tr('close', 'Close')),
+    final theme = _lightPageTheme(context);
+    await Navigator.push<void>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => Theme(
+          data: theme,
+          child: _AccountRecordsPage(
+            controller: controller,
+            entitlements: entitlements,
           ),
-        ],
+        ),
       ),
     );
   } catch (cause) {
@@ -3093,35 +3413,37 @@ Future<void> _showInbox(BuildContext context, AppController controller) async {
                               maxLines: 3,
                               overflow: TextOverflow.ellipsis,
                             ),
-                            onTap: item.status == 'unread'
-                                ? () async {
-                                    final scope = controller.accountScope;
-                                    try {
-                                      await controller.markMessageRead(item.id);
-                                    } catch (cause) {
-                                      if (context.mounted) {
-                                        _message(
-                                          context,
-                                          friendlyError(context, cause),
-                                        );
-                                      }
-                                      return;
-                                    }
-                                    if (!context.mounted ||
-                                        controller.accountScope != scope) {
-                                      return;
-                                    }
-                                    final changed = InboxMessage(
-                                      body: item.body,
-                                      id: item.id,
-                                      status: 'read',
-                                      title: item.title,
-                                    );
-                                    final updated = [...items];
-                                    updated[index] = changed;
-                                    setState(() => items = updated);
-                                  }
-                                : null,
+                            onTap: () async {
+                              final scope = controller.accountScope;
+                              try {
+                                if (item.status == 'unread') {
+                                  await controller.markMessageRead(item.id);
+                                }
+                              } catch (cause) {
+                                if (context.mounted) {
+                                  _message(
+                                    context,
+                                    friendlyError(context, cause),
+                                  );
+                                }
+                                return;
+                              }
+                              if (!context.mounted ||
+                                  controller.accountScope != scope) {
+                                return;
+                              }
+                              final changed = InboxMessage(
+                                body: item.body,
+                                id: item.id,
+                                status: 'read',
+                                title: item.title,
+                                deepLink: item.deepLink,
+                              );
+                              final updated = [...items];
+                              updated[index] = changed;
+                              setState(() => items = updated);
+                              await _messageDetail(context, controller, item);
+                            },
                           );
                         },
                       ),

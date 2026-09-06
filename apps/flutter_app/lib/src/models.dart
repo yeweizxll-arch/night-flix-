@@ -91,6 +91,8 @@ class Drama {
     this.pointsAmount,
     this.episodes = const [],
     this.palette = 0,
+    this.heat = 0,
+    this.publishedAt,
   });
 
   final String id;
@@ -101,6 +103,8 @@ class Drama {
   final int? pointsAmount;
   final List<Episode> episodes;
   final int palette;
+  final int heat;
+  final DateTime? publishedAt;
 
   factory Drama.fromJson(Map<String, dynamic> json, {int palette = 0}) => Drama(
     id: json['id'] as String,
@@ -115,6 +119,8 @@ class Drama {
         )
         .toList(),
     palette: palette,
+    heat: (json['heat'] as num?)?.toInt() ?? 0,
+    publishedAt: DateTime.tryParse(json['publishedAt'] as String? ?? ''),
   );
 }
 
@@ -241,14 +247,18 @@ class DramaInteractionSummary {
         likeCount: (json['likeCount'] as num?)?.toInt() ?? 0,
       );
 
-  DramaInteractionSummary copyWith({bool? isFavorite, bool? isLiked}) =>
-      DramaInteractionSummary(
-        commentCount: commentCount,
-        favoriteCount: favoriteCount,
-        isFavorite: isFavorite ?? this.isFavorite,
-        isLiked: isLiked ?? this.isLiked,
-        likeCount: likeCount,
-      );
+  DramaInteractionSummary copyWith({
+    bool? isFavorite,
+    bool? isLiked,
+    int? favoriteCount,
+    int? likeCount,
+  }) => DramaInteractionSummary(
+    commentCount: commentCount,
+    favoriteCount: favoriteCount ?? this.favoriteCount,
+    isFavorite: isFavorite ?? this.isFavorite,
+    isLiked: isLiked ?? this.isLiked,
+    likeCount: likeCount ?? this.likeCount,
+  );
 }
 
 class DramaComment {
@@ -257,11 +267,15 @@ class DramaComment {
     required this.body,
     required this.createdAt,
     this.username,
+    this.status = 'visible',
+    this.isOwn = false,
   });
   final String id;
   final String body;
   final DateTime createdAt;
   final String? username;
+  final String status;
+  final bool isOwn;
 
   factory DramaComment.fromJson(Map<String, dynamic> json) => DramaComment(
     id: json['id'] as String,
@@ -270,6 +284,8 @@ class DramaComment {
         DateTime.tryParse(json['createdAt'] as String? ?? '') ??
         DateTime.fromMillisecondsSinceEpoch(0),
     username: json['username'] as String?,
+    status: json['status'] as String? ?? 'visible',
+    isOwn: json['isOwn'] == true,
   );
 }
 
@@ -379,15 +395,18 @@ class InboxMessage {
     required this.id,
     required this.status,
     required this.title,
+    this.deepLink,
   });
   final String body;
   final String id;
   final String status;
   final String title;
+  final String? deepLink;
   factory InboxMessage.fromJson(Map<String, dynamic> json) => InboxMessage(
     body: json['body'] as String? ?? '',
     id: json['id'] as String,
     status: json['status'] as String? ?? 'unread',
     title: json['title'] as String? ?? '',
+    deepLink: json['deepLink'] as String?,
   );
 }

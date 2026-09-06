@@ -17,6 +17,7 @@ import {
 import { useCallback, useEffect, useState } from 'react';
 
 import { useAuth } from '../auth/AuthProvider';
+import { DramaRankingButton } from './DramaRankingButton';
 
 interface PoolDrama {
   code: string;
@@ -199,6 +200,7 @@ export function PublicDramaPoolPage() {
             { title: '简介', dataIndex: 'summary', ellipsis: true },
             { title: '当前状态', render: (_, record) => <Tag color={statusColor(record.publicationStatus)}>{statusName(record.publicationStatus)}</Tag> },
             { title: '操作', width: 260, render: (_, record) => <Space wrap>
+              {canPublish ? <DramaRankingButton dramaId={record.dramaId} /> : null}
               {canReview && ['pending_review', 'rejected', 'unpublished'].includes(record.publicationStatus)
                 ? <><Button size="small" type="primary" loading={submitting} onClick={() => void review(record, 'approved')}>审核通过</Button>
                   <Button size="small" danger loading={submitting} onClick={() => void review(record, 'rejected')}>拒绝</Button></> : null}

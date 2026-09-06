@@ -20,6 +20,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { ApiError } from '../api/http';
 import { useAuth } from '../auth/AuthProvider';
+import { CustomerFeedbackPanel } from './CustomerFeedbackPanel';
 
 type ModerationTargetType = 'bullet_comment' | 'comment' | 'report';
 type InteractionAction = 'approve' | 'delete' | 'hide' | 'reject' | 'resolve' | 'restore';
@@ -458,6 +459,7 @@ export function InteractionModerationPage({
       <Tabs items={[
         { children: queuePanel, key: 'queue', label: '治理队列' },
         { children: wordPanel, key: 'words', label: '敏感词' },
+        ...(!platformScope && canRead ? [{ children: <CustomerFeedbackPanel canManage={canManage} />, key: 'feedback', label: '用户反馈' }] : []),
       ]} />
       <Drawer destroyOnHidden onClose={() => setSelected(undefined)} open={Boolean(selected)} title="治理详情" width={720}>
         {selected ? <QueueDetail item={selected} targetType={targetType} /> : null}

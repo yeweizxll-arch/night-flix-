@@ -71,6 +71,13 @@ void main() {
 
     await tester.tap(find.text('Browse For You'));
     await tester.pumpAndSettle();
+    await controller.login('follow@example.test', 'password');
+    await tester.pump();
+    // Player disposal cancels a stream on the real event queue, outside fake time.
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 50)),
+    );
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Follow'));
     await tester.pumpAndSettle();
     expect(controller.following, contains('demo-1'));
@@ -81,6 +88,8 @@ void main() {
 
     final restored = AppController(DramaRepository(apiBaseUrl: ''));
     await restored.initialize();
+    expect(restored.following, isEmpty);
+    await restored.login('follow@example.test', 'password');
     expect(restored.following, contains('demo-1'));
   });
 
