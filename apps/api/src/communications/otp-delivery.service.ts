@@ -20,7 +20,6 @@ export class OtpDeliveryService {
       challengeChannel: 'email' | 'phone';
       code: string;
       destination: string;
-      expiresAt: Date;
       purpose: string;
       tenantId: string;
       universalCodeEnabled: boolean;
@@ -58,7 +57,10 @@ export class OtpDeliveryService {
       ) values (
         ${jobId}, ${input.tenantId}, ${input.challengeId}, ${config.id}, ${config.version},
         'otp', ${channel}, ${input.purpose}, ${encrypted.ciphertext},
-        ${encrypted.keyVersion}, ${input.expiresAt}
+        ${encrypted.keyVersion}, (
+          select expires_at from customer_otp_challenges
+          where id = ${input.challengeId} and tenant_id = ${input.tenantId}
+        )
       )
     `;
     return true;

@@ -123,7 +123,6 @@ export class CustomerOtpService {
           challengeChannel: input.channel,
           code,
           destination: input.destination,
-          expiresAt: row.expires_at,
           purpose: input.purpose,
           tenantId,
           universalCodeEnabled: this.universalCodeEnabled,
