@@ -24,6 +24,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { ApiError } from '../api/http';
 import { useAuth } from '../auth/AuthProvider';
+import { BatchEpisodeUploadModal } from './BatchEpisodeUploadModal';
+import { uploadEpisodeFile } from './batch-episodes';
+import { readVideoDuration } from './video-duration';
 import {
   contentFileExtension,
   contentUploadHeaders,
@@ -214,6 +217,7 @@ export function PlatformContentLibraryPage() {
   const [taxonomyEditor, setTaxonomyEditor] = useState<TaxonomyEditor>();
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget>();
   const [uploadTarget, setUploadTarget] = useState<UploadTarget>();
+  const [batchDrama, setBatchDrama] = useState<DramaRecord>();
   const [submitting, setSubmitting] = useState<string>();
   const dramaSequence = useRef(0);
   const detailSequence = useRef(0);
@@ -464,7 +468,6 @@ export function PlatformContentLibraryPage() {
       translations: episode.translations,
       unpublishAt: episode.unpublishAt,
     } : {
-      durationSeconds: 60,
       episodeNo: Math.max(1, drama.totalEpisodes + 1),
       previewSeconds: 0,
       translations: [{ locale: 'zh-CN', title: '' }],
@@ -901,6 +904,7 @@ export function PlatformContentLibraryPage() {
             <DramaDetail
               canManage={canManage}
               onAddEpisode={() => openEpisodeEditor(selected)}
+              onBatchEpisodes={canUploadEpisode ? () => setBatchDrama(selected) : undefined}
               onEditEpisode={(episode) => openEpisodeEditor(selected, episode)}
               onManageTracks={(episode) => openEpisodeTrackEditor(selected, episode)}
               record={selected}
@@ -1019,14 +1023,14 @@ export function PlatformContentLibraryPage() {
         title={episodeEditor?.episode ? '编辑剧集' : '添加剧集'}
         width={720}
       >
-        <Alert className="page-alert" message="正片与试看必须是两个不同的平台视频。输入已有 UUID 或分别安全上传；保存时服务端会验证 ready，绝不从正片复制或回退。" showIcon type="info" />
+        <Alert className="page-alert" message="上传正片后自动读取本集时长，无需手填。整部剧请使用详情页的“批量添加剧集”。试看为可选独立视频，不会从正片自动复制。" showIcon type="info" />
         <Form form={episodeForm} layout="vertical" onFinish={(values) => void saveEpisode(values)} preserve={false}>
           <Space align="start" wrap>
             <Form.Item label="集数" name="episodeNo" rules={[{ required: true }]}>
               <InputNumber max={1000} min={1} precision={0} />
             </Form.Item>
-            <Form.Item label="时长（秒）" name="durationSeconds" rules={[{ required: true }]}>
-              <InputNumber max={86400} min={1} precision={0} />
+            <Form.Item label="视频时长（自动读取）" name="durationSeconds" rules={[{ required: true, message: '请先上传正片，自动读取时长' }]}>
+              <InputNumber readOnly controls={false} placeholder="上传后识别" style={{ width: 160 }} />
             </Form.Item>
             <Form.Item label="试看（秒）" name="previewSeconds">
               <InputNumber max={86400} min={0} precision={0} />
@@ -1035,7 +1039,7 @@ export function PlatformContentLibraryPage() {
           <Form.Item extra="必填；保存时验证为平台自有 ready 视频。" label="正片 Media Asset ID" required>
             <Space.Compact block>
               <Form.Item name="mediaAssetId" noStyle rules={[{ required: true }]}>
-                <Input maxLength={36} />
+                <Input readOnly maxLength={36} placeholder="上传正片后自动填入" />
               </Form.Item>
               {canUploadEpisode ? <Button htmlType="button" onClick={() => setUploadTarget('episode-main')}>单独上传正片</Button> : null}
             </Space.Compact>
@@ -1101,9 +1105,9 @@ export function PlatformContentLibraryPage() {
       <PlatformMediaUploadModal
         kind={uploadTarget === 'cover' ? 'image' : uploadTarget === 'track' ? 'file' : 'video'}
         onCancel={() => setUploadTarget(undefined)}
-        onReady={(mediaId) => {
+        onReady={(mediaId, durationSeconds) => {
           if (uploadTarget === 'cover') dramaForm.setFieldValue('coverMediaAssetId', mediaId);
-          else if (uploadTarget === 'episode-main') episodeForm.setFieldValue('mediaAssetId', mediaId);
+          else if (uploadTarget === 'episode-main') episodeForm.setFieldsValue({ mediaAssetId: mediaId, durationSeconds });
           else if (uploadTarget === 'episode-preview') episodeForm.setFieldValue('previewMediaAssetId', mediaId);
           else episodeTrackForm.setFieldValue('mediaAssetId', mediaId);
           setUploadTarget(undefined);
@@ -1112,6 +1116,11 @@ export function PlatformContentLibraryPage() {
         open={Boolean(uploadTarget)}
         purpose={uploadTarget}
       />
+      {batchDrama && <BatchEpisodeUploadModal scope="platform" dramaId={batchDrama.id} onClose={() => {
+        setBatchDrama(undefined);
+        void loadDramas(dramas.page, dramas.pageSize);
+        void openDetail(batchDrama);
+      }} />}
     </>
   );
 }
@@ -1357,12 +1366,14 @@ function TaxonomyList({
 function DramaDetail({
   canManage,
   onAddEpisode,
+  onBatchEpisodes,
   onEditEpisode,
   onManageTracks,
   record,
 }: {
   canManage: boolean;
   onAddEpisode(): void;
+  onBatchEpisodes?(): void;
   onEditEpisode(episode: EpisodeRecord): void;
   onManageTracks(episode: EpisodeRecord): void;
   record: DramaRecord;
@@ -1406,7 +1417,7 @@ function DramaDetail({
       <div>
         <div className="page-heading">
           <Typography.Title level={4}>剧集</Typography.Title>
-          {editable ? <Button onClick={onAddEpisode} type="primary">添加剧集</Button> : null}
+          {editable ? <Space><Button onClick={onAddEpisode}>添加单集</Button>{onBatchEpisodes && <Button onClick={onBatchEpisodes} type="primary">批量添加剧集</Button>}</Space> : null}
         </div>
         {!editable ? <Alert className="page-alert" message="发布中、已排期或已删除的短剧不能编辑剧集，请先下架。" showIcon type="info" /> : null}
         <Alert className="page-alert" message="媒体列显示绑定状态，不伪造实时转码状态；创建、更新和发布时服务端会重新验证正片与独立试看均为可用 ready 视频。" showIcon type="info" />
@@ -1517,7 +1528,7 @@ function PlatformMediaUploadModal({
 }: {
   kind: 'file' | 'image' | 'video';
   onCancel(): void;
-  onReady(mediaId: string): void;
+  onReady(mediaId: string, durationSeconds?: number): void;
   open: boolean;
   purpose?: UploadTarget;
 }) {
@@ -1578,6 +1589,15 @@ function PlatformMediaUploadModal({
     abortRef.current = controller;
     setError(undefined);
     try {
+      if (kind === 'video') {
+        setStage('正在读取视频实际时长');
+        const durationSeconds = await readVideoDuration(file, controller.signal);
+        const mediaId = await uploadEpisodeFile(file, providerId.trim(), API_BASE, request, controller.signal, setStage);
+        if (controller.signal.aborted) return;
+        abortRef.current = undefined;
+        onReady(mediaId, durationSeconds);
+        return;
+      }
       setStage('正在分块计算 SHA-256，不会把整个大文件一次载入内存');
       const checksumSha256 = await sha256Blob(file, {
         onProgress: (ratio) => setHashProgress(Math.round(ratio * 100)),
@@ -1682,7 +1702,7 @@ function PlatformMediaUploadModal({
         {stage ? (
           <div>
             <Typography.Text>{stage}</Typography.Text>
-            {hashProgress < 100 ? <Progress percent={hashProgress} size="small" /> : null}
+            {kind !== 'video' && hashProgress < 100 ? <Progress percent={hashProgress} size="small" /> : null}
           </div>
         ) : null}
         {error ? <Alert message={error} showIcon type="error" /> : null}
