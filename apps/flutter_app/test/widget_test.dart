@@ -134,13 +134,13 @@ void main() {
     expect(find.text('Discover'), findsOneWidget);
     expect(find.text('Filters'), findsOneWidget);
     expect(find.text('Ranking'), findsOneWidget);
-    expect(find.text('New'), findsOneWidget);
-    expect(find.text('Favorites'), findsOneWidget);
+    expect(find.text('New'), findsWidgets);
+    expect(find.text('Favorites'), findsWidgets);
     expect(find.text('Drama Theater'), findsNothing);
 
-    await tester.tap(find.text('Ranking'));
+    await tester.tap(find.byKey(const ValueKey('theater-ranking')));
     await tester.pump();
-    await tester.tap(find.text('Filters'));
+    await tester.tap(find.byKey(const ValueKey('theater-filter')));
     await tester.pumpAndSettle();
     expect(find.text('Romance'), findsWidgets);
     await tester.tap(find.text('Romance').last);
