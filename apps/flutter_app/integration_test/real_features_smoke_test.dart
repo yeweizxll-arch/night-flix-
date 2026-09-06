@@ -57,7 +57,7 @@ void main() {
       final controller = AppController(PlaybackFixture());
       await controller.initialize();
       await controller.setLocale('en-US');
-      await controller.setPlaybackSettings(autoAdvance: false);
+      await controller.setPlaybackSettings(autoAdvance: false, speed: 1);
       await tester.pumpWidget(DramaApp(controller: controller));
       await until(
         tester,
@@ -93,6 +93,41 @@ void main() {
             player().value.isPlaying,
         'episode 10',
       );
+      expect(find.textContaining('EP 10'), findsWidgets);
+      await tester.tap(find.byType(PopupMenuButton<double>));
+      await until(
+        tester,
+        () => find.text('2.0x').evaluate().isNotEmpty,
+        'speed menu',
+      );
+      await tester.tap(find.text('2.0x'));
+      await until(
+        tester,
+        () => player().value.playbackSpeed == 2,
+        'native speed',
+      );
+      expect(controller.playbackSpeed, 2);
+      await tester.tap(find.byKey(const Key('playback-toggle')));
+      await until(tester, () => !player().value.isPlaying, 'pause before seek');
+      final seek = tester.getRect(find.byKey(const Key('playback-seek')));
+      await tester.tapAt(Offset(seek.left + seek.width * .65, seek.center.dy));
+      await until(
+        tester,
+        () => player().value.position.inMilliseconds >= 4000,
+        'seek native position',
+      );
+      final selectedPlayer = player();
+      await tester.tap(find.byKey(const Key('paused-play-button')));
+      await until(tester, () => player().value.isPlaying, 'resume after seek');
+      await until(
+        tester,
+        () =>
+            !player().value.isPlaying &&
+            player().value.position >=
+                player().value.duration - const Duration(milliseconds: 300),
+        'autoplay disabled stops at episode end',
+      );
+      expect(player(), same(selectedPlayer));
       expect(find.textContaining('EP 10'), findsWidgets);
       await tester.tap(find.text('Me'));
       await until(
