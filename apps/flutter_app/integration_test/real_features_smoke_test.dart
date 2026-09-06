@@ -140,8 +140,21 @@ void main() {
       'nightflix-ocr-test-',
     );
     final file = File('${directory.path}/title.png');
-    debugPrint('OCR fixture directory: ${directory.path}');
     try {
+      await expectLater(
+        const MethodChannel('nightflix/text-recognition')
+            .invokeListMethod<String>('recognize', {
+              'path': '/etc/hosts',
+              'locale': 'en-US',
+            }),
+        throwsA(
+          isA<PlatformException>().having(
+            (error) => error.code,
+            'code',
+            'INVALID_IMAGE',
+          ),
+        ),
+      );
       await file.writeAsBytes(data!.buffer.asUint8List());
       final result = await const MethodChannel('nightflix/text-recognition')
           .invokeListMethod<String>('recognize', {

@@ -20,7 +20,12 @@ class MainActivity : FlutterActivity() {
                 if (call.method != "recognize") { result.notImplemented(); return@setMethodCallHandler }
                 try {
                     val file = File(call.argument<String>("path") ?: "").canonicalFile
-                    require(file.path.startsWith(cacheDir.canonicalPath + File.separator)
+                    // Flutter's Directory.systemTemp uses code_cache on Android;
+                    // image_picker uses cache. Both are private app directories.
+                    val cached = listOf(cacheDir, codeCacheDir).any {
+                        file.path.startsWith(it.canonicalPath + File.separator)
+                    }
+                    require(cached
                         && file.isFile && file.length() <= 20L * 1024 * 1024) { "Invalid image" }
                     val image = InputImage.fromFilePath(this, Uri.fromFile(file))
                     val recognizer = when (call.argument<String>("locale")?.substringBefore('-')) {
