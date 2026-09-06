@@ -21,7 +21,7 @@ const db = new DatabaseService();
     await sql`insert into tenant_domains(id,tenant_id,host,type,verification_token,verified_at,tls_status,is_primary,created_by)
       values(${id},${tenant.id},'47.110.245.29','custom',${randomBytes(24).toString('base64url')},statement_timestamp(),'active',false,${actor.id})`;
     await sql`insert into audit_logs(id,scope_type,tenant_id,actor_type,actor_id,action,resource_type,resource_id,after_json,request_id)
-      values(${uuidV7()},'platform',${tenant.id},'platform_staff',${actor.id},'test.domain.bind_ip','tenant_domain',${id},${sql.json({host:'47.110.245.29',verification:'ACME IP HTTPS ownership',testOnly:true})},${uuidV7()})`;
+      values(${uuidV7()},'tenant',${tenant.id},'platform_staff',${actor.id},'test.domain.bind_ip','tenant_domain',${id},${sql.json({host:'47.110.245.29',verification:'ACME IP HTTPS ownership',testOnly:true})},${uuidV7()})`;
     console.log('Verified test IP bound to demo tenant with audit record');
   });
 })().catch(error=>{console.error(error.message);process.exitCode=1;}).finally(()=>db.onApplicationShutdown());
