@@ -194,12 +194,14 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Drama'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Romance'));
-    await tester.pumpAndSettle();
-    final romance = tester.widget<FilterChip>(
-      find.widgetWithText(FilterChip, 'Romance'),
+    await tester.tap(
+      find.byKey(const ValueKey('theater-category-romance')),
     );
-    expect(romance.selected, isTrue);
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('theater-category-romance')),
+      findsOneWidget,
+    );
     expect(find.text('Reborn for Revenge'), findsNothing);
     await tester.tap(find.text('The Last Contract'));
     await tester.pumpAndSettle();

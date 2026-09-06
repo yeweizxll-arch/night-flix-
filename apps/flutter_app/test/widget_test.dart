@@ -112,6 +112,45 @@ void main() {
     expect(find.text('追剧'), findsWidgets);
   });
 
+  testWidgets('theater uses dense discovery layout and working controls', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+    SharedPreferences.setMockInitialValues({});
+    final controller = AppController(DramaRepository(apiBaseUrl: ''));
+    await controller.initialize();
+    await tester.pumpWidget(DramaApp(controller: controller));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Drama'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('theater-search')), findsOneWidget);
+    expect(find.text('Discover'), findsOneWidget);
+    expect(find.text('Filters'), findsOneWidget);
+    expect(find.text('Ranking'), findsOneWidget);
+    expect(find.text('New'), findsOneWidget);
+    expect(find.text('Favorites'), findsOneWidget);
+    expect(find.text('Drama Theater'), findsNothing);
+
+    await tester.tap(find.text('Ranking'));
+    await tester.pump();
+    await tester.tap(find.text('Filters'));
+    await tester.pumpAndSettle();
+    expect(find.text('Romance'), findsWidgets);
+    await tester.tap(find.text('Romance').last);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('theater-search')));
+    await tester.pumpAndSettle();
+    expect(find.byType(TextField), findsOneWidget);
+  });
+
   test('demo episodes provide local playback and unlock state', () async {
     final repository = DramaRepository(apiBaseUrl: '');
     final dramas = await repository.dramas();

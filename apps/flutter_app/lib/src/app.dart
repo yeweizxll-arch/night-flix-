@@ -1651,6 +1651,7 @@ class TheaterScreen extends StatefulWidget {
 
 class _TheaterScreenState extends State<TheaterScreen> {
   String selected = 'trending';
+  _TheaterMode mode = _TheaterMode.catalog;
   Map<String, String> genres = {};
   List<Drama>? filtered;
   bool busy = false;
@@ -1689,6 +1690,7 @@ class _TheaterScreenState extends State<TheaterScreen> {
     final request = ++revision;
     setState(() {
       selected = category;
+      mode = _TheaterMode.catalog;
       busy = true;
       error = null;
     });
@@ -1709,37 +1711,145 @@ class _TheaterScreenState extends State<TheaterScreen> {
     }
   }
 
+  Future<void> _showFilters() async {
+    final category = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      backgroundColor: const Color(0xff171821),
+      builder: (context) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+          children:
+              {'trending': context.tr('allDramas', 'All dramas'), ...genres}
+                  .entries
+                  .map(
+                    (item) => ListTile(
+                      leading: Icon(
+                        item.key == selected
+                            ? Icons.check_circle_rounded
+                            : Icons.circle_outlined,
+                      ),
+                      title: Text(
+                        item.key == 'trending'
+                            ? item.value
+                            : controller.repository.demoMode
+                            ? context.tr(item.key, item.value)
+                            : item.value,
+                      ),
+                      onTap: () => Navigator.pop(context, item.key),
+                    ),
+                  )
+                  .toList(),
+        ),
+      ),
+    );
+    if (category != null && mounted) await _select(category);
+  }
+
+  void _setMode(_TheaterMode value) {
+    setState(() {
+      mode = value;
+      error = null;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
-    final items = filtered ?? controller.dramas;
+    final catalog = filtered ?? controller.dramas;
+    final items = switch (mode) {
+      _TheaterMode.catalog => catalog,
+      _TheaterMode.ranking => [
+        ...catalog,
+      ]..sort((a, b) => b.totalEpisodes.compareTo(a.totalEpisodes)),
+      _TheaterMode.latest => catalog.reversed.toList(),
+      _TheaterMode.favorites =>
+        catalog
+            .where((drama) => controller.following.contains(drama.id))
+            .toList(),
+    };
     return SafeArea(
       child: CustomScrollView(
         slivers: [
-          SliverAppBar.large(
-            title: Text(context.tr('dramaTheater', 'Drama Theater')),
-            backgroundColor: _ink,
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+              child: Material(
+                color: const Color(0xff171821),
+                borderRadius: BorderRadius.circular(13),
+                child: InkWell(
+                  key: const ValueKey('theater-search'),
+                  borderRadius: BorderRadius.circular(13),
+                  onTap: () => showSearch<void>(
+                    context: context,
+                    delegate: DramaSearch(controller),
+                  ),
+                  child: SizedBox(
+                    height: 42,
+                    child: Row(
+                      children: [
+                        const SizedBox(width: 14),
+                        const Icon(
+                          Icons.search_rounded,
+                          size: 22,
+                          color: Colors.white54,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            context.tr('searchDramas', 'Search dramas'),
+                            style: const TextStyle(
+                              color: Colors.white54,
+                              fontSize: 15,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
           ),
-          SliverToBoxAdapter(child: NativeAdPlacement(controller: controller)),
           SliverToBoxAdapter(
             child: SizedBox(
-              height: 48,
+              height: 36,
               child: ListView(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
+                padding: const EdgeInsets.symmetric(horizontal: 12),
                 scrollDirection: Axis.horizontal,
                 children:
-                    {'trending': context.tr('trending', 'Trending'), ...genres}
-                        .entries
+                    {
+                          'trending': context.tr('allDramas', 'All dramas'),
+                          ...genres,
+                        }.entries
                         .map(
-                          (item) => Padding(
-                            padding: const EdgeInsets.only(right: 8),
-                            child: FilterChip(
-                              label: Text(
-                                controller.repository.demoMode
-                                    ? context.tr(item.key, item.value)
-                                    : item.value,
+                          (item) => TextButton(
+                            key: ValueKey('theater-category-${item.key}'),
+                            onPressed: () => _select(item.key),
+                            style: TextButton.styleFrom(
+                              foregroundColor:
+                                  item.key == selected &&
+                                      mode == _TheaterMode.catalog
+                                  ? Colors.white
+                                  : Colors.white54,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
                               ),
-                              selected: item.key == selected,
-                              onSelected: (_) => _select(item.key),
+                            ),
+                            child: Text(
+                              item.key == 'trending'
+                                  ? item.value
+                                  : controller.repository.demoMode
+                                  ? context.tr(item.key, item.value)
+                                  : item.value,
+                              style: TextStyle(
+                                fontSize: 15,
+                                fontWeight:
+                                    item.key == selected &&
+                                        mode == _TheaterMode.catalog
+                                    ? FontWeight.w800
+                                    : FontWeight.w600,
+                              ),
                             ),
                           ),
                         )
@@ -1747,6 +1857,46 @@ class _TheaterScreenState extends State<TheaterScreen> {
               ),
             ),
           ),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 3, 16, 9),
+              child: Row(
+                children: [
+                  _TheaterQuickAction(
+                    color: const Color(0xff7558ff),
+                    icon: Icons.tune_rounded,
+                    label: context.tr('filters', 'Filters'),
+                    onTap: _showFilters,
+                  ),
+                  const SizedBox(width: 8),
+                  _TheaterQuickAction(
+                    active: mode == _TheaterMode.ranking,
+                    color: const Color(0xffff8b42),
+                    icon: Icons.local_fire_department_rounded,
+                    label: context.tr('rankings', 'Ranking'),
+                    onTap: () => _setMode(_TheaterMode.ranking),
+                  ),
+                  const SizedBox(width: 8),
+                  _TheaterQuickAction(
+                    active: mode == _TheaterMode.latest,
+                    color: const Color(0xff25d6c8),
+                    icon: Icons.play_circle_fill_rounded,
+                    label: context.tr('newReleases', 'New'),
+                    onTap: () => _setMode(_TheaterMode.latest),
+                  ),
+                  const SizedBox(width: 8),
+                  _TheaterQuickAction(
+                    active: mode == _TheaterMode.favorites,
+                    color: const Color(0xffff4d8d),
+                    icon: Icons.bookmark_rounded,
+                    label: context.tr('favorites', 'Favorites'),
+                    onTap: () => _setMode(_TheaterMode.favorites),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          SliverToBoxAdapter(child: NativeAdPlacement(controller: controller)),
           if (busy) const SliverToBoxAdapter(child: LinearProgressIndicator()),
           if (error != null)
             SliverToBoxAdapter(
@@ -1762,13 +1912,13 @@ class _TheaterScreenState extends State<TheaterScreen> {
               ),
             ),
           SliverPadding(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 18),
             sliver: SliverGrid.builder(
               gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: 2,
-                childAspectRatio: .62,
-                crossAxisSpacing: 12,
-                mainAxisSpacing: 18,
+                childAspectRatio: .60,
+                crossAxisSpacing: 10,
+                mainAxisSpacing: 16,
               ),
               itemCount: items.length,
               itemBuilder: (context, index) {
@@ -1779,23 +1929,59 @@ class _TheaterScreenState extends State<TheaterScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Expanded(
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(16),
-                          child: _CoverImage(
-                            controller: controller,
-                            drama: drama,
-                          ),
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(12),
+                              child: _CoverImage(
+                                controller: controller,
+                                drama: drama,
+                              ),
+                            ),
+                            Positioned(
+                              left: 8,
+                              bottom: 8,
+                              child: DecoratedBox(
+                                decoration: BoxDecoration(
+                                  color: const Color(0xb8000000),
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 4,
+                                  ),
+                                  child: Text(
+                                    '${drama.totalEpisodes} ${context.tr('episodeCount', 'episodes')}',
+                                    style: const TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                      const SizedBox(height: 9),
+                      const SizedBox(height: 8),
                       Text(
                         drama.title,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontWeight: FontWeight.w700),
+                        style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w800,
+                        ),
                       ),
+                      const SizedBox(height: 3),
                       Text(
-                        '${drama.totalEpisodes} ${context.tr('episodeCount', 'episodes')}',
+                        drama.summary.isEmpty
+                            ? context.tr('newReleases', 'New release')
+                            : drama.summary,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           color: Colors.white54,
                           fontSize: 12,
@@ -1811,6 +1997,57 @@ class _TheaterScreenState extends State<TheaterScreen> {
       ),
     );
   }
+}
+
+enum _TheaterMode { catalog, ranking, latest, favorites }
+
+class _TheaterQuickAction extends StatelessWidget {
+  const _TheaterQuickAction({
+    required this.color,
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.active = false,
+  });
+
+  final bool active;
+  final Color color;
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Expanded(
+    child: Material(
+      color: active ? color.withValues(alpha: .18) : const Color(0xff171821),
+      borderRadius: BorderRadius.circular(11),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(11),
+        onTap: onTap,
+        child: SizedBox(
+          height: 42,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 18, color: color),
+              const SizedBox(width: 5),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
 }
 
 class RewardsScreen extends StatefulWidget {
