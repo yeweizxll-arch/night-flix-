@@ -38,17 +38,33 @@ class DramaRepository {
     if (demoMode) return _demoDramasForLocale(locale);
     final parameters = <String, String>{'locale': locale, 'pageSize': '50'};
     if (query?.trim().isNotEmpty == true) parameters['q'] = query!.trim();
-    final uri = Uri.parse('$apiBaseUrl/api/v1/customer/content/dramas')
-        .replace(queryParameters: parameters);
-    final body = await _request(uri);
-    return (body['items'] as List? ?? const []).indexed
-        .map(
-          (entry) => Drama.fromJson(
-            Map<String, dynamic>.from(entry.$2 as Map),
-            palette: entry.$1,
-          ),
-        )
-        .toList();
+    return _catalogPages(parameters);
+  }
+
+  // Feed, theater and search consume a complete catalog, not just its first page.
+  Future<List<Drama>> _catalogPages(Map<String, String> parameters) async {
+    final items = <String, Drama>{};
+    for (var page = 1; ; page++) {
+      final uri = Uri.parse('$apiBaseUrl/api/v1/customer/content/dramas')
+          .replace(queryParameters: {...parameters, 'page': '$page'});
+      final body = await _request(uri);
+      final batch = body['items'] as List? ?? const [];
+      if (batch.isEmpty) break;
+      final before = items.length;
+      for (final value in batch) {
+        final drama = Drama.fromJson(
+          Map<String, dynamic>.from(value as Map),
+          palette: items.length,
+        );
+        items.putIfAbsent(drama.id, () => drama);
+      }
+      if (items.length == before) {
+        throw const ApiException('Catalog pagination did not advance', 502);
+      }
+      final total = body['total'] as num?;
+      if (total != null ? page * 50 >= total : batch.length < 50) break;
+    }
+    return items.values.toList();
   }
 
   Future<Drama> detail(Drama drama, String locale) async {
@@ -91,22 +107,11 @@ class DramaRepository {
           .where((d) => (mapping[category] ?? []).contains(d.id))
           .toList();
     }
-    final uri = Uri.parse('$apiBaseUrl/api/v1/customer/content/dramas').replace(
-      queryParameters: {
-        'locale': locale,
-        'category': category,
-        'pageSize': '50',
-      },
-    );
-    final json = await _request(uri);
-    return (json['items'] as List? ?? []).indexed
-        .map(
-          (entry) => Drama.fromJson(
-            Map<String, dynamic>.from(entry.$2 as Map),
-            palette: entry.$1,
-          ),
-        )
-        .toList();
+    return _catalogPages({
+      'locale': locale,
+      'category': category,
+      'pageSize': '50',
+    });
   }
 
   Future<List<PlaybackProgress>> watchHistory(String token) async {

@@ -1,6 +1,8 @@
 /// Supported UI copies. Every locale must provide the same keys.
 const appTranslations = <String, Map<String, String>>{
   "zh-CN": {
+    "play": "播放",
+    "pause": "暂停",
     "adPrivacy": "广告隐私选项",
     "store": "商店",
     "storeUnavailable": "商店暂不可用，请稍后再试。",
@@ -107,6 +109,8 @@ const appTranslations = <String, Map<String, String>>{
     "forgotPassword": "忘记密码？",
   },
   "en-US": {
+    "play": "Play",
+    "pause": "Pause",
     "adPrivacy": "Ad privacy choices",
     "store": "Store",
     "storeUnavailable": "Store unavailable. Please try again later.",
@@ -216,6 +220,8 @@ const appTranslations = <String, Map<String, String>>{
     "forgotPassword": "Forgot password?",
   },
   "zh-TW": {
+    "play": "播放",
+    "pause": "暫停",
     "adPrivacy": "廣告隱私選項",
     "store": "商店",
     "storeUnavailable": "商店暫不可用，請稍後再試。",
@@ -322,6 +328,8 @@ const appTranslations = <String, Map<String, String>>{
     "forgotPassword": "忘記密碼？",
   },
   "es-ES": {
+    "play": "Reproducir",
+    "pause": "Pausar",
     "adPrivacy": "Privacidad de anuncios",
     "store": "Tienda",
     "storeUnavailable": "Tienda no disponible. Inténtalo más tarde.",
@@ -430,6 +438,8 @@ const appTranslations = <String, Map<String, String>>{
     "forgotPassword": "¿Olvidaste tu contraseña?",
   },
   "pt-BR": {
+    "play": "Reproduzir",
+    "pause": "Pausar",
     "adPrivacy": "Privacidade de anúncios",
     "store": "Loja",
     "storeUnavailable": "Loja indisponível. Tente novamente mais tarde.",
@@ -540,6 +550,8 @@ const appTranslations = <String, Map<String, String>>{
     "forgotPassword": "Esqueceu a senha?",
   },
   "fr-FR": {
+    "play": "Lire",
+    "pause": "Pause",
     "adPrivacy": "Confidentialité des publicités",
     "store": "Boutique",
     "storeUnavailable": "Boutique indisponible. Réessayez plus tard.",
@@ -652,6 +664,8 @@ const appTranslations = <String, Map<String, String>>{
     "forgotPassword": "Mot de passe oublié ?",
   },
   "de-DE": {
+    "play": "Abspielen",
+    "pause": "Pause",
     "adPrivacy": "Datenschutz für Werbung",
     "store": "Shop",
     "storeUnavailable": "Shop nicht verfügbar. Bitte später erneut versuchen.",
@@ -763,6 +777,8 @@ const appTranslations = <String, Map<String, String>>{
     "forgotPassword": "Passwort vergessen?",
   },
   "id-ID": {
+    "play": "Putar",
+    "pause": "Jeda",
     "adPrivacy": "Pilihan privasi iklan",
     "store": "Toko",
     "storeUnavailable": "Toko tidak tersedia. Coba lagi nanti.",
@@ -871,6 +887,8 @@ const appTranslations = <String, Map<String, String>>{
     "forgotPassword": "Lupa kata sandi?",
   },
   "th-TH": {
+    "play": "เล่น",
+    "pause": "หยุดชั่วคราว",
     "adPrivacy": "ตัวเลือกความเป็นส่วนตัวของโฆษณา",
     "store": "ร้านค้า",
     "storeUnavailable": "ร้านค้าไม่พร้อมใช้งาน โปรดลองอีกครั้งภายหลัง",
@@ -978,6 +996,8 @@ const appTranslations = <String, Map<String, String>>{
     "forgotPassword": "ลืมรหัสผ่าน?",
   },
   "vi-VN": {
+    "play": "Phát",
+    "pause": "Tạm dừng",
     "adPrivacy": "Quyền riêng tư quảng cáo",
     "store": "Cửa hàng",
     "storeUnavailable": "Cửa hàng không khả dụng. Vui lòng thử lại sau.",
@@ -1086,6 +1106,8 @@ const appTranslations = <String, Map<String, String>>{
     "forgotPassword": "Quên mật khẩu?",
   },
   "ja-JP": {
+    "play": "再生",
+    "pause": "一時停止",
     "adPrivacy": "広告のプライバシー設定",
     "store": "ストア",
     "storeUnavailable": "ストアを利用できません。後でもう一度お試しください。",
@@ -1192,6 +1214,8 @@ const appTranslations = <String, Map<String, String>>{
     "forgotPassword": "パスワードを忘れた場合",
   },
   "ko-KR": {
+    "play": "재생",
+    "pause": "일시 정지",
     "adPrivacy": "광고 개인정보 설정",
     "store": "스토어",
     "storeUnavailable": "스토어를 이용할 수 없습니다. 나중에 다시 시도해 주세요.",
@@ -1298,6 +1322,8 @@ const appTranslations = <String, Map<String, String>>{
     "forgotPassword": "비밀번호를 잊으셨나요?",
   },
   "ar-SA": {
+    "play": "تشغيل",
+    "pause": "إيقاف مؤقت",
     "adPrivacy": "خيارات خصوصية الإعلانات",
     "store": "المتجر",
     "storeUnavailable": "المتجر غير متاح. حاول لاحقًا.",
@@ -1405,6 +1431,8 @@ const appTranslations = <String, Map<String, String>>{
     "forgotPassword": "نسيت كلمة المرور؟",
   },
   "hi-IN": {
+    "play": "चलाएँ",
+    "pause": "रोकें",
     "adPrivacy": "विज्ञापन गोपनीयता विकल्प",
     "store": "स्टोर",
     "storeUnavailable": "स्टोर उपलब्ध नहीं है। बाद में फिर कोशिश करें।",
@@ -1515,6 +1543,8 @@ const appTranslations = <String, Map<String, String>>{
     "forgotPassword": "पासवर्ड भूल गए?",
   },
   "tr-TR": {
+    "play": "Oynat",
+    "pause": "Duraklat",
     "adPrivacy": "Reklam gizliliği seçenekleri",
     "store": "Mağaza",
     "storeUnavailable":

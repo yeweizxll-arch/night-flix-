@@ -13,6 +13,7 @@ import 'account_sheet.dart';
 import 'native_purchases.dart';
 import 'mobile_links.dart';
 import 'tenant_ads.dart';
+import 'player_controls.dart';
 
 const _ink = Color(0xff080911);
 const _purple = Color(0xff7558ff);
@@ -163,7 +164,7 @@ class _AppShellState extends State<AppShell> {
     return NativePurchaseScope(
       purchases: purchases,
       child: Scaffold(
-        extendBody: index == 0,
+        extendBody: false,
         body: IndexedStack(index: index, children: pages),
         bottomNavigationBar: NavigationBar(
           selectedIndex: index,
@@ -375,6 +376,7 @@ class _DramaPageState extends State<DramaPage>
   bool _pausedByAd = false;
   bool _rewardLoading = false;
   bool _wasAdBusy = false;
+  bool _userPaused = false;
 
   void _adsChanged() {
     final busy = adsFor(widget.controller).busy;
@@ -421,6 +423,7 @@ class _DramaPageState extends State<DramaPage>
       widget.active &&
       _foreground &&
       _routeVisible &&
+      !_userPaused &&
       !adsFor(widget.controller).busy;
 
   Future<void> _pausePlayers() async {
@@ -505,8 +508,10 @@ class _DramaPageState extends State<DramaPage>
         }
       }
       if (_canPlay) await _play();
-    } catch (_) {
-      // Catalog copy remains useful when a detail request temporarily fails.
+    } catch (cause) {
+      if (mounted) {
+        setState(() => playbackError = friendlyError(context, cause));
+      }
     } finally {
       if (mounted) setState(() => loading = false);
     }
@@ -639,19 +644,7 @@ class _DramaPageState extends State<DramaPage>
       }
       unawaited(widget.controller.markWatched((detail ?? widget.drama).id));
       unawaited(_preloadNext());
-      final expires = playable.playbackExpiresAt;
-      if (expires != null) {
-        final delay =
-            expires.difference(DateTime.now()) - const Duration(seconds: 20);
-        _playbackRefresh = Timer(
-          delay > Duration.zero ? delay : const Duration(seconds: 1),
-          () {
-            if (current() && video?.value.isPlaying == true) {
-              unawaited(_play(resumeAt: video?.value.position));
-            }
-          },
-        );
-      }
+      _schedulePlaybackRefresh();
       if (mounted) setState(() {});
     } catch (cause) {
       if (current()) {
@@ -836,306 +829,402 @@ class _DramaPageState extends State<DramaPage>
     final drama = detail ?? widget.drama;
     final displayDrama = widget.drama;
     final engagement = widget.controller.interactions[drama.id] ?? summary;
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        _CoverImage(controller: widget.controller, drama: drama),
-        if (video?.value.isInitialized == true)
-          GestureDetector(
-            onTap: _togglePlayback,
-            child: FittedBox(
-              fit: BoxFit.cover,
-              child: SizedBox(
-                width: video!.value.size.width,
-                height: video!.value.size.height,
-                child: VideoPlayer(video!),
+    return GestureDetector(
+      key: const Key('player-tap-surface'),
+      behavior: HitTestBehavior.opaque,
+      onTap: _togglePlayback,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          _CoverImage(controller: widget.controller, drama: drama),
+          if (video?.value.isInitialized == true)
+            PlayerSurface(controller: video!),
+          const IgnorePointer(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Color(0x22000000),
+                    Color(0x00000000),
+                    Color(0xdd05060b),
+                  ],
+                  stops: [0, .48, 1],
+                ),
               ),
             ),
           ),
-        const DecoratedBox(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [Color(0x22000000), Color(0x00000000), Color(0xdd05060b)],
-              stops: [0, .48, 1],
-            ),
-          ),
-        ),
-        if (captionText.isNotEmpty)
-          Positioned(
-            left: 28,
-            right: 28,
-            bottom: 168,
-            child: ClosedCaption(
-              text: captionText,
-              textStyle: const TextStyle(
-                color: Colors.white,
-                fontSize: 17,
-                fontWeight: FontWeight.w600,
-                backgroundColor: Color(0x99000000),
-              ),
-            ),
-          ),
-        SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(18, 8, 12, 90),
-            child: Column(
-              children: [
-                if (widget.showFeedTabs)
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      _feedTab(
-                        context.tr('following', 'Following'),
-                        widget.followingFeed,
-                        () => widget.onFeedChanged(true),
-                      ),
-                      const SizedBox(width: 22),
-                      _feedTab(
-                        context.tr('forYou', 'For You'),
-                        !widget.followingFeed,
-                        () => widget.onFeedChanged(false),
-                      ),
-                      const Spacer(),
-                      IconButton(
-                        icon: const Icon(Icons.search, size: 27),
-                        onPressed: () => _openSearch(context),
-                      ),
-                    ],
+          if (captionText.isNotEmpty)
+            Positioned(
+              left: 28,
+              right: 28,
+              bottom: 190,
+              child: IgnorePointer(
+                child: ClosedCaption(
+                  text: captionText,
+                  textStyle: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 17,
+                    fontWeight: FontWeight.w600,
+                    backgroundColor: Color(0x99000000),
                   ),
-                const Spacer(),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.center,
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  displayDrama.title,
-                                  style: const TextStyle(
-                                    fontSize: 24,
-                                    fontWeight: FontWeight.w800,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              TextButton.icon(
-                                onPressed: () =>
-                                    widget.controller.toggleFollowing(drama.id),
-                                icon: Icon(
-                                  widget.controller.following.contains(drama.id)
-                                      ? Icons.check
-                                      : Icons.add,
-                                  size: 17,
-                                ),
-                                label: Text(
-                                  widget.controller.following.contains(drama.id)
-                                      ? context.tr('followed', 'Following')
-                                      : context.tr('follow', 'Follow'),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            '${context.isChinese ? '第' : 'EP '}${episode?.number ?? 1}${context.isChinese ? '集' : ''}  ·  ${displayDrama.totalEpisodes} ${context.tr('episodeCount', 'episodes')}',
-                            style: const TextStyle(
-                              fontSize: 13,
-                              color: Colors.white70,
-                            ),
-                          ),
-                          const SizedBox(height: 9),
-                          Text(
-                            displayDrama.summary,
-                            maxLines: 3,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 14, height: 1.35),
-                          ),
-                          const SizedBox(height: 12),
-                          FilledButton.tonalIcon(
-                            onPressed: () => _showEpisodes(context, drama),
-                            icon: const Icon(Icons.grid_view_rounded, size: 18),
-                            label: Text(context.tr('episodes', 'Episodes')),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Column(
+                ),
+              ),
+            ),
+          SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 12, 8),
+              child: Column(
+                children: [
+                  if (widget.showFeedTabs)
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        _action(
-                          engagement?.isLiked == true
-                              ? Icons.favorite
-                              : Icons.favorite_border,
-                          _compactCount(engagement?.likeCount ?? 0),
-                          () async {
-                            if (!await _requireLogin(
-                              context,
-                              context.tr('like', 'Like'),
-                            )) {
-                              return;
-                            }
-                            try {
-                              await widget.controller.toggleLike(drama.id);
-                            } catch (cause) {
-                              if (context.mounted) {
-                                _message(
-                                  context,
-                                  friendlyError(context, cause),
-                                );
-                              }
-                            }
-                          },
+                        _feedTab(
+                          context.tr('following', 'Following'),
+                          widget.followingFeed,
+                          () => widget.onFeedChanged(true),
                         ),
-                        _action(
-                          widget.controller.favorites.contains(drama.id)
-                              ? Icons.bookmark
-                              : Icons.bookmark_border,
-                          context.tr('save', 'Save'),
-                          () async {
-                            if (!await _requireLogin(
-                              context,
-                              context.tr('save', 'Save'),
-                            )) {
-                              return;
-                            }
-                            try {
-                              await widget.controller.toggleFavorite(drama.id);
-                            } catch (cause) {
-                              if (context.mounted) {
-                                _message(
-                                  context,
-                                  friendlyError(context, cause),
-                                );
-                              }
-                            }
-                          },
+                        const SizedBox(width: 22),
+                        _feedTab(
+                          context.tr('forYou', 'For You'),
+                          !widget.followingFeed,
+                          () => widget.onFeedChanged(false),
                         ),
-                        _action(
-                          Icons.chat_bubble_outline,
-                          _compactCount(engagement?.commentCount ?? 0),
-                          () async {
-                            if (!await _requireLogin(
-                              context,
-                              context.tr('comments', 'Comment'),
-                            )) {
-                              return;
-                            }
-                            if (!context.mounted) return;
-                            await _showComments(context, drama);
-                          },
-                        ),
-                        _action(
-                          Icons.share_outlined,
-                          context.tr('share', 'Share'),
-                          () => _share(context, drama),
+                        const Spacer(),
+                        IconButton(
+                          icon: const Icon(Icons.search, size: 27),
+                          onPressed: () => _openSearch(context),
                         ),
                       ],
                     ),
-                  ],
-                ),
-                if (loading)
-                  const Padding(
-                    padding: EdgeInsets.only(top: 8),
-                    child: LinearProgressIndicator(minHeight: 2),
+                  const Spacer(),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.center,
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    displayDrama.title,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                TextButton.icon(
+                                  onPressed: () => widget.controller
+                                      .toggleFollowing(drama.id),
+                                  icon: Icon(
+                                    widget.controller.following.contains(
+                                          drama.id,
+                                        )
+                                        ? Icons.check
+                                        : Icons.add,
+                                    size: 17,
+                                  ),
+                                  label: Text(
+                                    widget.controller.following.contains(
+                                          drama.id,
+                                        )
+                                        ? context.tr('followed', 'Following')
+                                        : context.tr('follow', 'Follow'),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              '${context.isChinese ? '第' : 'EP '}${episode?.number ?? 1}${context.isChinese ? '集' : ''}  ·  ${displayDrama.totalEpisodes} ${context.tr('episodeCount', 'episodes')}',
+                              style: const TextStyle(
+                                fontSize: 13,
+                                color: Colors.white70,
+                              ),
+                            ),
+                            const SizedBox(height: 9),
+                            Text(
+                              displayDrama.summary,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 14,
+                                height: 1.35,
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            TextButton.icon(
+                              onPressed: () => _showEpisodes(context, drama),
+                              icon: const Icon(
+                                Icons.grid_view_rounded,
+                                size: 18,
+                              ),
+                              label: Text(context.tr('episodes', 'Episodes')),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Column(
+                        children: [
+                          _action(
+                            engagement?.isLiked == true
+                                ? Icons.favorite
+                                : Icons.favorite_border,
+                            _compactCount(engagement?.likeCount ?? 0),
+                            () async {
+                              if (!await _requireLogin(
+                                context,
+                                context.tr('like', 'Like'),
+                              )) {
+                                return;
+                              }
+                              try {
+                                await widget.controller.toggleLike(drama.id);
+                              } catch (cause) {
+                                if (context.mounted) {
+                                  _message(
+                                    context,
+                                    friendlyError(context, cause),
+                                  );
+                                }
+                              }
+                            },
+                          ),
+                          _action(
+                            widget.controller.favorites.contains(drama.id)
+                                ? Icons.bookmark
+                                : Icons.bookmark_border,
+                            context.tr('save', 'Save'),
+                            () async {
+                              if (!await _requireLogin(
+                                context,
+                                context.tr('save', 'Save'),
+                              )) {
+                                return;
+                              }
+                              try {
+                                await widget.controller.toggleFavorite(
+                                  drama.id,
+                                );
+                              } catch (cause) {
+                                if (context.mounted) {
+                                  _message(
+                                    context,
+                                    friendlyError(context, cause),
+                                  );
+                                }
+                              }
+                            },
+                          ),
+                          _action(
+                            Icons.chat_bubble_outline,
+                            _compactCount(engagement?.commentCount ?? 0),
+                            () async {
+                              if (!await _requireLogin(
+                                context,
+                                context.tr('comments', 'Comment'),
+                              )) {
+                                return;
+                              }
+                              if (!context.mounted) return;
+                              await _showComments(context, drama);
+                            },
+                          ),
+                          _action(
+                            Icons.share_outlined,
+                            context.tr('share', 'Share'),
+                            () => _share(context, drama),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
-              ],
+                  if (video?.value.isInitialized == true)
+                    PlaybackControls(
+                      controller: video!,
+                      toggle: _togglePlayback,
+                      seek: _seek,
+                      canSeek: episode?.preview != true,
+                    ),
+                  if (loading)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 8),
+                      child: LinearProgressIndicator(minHeight: 2),
+                    ),
+                ],
+              ),
             ),
           ),
-        ),
-        Positioned(
-          top: MediaQuery.paddingOf(context).top + 58,
-          right: 12,
-          child: PopupMenuButton<double>(
-            tooltip: context.tr('playbackSpeed', 'Playback speed'),
-            initialValue: speed,
-            onSelected: (value) async {
-              speed = value;
-              await video?.setPlaybackSpeed(value);
-              if (mounted) setState(() {});
-            },
-            itemBuilder: (_) => const [1.0, 1.25, 1.5, 2.0]
-                .map(
-                  (value) =>
-                      PopupMenuItem(value: value, child: Text('${value}x')),
-                )
-                .toList(),
-            child: Chip(label: Text('${speed}x')),
-          ),
-        ),
-        Positioned(
-          top: MediaQuery.paddingOf(context).top + 58,
-          right: 78,
-          child: IconButton.filledTonal(
-            tooltip: context.tr('tracks', 'Subtitles and dubbing'),
-            onPressed: episode?.tracks.isEmpty == false
-                ? () => _showTracks(context)
-                : null,
-            icon: const Icon(Icons.translate),
-          ),
-        ),
-        if (switching) const Center(child: CircularProgressIndicator()),
-        if (playbackError != null)
-          Center(
-            child: FilledButton.tonalIcon(
-              onPressed: _play,
-              icon: const Icon(Icons.refresh),
-              label: Text(context.tr('retryPlayback', 'Retry playback')),
+          Positioned(
+            top: MediaQuery.paddingOf(context).top + 58,
+            right: 12,
+            child: PopupMenuButton<double>(
+              tooltip: context.tr('playbackSpeed', 'Playback speed'),
+              initialValue: speed,
+              onSelected: (value) async {
+                speed = value;
+                await video?.setPlaybackSpeed(value);
+                await dubbingAudio?.setPlaybackSpeed(value);
+                if (mounted) setState(() {});
+              },
+              itemBuilder: (_) => const [1.0, 1.25, 1.5, 2.0]
+                  .map(
+                    (value) =>
+                        PopupMenuItem(value: value, child: Text('${value}x')),
+                  )
+                  .toList(),
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Text(
+                  '$speed×',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
             ),
           ),
-        if (episode?.locked == true || previewEnded)
-          Center(
-            child: _UnlockCard(
-              points: episode?.pointsAmount ?? drama.pointsAmount ?? 0,
-              buy: () async {
-                final authenticated = await _requireLogin(
-                  context,
-                  context.tr('unlock', 'Unlock'),
-                );
-                if (!context.mounted) return;
-                if (authenticated) {
-                  try {
-                    final selected = episode;
-                    if (selected == null) return;
-                    final targetType = selected.pointsAmount != null
-                        ? 'episode'
-                        : 'drama';
-                    final targetId = targetType == 'episode'
-                        ? selected.id
-                        : drama.id;
-                    await widget.controller.unlockWithPoints(
-                      targetType,
-                      targetId,
-                    );
+          Positioned(
+            top: MediaQuery.paddingOf(context).top + 58,
+            right: 78,
+            child: IconButton(
+              tooltip: context.tr('tracks', 'Subtitles and dubbing'),
+              onPressed: episode?.tracks.isEmpty == false
+                  ? () => _showTracks(context)
+                  : null,
+              icon: const Icon(Icons.translate),
+            ),
+          ),
+          if (switching) const Center(child: CircularProgressIndicator()),
+          if (!switching &&
+              video != null &&
+              episode?.locked != true &&
+              !previewEnded)
+            Center(
+              child: ValueListenableBuilder<VideoPlayerValue>(
+                valueListenable: video!,
+                builder: (context, value, _) => value.isPlaying
+                    ? const SizedBox.shrink()
+                    : IconButton(
+                        key: const Key('paused-play-button'),
+                        tooltip: context.tr('play', 'Play'),
+                        onPressed: _togglePlayback,
+                        iconSize: 72,
+                        color: Colors.white,
+                        icon: const Icon(Icons.play_arrow_rounded),
+                      ),
+              ),
+            ),
+          if (playbackError != null)
+            Center(
+              child: FilledButton.tonalIcon(
+                onPressed: () async {
+                  _userPaused = false;
+                  if (detail == null) {
+                    await _load();
+                  } else {
                     await _play();
-                  } catch (cause) {
-                    if (context.mounted) {
-                      _message(context, friendlyError(context, cause));
+                  }
+                },
+                icon: const Icon(Icons.refresh),
+                label: Text(context.tr('retryPlayback', 'Retry playback')),
+              ),
+            ),
+          if (episode?.locked == true || previewEnded)
+            Center(
+              child: _UnlockCard(
+                points: episode?.pointsAmount ?? drama.pointsAmount ?? 0,
+                buy: () async {
+                  final authenticated = await _requireLogin(
+                    context,
+                    context.tr('unlock', 'Unlock'),
+                  );
+                  if (!context.mounted) return;
+                  if (authenticated) {
+                    try {
+                      final selected = episode;
+                      if (selected == null) return;
+                      final targetType = selected.pointsAmount != null
+                          ? 'episode'
+                          : 'drama';
+                      final targetId = targetType == 'episode'
+                          ? selected.id
+                          : drama.id;
+                      await widget.controller.unlockWithPoints(
+                        targetType,
+                        targetId,
+                      );
+                      await _play();
+                    } catch (cause) {
+                      if (context.mounted) {
+                        _message(context, friendlyError(context, cause));
+                      }
                     }
                   }
-                }
-              },
-              watchAd: () => _watchAdUnlock(context),
+                },
+                watchAd: () => _watchAdUnlock(context),
+              ),
             ),
-          ),
-      ],
+        ],
+      ),
     );
+  }
+
+  void _schedulePlaybackRefresh() {
+    _playbackRefresh?.cancel();
+    final expires = _playingEpisode?.playbackExpiresAt;
+    if (expires == null) return;
+    final delay =
+        expires.difference(DateTime.now()) - const Duration(seconds: 20);
+    _playbackRefresh = Timer(
+      delay > Duration.zero ? delay : const Duration(seconds: 1),
+      () {
+        if (_canPlay && video?.value.isPlaying == true) {
+          unawaited(_play(resumeAt: video?.value.position));
+        }
+      },
+    );
+  }
+
+  Future<void> _seek(Duration position) async {
+    final current = video;
+    if (current == null || episode?.preview == true || switching) return;
+    completedHandled = false;
+    await current.seekTo(position);
+    await dubbingAudio?.seekTo(position);
+    unawaited(_saveVideoProgress());
   }
 
   Future<void> _togglePlayback() async {
     final current = video;
-    if (current == null) return;
+    if (current == null ||
+        switching ||
+        previewEnded ||
+        episode?.locked == true) {
+      return;
+    }
     if (current.value.isPlaying) {
-      await current.pause();
-      await dubbingAudio?.pause();
+      _userPaused = true;
+      await _pausePlayers();
     } else {
+      _userPaused = false;
       if (!_canPlay) return;
+      if (current.value.isCompleted) {
+        completedHandled = false;
+        await current.seekTo(Duration.zero);
+        await dubbingAudio?.seekTo(Duration.zero);
+      }
       final expires = _playingEpisode?.playbackExpiresAt;
       if (expires != null &&
           expires.isBefore(DateTime.now().add(const Duration(seconds: 25)))) {
@@ -1148,6 +1237,7 @@ class _DramaPageState extends State<DramaPage>
         return;
       }
       await dubbingAudio?.play();
+      _schedulePlaybackRefresh();
     }
   }
 
@@ -1392,65 +1482,28 @@ class _DramaPageState extends State<DramaPage>
     );
   }
 
-  void _showEpisodes(BuildContext context, Drama drama) =>
-      showModalBottomSheet<void>(
-        context: context,
-        showDragHandle: true,
-        isScrollControlled: true,
-        builder: (context) => SizedBox(
-          height: MediaQuery.sizeOf(context).height * .62,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: const EdgeInsets.all(20),
-                child: Text(
-                  '${drama.title} · ${context.tr('episodes', 'Episodes')}',
-                  style: Theme.of(context).textTheme.titleLarge
-                      ?.copyWith(fontWeight: FontWeight.bold),
-                ),
-              ),
-              Expanded(
-                child: GridView.builder(
-                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 5,
-                    mainAxisSpacing: 10,
-                    crossAxisSpacing: 10,
-                  ),
-                  itemCount: drama.episodes.isEmpty
-                      ? drama.totalEpisodes
-                      : drama.episodes.length,
-                  itemBuilder: (context, index) {
-                    final item = drama.episodes.elementAtOrNull(index);
-                    return FilledButton.tonal(
-                      onPressed: () {
-                        if (item != null) {
-                          episode = item;
-                          _play();
-                        }
-                        Navigator.pop(context);
-                      },
-                      child: Stack(
-                        alignment: Alignment.center,
-                        children: [
-                          Text('${index + 1}'),
-                          if (item?.pointsAmount != null)
-                            const Positioned(
-                              right: 0,
-                              top: 0,
-                              child: Icon(Icons.lock, size: 10),
-                            ),
-                        ],
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
+  Future<void> _showEpisodes(BuildContext context, Drama drama) async {
+    if (drama.episodes.isEmpty) {
+      _message(context, context.tr('retryPlayback', 'Retry playback'));
+      return;
+    }
+    final selected = await showModalBottomSheet<Episode>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xff1b1c23),
+      builder: (context) => EpisodePicker(drama: drama, currentId: episode?.id),
+    );
+    if (!mounted || selected == null || selected.id == episode?.id) return;
+    setState(() {
+      episode = selected;
+      subtitleTrack = null;
+      dubbingTrack = null;
+      captionText = '';
+      _userPaused = false;
+    });
+    await _play();
+  }
 
   void _openSearch(BuildContext context) => showSearch<void>(
     context: context,
@@ -2364,46 +2417,55 @@ class _ErrorScreen extends StatelessWidget {
   );
 }
 
-Widget _feedTab(String label, bool selected, VoidCallback onTap) => Semantics(
-  selected: selected,
-  button: true,
-  child: InkWell(
-    borderRadius: BorderRadius.circular(12),
-    onTap: onTap,
-    child: Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 6),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: selected ? 17 : 15,
-              fontWeight: selected ? FontWeight.w800 : FontWeight.w500,
-              color: selected ? Colors.white : Colors.white60,
-            ),
-          ),
-          const SizedBox(height: 4),
-          if (selected)
-            Container(
-              width: 20,
-              height: 3,
-              decoration: BoxDecoration(
-                color: _pink,
-                borderRadius: BorderRadius.circular(3),
+Widget _feedTab(String label, bool selected, VoidCallback onTap) => Flexible(
+  child: Semantics(
+    selected: selected,
+    button: true,
+    child: InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 6),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: selected ? 17 : 15,
+                fontWeight: selected ? FontWeight.w800 : FontWeight.w500,
+                color: selected ? Colors.white : Colors.white60,
               ),
             ),
-        ],
+            const SizedBox(height: 4),
+            if (selected)
+              Container(
+                width: 20,
+                height: 3,
+                decoration: BoxDecoration(
+                  color: _pink,
+                  borderRadius: BorderRadius.circular(3),
+                ),
+              ),
+          ],
+        ),
       ),
     ),
   ),
 );
 
 Widget _action(IconData icon, String label, VoidCallback action) => Padding(
-  padding: const EdgeInsets.only(top: 15),
+  padding: const EdgeInsets.only(top: 8),
   child: Column(
     children: [
-      IconButton.filledTonal(onPressed: action, icon: Icon(icon, size: 27)),
+      IconButton(
+        onPressed: action,
+        tooltip: label,
+        color: Colors.white,
+        icon: Icon(icon, size: 28),
+      ),
       Text(
         label,
         style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),

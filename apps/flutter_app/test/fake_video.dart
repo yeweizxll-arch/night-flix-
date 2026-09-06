@@ -4,6 +4,8 @@ import 'package:flutter/widgets.dart';
 import 'package:video_player_platform_interface/video_player_platform_interface.dart';
 
 class FakeVideoPlatform extends VideoPlayerPlatform {
+  FakeVideoPlatform({this.size = const Size(360, 640)});
+  final Size size;
   final playing = <int>{};
   final positions = <int, Duration>{};
   final sources = <int, DataSource>{};
@@ -23,7 +25,7 @@ class FakeVideoPlatform extends VideoPlayerPlatform {
             VideoEvent(
               eventType: VideoEventType.initialized,
               duration: const Duration(seconds: 60),
-              size: const Size(360, 640),
+              size: size,
             ),
           ),
         );
