@@ -1,5 +1,7 @@
 # Night Flix 独立测试服务器
 
+批量剧集上传、自动读取时长及验收方式见 [BATCH_EPISODES.md](./BATCH_EPISODES.md)。
+
 最新存储状态：已接通测试服务器硬盘，总部/代理商分别使用独立私有 bucket；
 部署版本、上传/重启验证、权限修复与回滚说明见 [DISK_STORAGE.md](./DISK_STORAGE.md)。
 

@@ -13,7 +13,7 @@ const browser = await chromium.launch({ executablePath: '/Applications/Google Ch
   args: ['--disable-renderer-accessibility'] });
 let activePage;
 try {
-  for (const scope of ['tenant', 'platform']) {
+  for (const scope of process.argv.includes('--platform-only') ? ['platform'] : ['tenant', 'platform']) {
     const base = `https://47.110.245.29:${scope === 'platform' ? 9441 : 9442}`;
     const api = scope === 'platform' ? '/api/v1/platform/content-management' : '/api/v1/tenant/content';
     const context = await browser.newContext({ viewport: { width: 1440, height: 1100 }, reducedMotion: 'reduce' });
@@ -37,6 +37,12 @@ try {
     assert.equal(login.status(), 200);
     const auth = await login.json();
     const headers = { origin: base, authorization: `Bearer ${auth.accessToken}`, 'idempotency-key': randomUUID() };
+    page.on('response', async response => {
+      if (response.url() === `${base}/api/v1/${scope}/auth/refresh` && response.status() === 200) {
+        const renewed = await response.json();
+        headers.authorization = `Bearer ${renewed.accessToken}`;
+      }
+    });
     const fixtureCode = `batch-test-${scope}-${randomUUID().slice(0, 8)}`;
     const reuseId = scope === 'tenant' ? process.env.BATCH_REUSE_TENANT : undefined;
     const created = reuseId
@@ -63,7 +69,7 @@ try {
     await modal.getByText('11 秒', { exact: true }).waitFor();
     assert.equal(await modal.getByText('3 秒', { exact: true }).count(), 1);
     assert.equal(await modal.getByText('7 秒', { exact: true }).count(), 1);
-    const names = await modal.locator('tbody tr').allTextContents();
+    const names = await modal.locator('tbody tr[data-row-key]').allTextContents();
     assert.ok(names[0].includes('EP_01.mp4') && names[1].includes('EP_02.mp4') && names[2].includes('EP_10.mp4'));
     await page.screenshot({ path: resolve(fixtureDirectory, `${scope}-batch-preview.png`), fullPage: true });
     let puts = 0;
@@ -82,7 +88,9 @@ try {
     }
     await modal.getByText('3 / 3 集已添加', { exact: true }).waitFor({ timeout: 180000 });
     assert.equal(puts, scope === 'tenant' ? 4 : 3, 'successful files must not be uploaded again');
-    const detail = await (await context.request.get(`${base}${api}/dramas/${drama.id}`, { headers })).json();
+    const detailResponse = await context.request.get(`${base}${api}/dramas/${drama.id}`, { headers });
+    assert.equal(detailResponse.status(), 200, 'read back saved batch');
+    const detail = await detailResponse.json();
     assert.equal(detail.episodes.length, 3);
     assert.deepEqual(detail.episodes.sort((a, b) => a.episodeNo - b.episodeNo).map(e => [e.episodeNo, e.durationSeconds, e.previewSeconds]), [[1, 3, 0], [2, 7, 0], [3, 11, 0]]);
     assert.equal(detail.status, 'draft');
@@ -94,7 +102,7 @@ try {
     assert.equal(await duration.inputValue(), '');
     assert.equal(await duration.getAttribute('readonly'), '');
     await single.getByRole('button', { name: '单独上传正片', exact: true }).click();
-    const upload = page.getByRole('dialog', { name: '单独上传正片视频', exact: true });
+    const upload = page.getByRole('dialog', { name: scope === 'platform' ? '单独上传平台正片视频' : '单独上传正片视频', exact: true });
     await upload.locator('input[type=file]').setInputFiles(resolve(fixtureDirectory, 'EP_02.mp4'));
     await upload.getByRole('button', { name: '开始安全上传' }).click();
     await upload.waitFor({ state: 'hidden', timeout: 120000 });
