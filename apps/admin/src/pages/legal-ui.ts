@@ -1,4 +1,5 @@
-export const LEGAL_LOCALES = ['zh-CN', 'zh-TW', 'en-US', 'fr-FR', 'ja-JP', 'ko-KR'] as const;
+import { SUPPORTED_APP_LOCALES } from '@drama/contracts';
+export const LEGAL_LOCALES = SUPPORTED_APP_LOCALES;
 export const LEGAL_DOCUMENT_TYPES = ['privacy', 'terms', 'refund', 'community'] as const;
 
 export type LegalLocale = (typeof LEGAL_LOCALES)[number];

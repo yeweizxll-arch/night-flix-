@@ -1,11 +1,5 @@
-export const CUSTOMER_CONTENT_LOCALES = [
-  'zh-CN',
-  'zh-TW',
-  'en-US',
-  'fr-FR',
-  'ja-JP',
-  'ko-KR',
-] as const;
+import { SUPPORTED_APP_LOCALES } from '@drama/contracts';
+export const CUSTOMER_CONTENT_LOCALES = SUPPORTED_APP_LOCALES;
 
 export type CustomerContentLocale = (typeof CUSTOMER_CONTENT_LOCALES)[number];
 

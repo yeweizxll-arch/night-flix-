@@ -1,3 +1,4 @@
+import { SUPPORTED_APP_LOCALES } from '@drama/contracts';
 import { Inject, Injectable } from '@nestjs/common';
 
 import { DatabaseService, type DatabaseTransaction } from '../database/database.service';
@@ -177,14 +178,15 @@ interface TrustedRecipientRow {
 
 function first(rows: TrustedRecipientRow[]): TrustedRecipient | undefined {
   const row = rows[0];
-  if (!row || !['zh-CN', 'zh-TW', 'en-US', 'fr-FR', 'ja-JP', 'ko-KR'].includes(row.locale)) {
+  if (!row || ![...SUPPORTED_APP_LOCALES].includes(row.locale)) {
     return undefined;
   }
   return { accountId: row.account_id, locale: row.locale,
     orderId: row.order_id ?? undefined, tenantId: row.tenant_id };
 }
 
-const COPY: Record<EventType, Record<NotificationLocale, [string, string]>> = {
+type LocalizedCopy = Partial<Record<NotificationLocale, [string, string]>> & { 'en-US': [string, string] };
+const COPY: Record<EventType, LocalizedCopy> = {
   OrderPendingPaymentCreated: localeSet(
     ['订单待支付', '请完成订单支付。'], ['訂單待付款', '請完成訂單付款。'],
     ['Payment pending', 'Please complete payment for your order.'],
@@ -251,7 +253,7 @@ function deepLink(eventType: EventType, orderId?: string): string {
 function localeSet(
   zhCn: [string, string], zhTw: [string, string], en: [string, string],
   fr: [string, string], ja: [string, string], ko: [string, string],
-): Record<NotificationLocale, [string, string]> {
+): LocalizedCopy {
   return { 'zh-CN': zhCn, 'zh-TW': zhTw, 'en-US': en,
     'fr-FR': fr, 'ja-JP': ja, 'ko-KR': ko };
 }

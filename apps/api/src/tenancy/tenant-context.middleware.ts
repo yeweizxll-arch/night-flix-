@@ -3,6 +3,7 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 
 import { TenantContextService } from './tenant-context.service';
 import { TenantDirectoryService } from './tenant-directory.service';
+import { verifiedRequestCountry } from './trusted-country';
 
 @Injectable()
 export class TenantContextMiddleware implements NestMiddleware {
@@ -23,6 +24,7 @@ export class TenantContextMiddleware implements NestMiddleware {
       const tenant = await this.directory.resolveVerifiedHost(host);
       this.context.run(
         {
+          country: verifiedRequestCountry(request),
           host,
           tenantId: tenant?.id,
           tenantStatus: tenant?.status,

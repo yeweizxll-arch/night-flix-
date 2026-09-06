@@ -9,6 +9,7 @@ class AppRuntimeConfig {
     required this.storeProducts,
     required this.supportedLocales,
     required this.theme,
+    this.identity = const {},
   });
 
   final Map<String, dynamic> admob;
@@ -20,6 +21,7 @@ class AppRuntimeConfig {
   final Map<String, dynamic> storeProducts;
   final List<String> supportedLocales;
   final Map<String, dynamic> theme;
+  final Map<String, dynamic> identity;
 
   bool get admobEnabled => admob.isNotEmpty && admob['enabled'] != false;
   bool get inAppPurchasesEnabled =>
@@ -29,6 +31,9 @@ class AppRuntimeConfig {
   factory AppRuntimeConfig.fromJson(Map<String, dynamic> json) =>
       AppRuntimeConfig(
         admob: Map<String, dynamic>.from(json['admob'] as Map? ?? const {}),
+        identity: Map<String, dynamic>.from(
+          json['identity'] as Map? ?? const {},
+        ),
         capabilities: Map<String, dynamic>.from(
           json['capabilities'] as Map? ?? const {},
         ),
@@ -122,6 +127,7 @@ class Episode {
     required this.previewSeconds,
     this.pointsAmount,
     this.playbackUrl,
+    this.playbackExpiresAt,
     this.access = 'unknown',
     this.tracks = const [],
   });
@@ -133,6 +139,7 @@ class Episode {
   final int previewSeconds;
   final int? pointsAmount;
   final String? playbackUrl;
+  final DateTime? playbackExpiresAt;
   final String access;
   final List<EpisodeTrack> tracks;
 
@@ -164,6 +171,7 @@ class Episode {
     previewSeconds: previewSeconds,
     pointsAmount: pointsAmount,
     playbackUrl: json['url'] as String?,
+    playbackExpiresAt: DateTime.tryParse(json['expiresAt'] as String? ?? ''),
     access: json['access'] as String? ?? 'full',
     tracks: tracks,
   );
@@ -291,10 +299,41 @@ class UserSession {
     required this.accessToken,
     required this.refreshToken,
     required this.email,
+    this.accountId = '',
+    this.deviceToken,
+    this.deviceId,
   });
   final String accessToken;
   final String refreshToken;
   final String email;
+  final String accountId;
+  final String? deviceToken;
+  final String? deviceId;
+
+  factory UserSession.fromJson(Map<String, dynamic> json, {String email = ''}) {
+    final principal = json['principal'] as Map?;
+    return UserSession(
+      accessToken: json['accessToken'] as String,
+      refreshToken: json['refreshToken'] as String,
+      email: json['email'] as String? ?? email,
+      accountId:
+          principal?['accountId'] as String? ??
+          json['accountId'] as String? ??
+          email,
+      deviceToken: json['deviceToken'] as String?,
+      deviceId:
+          principal?['deviceId'] as String? ?? json['deviceId'] as String?,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'accessToken': accessToken,
+    'refreshToken': refreshToken,
+    'email': email,
+    'accountId': accountId,
+    if (deviceToken != null) 'deviceToken': deviceToken,
+    if (deviceId != null) 'deviceId': deviceId,
+  };
 }
 
 class PointWallet {
@@ -302,6 +341,36 @@ class PointWallet {
   final String balancePoints;
   factory PointWallet.fromJson(Map<String, dynamic> json) =>
       PointWallet(balancePoints: json['balancePoints'] as String? ?? '0');
+}
+
+class PlaybackProgress {
+  const PlaybackProgress({
+    required this.dramaId,
+    required this.episodeId,
+    required this.positionSeconds,
+    this.completed = false,
+    required this.updatedAt,
+  });
+  final String dramaId;
+  final String episodeId;
+  final int positionSeconds;
+  final bool completed;
+  final DateTime updatedAt;
+  factory PlaybackProgress.fromJson(Map<String, dynamic> json) =>
+      PlaybackProgress(
+        dramaId: json['dramaId'] as String,
+        episodeId: json['episodeId'] as String,
+        positionSeconds: (json['positionSeconds'] as num).toInt(),
+        completed: json['completed'] == true,
+        updatedAt: DateTime.parse(json['updatedAt'] as String),
+      );
+  Map<String, dynamic> toJson() => {
+    'dramaId': dramaId,
+    'episodeId': episodeId,
+    'positionSeconds': positionSeconds,
+    'completed': completed,
+    'updatedAt': updatedAt.toIso8601String(),
+  };
 }
 
 class InboxMessage {

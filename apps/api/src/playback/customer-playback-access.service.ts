@@ -1,3 +1,4 @@
+import { lockPublicDistribution } from '../public-drama-pool/public-distribution';
 import {
   BadRequestException,
   ForbiddenException,
@@ -6,7 +7,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 
-import type { CustomerPrincipal } from '../customer-auth/customer-auth.types';
+import type { PlaybackViewer } from './playback.types';
 import {
   DatabaseService,
   type DatabaseTransaction,
@@ -25,7 +26,7 @@ interface PlaybackTargetRow {
   episode_id: string;
   media_asset_id: string;
   owner_type: 'platform' | 'tenant';
-  publication_status: 'approved' | 'published' | 'unpublished' | null;
+  publication_status: string | null;
   preview_media_asset_id: string | null;
   preview_seconds: number;
 }
@@ -39,7 +40,7 @@ export class CustomerPlaybackAccessService {
   ) {}
 
   async getAccess(
-    principal: CustomerPrincipal,
+    principal: PlaybackViewer,
     episodeId: string,
   ): Promise<CustomerPlaybackAccessRecord> {
     assertUuid(episodeId, 'episodeId');
@@ -49,7 +50,7 @@ export class CustomerPlaybackAccessService {
 
   async resolveInTransaction(
     transaction: DatabaseTransaction,
-    principal: CustomerPrincipal,
+    principal: PlaybackViewer,
     episodeId: string,
   ): Promise<CustomerPlaybackAccessRecord> {
     assertUuid(episodeId, 'episodeId');
@@ -79,6 +80,8 @@ export class CustomerPlaybackAccessService {
         and episode.deleted_at is null
         and drama.status = 'published'
         and drama.deleted_at is null
+          and drama.emergency_takedown_at is null
+          and app.customer_region_allowed(${principal.tenantId}, drama.id)
         and media.kind = 'video'
         and media.status = 'ready'
         and media.deleted_at is null
@@ -92,7 +95,9 @@ export class CustomerPlaybackAccessService {
             and app.tenant_has_drama_license(drama.id)
           )
         )
-      for share of episode, drama, media
+        and app.lock_customer_row('episodes', episode.id, to_jsonb(episode))
+        and app.lock_customer_row('dramas', drama.id, to_jsonb(drama))
+        and app.lock_customer_row('media_assets', media.id, to_jsonb(media))
     `;
     const target = targets[0];
     if (!target) throw new NotFoundException('Published episode is unavailable');
@@ -125,17 +130,15 @@ export class CustomerPlaybackAccessService {
     `;
 
     if (target.owner_type === 'platform') {
-      await this.lockEffectiveLicense(
-        transaction,
-        principal.tenantId,
-        target.drama_id,
+      target.publication_status = await lockPublicDistribution(
+        transaction, principal.tenantId, target.drama_id, ['published', 'unpublished'],
       );
     }
 
     let entitled = false;
     const requiresPermanentPurchase = target.owner_type === 'platform'
       && target.publication_status === 'unpublished';
-    if (prices.length > 0 || pointPrices.length > 0 || requiresPermanentPurchase) {
+    if (principal.accountId && (prices.length > 0 || pointPrices.length > 0 || requiresPermanentPurchase)) {
       const entitlements = await transaction<{ id: string }[]>`
         select entitlement.id
         from entitlements as entitlement
@@ -163,9 +166,9 @@ export class CustomerPlaybackAccessService {
               and (${requiresPermanentPurchase} = false or entitlement.expires_at is null)
             )
           )
+          and app.lock_customer_row('entitlements', entitlement.id, to_jsonb(entitlement))
         order by entitlement.id
         limit 1
-        for share of entitlement
       `;
       entitled = Boolean(entitlements[0]);
     }
@@ -173,7 +176,7 @@ export class CustomerPlaybackAccessService {
     const access: CustomerPlaybackAccess = (!requiresPermanentPurchase
       && prices.length === 0 && pointPrices.length === 0) || entitled
       ? 'full'
-      : target.preview_seconds > 0
+      : !requiresPermanentPurchase && target.preview_seconds > 0
         ? 'preview'
         : 'locked';
     return {
@@ -189,7 +192,7 @@ export class CustomerPlaybackAccessService {
 
   private async lockAvailableCustomer(
     transaction: DatabaseTransaction,
-    principal: CustomerPrincipal,
+    principal: PlaybackViewer,
   ): Promise<void> {
     const tenants = await transaction<{ id: string }[]>`
       select tenant.id
@@ -202,6 +205,7 @@ export class CustomerPlaybackAccessService {
       for share of tenant
     `;
     if (!tenants[0]) throw new ForbiddenException('Customer site is unavailable');
+    if (!principal.accountId) return;
     const customers = await transaction<{ id: string }[]>`
       select customer.id
       from customer_accounts as customer
@@ -213,44 +217,6 @@ export class CustomerPlaybackAccessService {
     if (!customers[0]) throw new ForbiddenException('Customer account is unavailable');
   }
 
-  private async lockEffectiveLicense(
-    transaction: DatabaseTransaction,
-    tenantId: string,
-    dramaId: string,
-  ): Promise<void> {
-    const licenses = await transaction<{ id: string; source: string }[]>`
-      select publication.id, 'public_pool'::text as source
-      from tenant_public_drama_publications as publication
-      where publication.tenant_id = ${tenantId}
-        and publication.drama_id = ${dramaId}
-        and publication.status in ('published', 'unpublished')
-      union all
-      select license.id, 'legacy_license'::text as source
-      from content_licenses as license
-      where license.tenant_id = ${tenantId}
-        and license.status in ('scheduled', 'active')
-        and license.starts_at <= statement_timestamp()
-        and license.expires_at > statement_timestamp()
-        and exists (
-          select 1 from content_license_items as item
-          where item.tenant_id = license.tenant_id
-            and item.license_id = license.id and item.drama_id = ${dramaId}
-        )
-      order by source, id
-      limit 1
-    `;
-    const license = licenses[0];
-    if (!license) throw new NotFoundException('Published episode is unavailable');
-    if (license.source === 'legacy_license') {
-      const items = await transaction<{ id: string }[]>`
-        select item.id from content_license_items as item
-        where item.tenant_id = ${tenantId}
-          and item.license_id = ${license.id} and item.drama_id = ${dramaId}
-        for share of item
-      `;
-      if (!items[0]) throw new NotFoundException('Published episode is unavailable');
-    }
-  }
 }
 
 function assertUuid(value: unknown, field: string): asserts value is string {

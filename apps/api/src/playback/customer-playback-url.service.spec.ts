@@ -86,7 +86,8 @@ describe('CustomerPlaybackUrlService', () => {
     expect(JSON.stringify(response)).not.toContain(asset.object_key);
     expect(JSON.stringify(response)).not.toContain(credentials.secretAccessKey);
     expect(JSON.stringify(response)).not.toContain(asset.credential_ciphertext);
-    expect(fixture.sql.join('\n')).toContain('for share of media, provider');
+    expect(fixture.sql.join('\n')).toContain("app.lock_customer_row('media_assets', media.id");
+    expect(fixture.sql.join('\n')).toContain("app.lock_customer_row('storage_providers', provider.id");
   });
 
   it('keeps the provider share lock transaction open through local presigning', async () => {
@@ -219,7 +220,9 @@ describe('CustomerPlaybackUrlService', () => {
       url: expect.stringMatching(/^https:\/\//),
     });
     expect(fixture.sql.join('\n')).toContain('track.episode_id');
-    expect(fixture.sql.join('\n')).toContain('for share of track, media, provider');
+    expect(fixture.sql.join('\n')).toContain("app.lock_customer_row('episode_media_tracks', track.id");
+    expect(fixture.sql.join('\n')).toContain("app.lock_customer_row('media_assets', media.id");
+    expect(fixture.sql.join('\n')).toContain("app.lock_customer_row('storage_providers', provider.id");
   });
 
   it('does not expose subtitle or dubbing tracks to preview access', async () => {

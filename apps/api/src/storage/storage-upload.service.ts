@@ -19,11 +19,13 @@ import {
   type PresignedConditionalPut,
   type S3CompatibleStorageAdapter,
   type StorageObjectHead,
+  validateObjectKey,
 } from './s3-compatible.adapter';
 import {
   StorageCredentialCipher,
   type S3StorageCredentials,
 } from './storage-credentials';
+import { rewriteHlsPlaylist, type HlsGrant } from '../playback/hls-token';
 
 const PRESIGN_TTL_SECONDS = 600;
 const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/;
@@ -59,6 +61,8 @@ const UPLOAD_POLICIES = {
   video: {
     maximumBytes: 2 * 1_024 ** 3,
     mimeTypes: new Set([
+      'application/vnd.apple.mpegurl',
+      'application/x-mpegurl',
       'video/mp4',
       'video/quicktime',
       'video/webm',
@@ -82,6 +86,15 @@ export interface StorageMutationMetadata {
   idempotencyKey?: string;
   ip?: string;
   requestId: string;
+}
+
+export interface RegisterSourceObjectInput {
+  providerId: string;
+  objectKey: string;
+  versionId: string;
+  kind: 'file' | 'image' | 'video';
+  shanchuangWorkId: string;
+  shanchuangCreatorId: string;
 }
 
 export interface StorageUploadIntentResult {
@@ -150,6 +163,103 @@ export class StorageUploadService {
     @Inject(S3_COMPATIBLE_STORAGE_ADAPTER)
     private readonly adapter: S3CompatibleStorageAdapter,
   ) {}
+
+  /** Reference the existing headquarters S3 bucket; never copy or expose a public source URL. */
+  async registerPlatformSourceObject(raw: RegisterSourceObjectInput, metadata: StorageMutationMetadata) {
+    assertMutationMetadata(metadata);
+    assertUuid(raw?.providerId, 'providerId');
+    try { validateObjectKey(raw.objectKey); } catch { throw new BadRequestException('Invalid source object key'); }
+    for (const value of [raw.versionId, raw.shanchuangWorkId, raw.shanchuangCreatorId]) {
+      if (typeof value !== 'string' || value.length < 1 || value.length > 256 || /[\x00-\x1f]/.test(value)) {
+        throw new BadRequestException('Source version and Shanchuang identifiers are required');
+      }
+    }
+    if (raw.versionId === 'null') throw new BadRequestException('Source bucket versioning is required');
+    const input = { providerId: raw.providerId, objectKey: raw.objectKey, versionId: raw.versionId,
+      kind: raw.kind, shanchuangWorkId: raw.shanchuangWorkId, shanchuangCreatorId: raw.shanchuangCreatorId };
+    return this.database.inPlatformContext(async (sql) => {
+      const command = await this.beginPlatformCommand<{ id: string; status: string; version: number }>(
+        sql, 'platform.content.media.source_register', input, metadata);
+      if (command.cached) return command.cached;
+      const providers = await sql<StorageProviderRow[]>`
+        select id, owner_type, owner_tenant_id, provider, endpoint, bucket,
+          credential_ciphertext, key_version, version from storage_providers
+        where id = ${input.providerId} and owner_type = 'platform' and owner_tenant_id is null
+          and provider = 's3' and status = 'active' for share
+      `;
+      const provider = providers[0];
+      if (!provider) throw new NotFoundException('Platform S3 provider is unavailable');
+      const existing = await sql<Array<{ id: string; status: string; version: number; source_reference: RegisterSourceObjectInput }>>`
+        select id, status, version, metadata_json -> 'sourceReference' as source_reference
+        from media_assets where storage_provider_id=${provider.id} and object_key=${input.objectKey} for share
+      `;
+      if (existing[0]) {
+        const row = existing[0];
+        if (row.status !== 'ready' || row.source_reference?.versionId !== input.versionId
+          || row.source_reference.kind !== input.kind
+          || row.source_reference.shanchuangWorkId !== input.shanchuangWorkId
+          || row.source_reference.shanchuangCreatorId !== input.shanchuangCreatorId) {
+          throw new ConflictException('Source key already registered; publish changed content under a new object key');
+        }
+        const result = { id: row.id, status: row.status, version: row.version };
+        await this.completePlatformCommand(sql, command.id, result, 200, row.id);
+        return result;
+      }
+      const credentials = this.decryptProviderCredentials(provider);
+      const target = { bucket: provider.bucket, endpoint: provider.endpoint };
+      const head = await this.adapter.headObject({ credentials, target, objectKey: input.objectKey, versionId: input.versionId });
+      if (!head.exists || head.versionId !== input.versionId) throw new ConflictException('Source object version is unavailable');
+      validateCreateInput({ providerId: provider.id, contentType: head.contentType ?? '', sizeBytes: head.contentLength,
+        kind: input.kind, checksumSha256: '0'.repeat(64) });
+      const resourceVersions: Record<string, string> = { [input.objectKey]: input.versionId };
+      const deadline = Date.now() + 30_000;
+      const visited = new Set<string>();
+      const inspect = async (key: string, versionId: string, contentType: string | undefined, depth: number): Promise<void> => {
+        if (visited.has(key)) return;
+        if (depth > 8 || visited.size >= 512 || Date.now() > deadline) throw new BadRequestException('Source HLS graph exceeds import limits');
+        visited.add(key);
+        if (!/\.m3u8$/i.test(key) && !contentType?.includes('mpegurl')) return;
+        if (!this.adapter.readObject) throw new ConflictException('HLS source reader is unavailable');
+        const data = await this.adapter.readObject({ credentials, target, objectKey: key, versionId, maxBytes: 1024 * 1024 });
+        const references: string[] = [];
+        const grant: HlsGrant = { tenantId: metadata.actorId, episodeId: metadata.actorId, mediaId: metadata.actorId,
+          root: input.objectKey, key, expires: Date.now() + 180_000 };
+        rewriteHlsPlaylist(new TextDecoder('utf-8', { fatal: true }).decode(data.body), grant, (next) => {
+          references.push(next.key); return next.key;
+        });
+        for (const child of new Set(references)) {
+          if (visited.has(child)) continue;
+          if (Date.now() > deadline) throw new BadRequestException('Source HLS import timed out');
+          const childHead = await this.adapter.headObject({ credentials, target, objectKey: child });
+          if (!childHead.exists || !childHead.versionId || childHead.versionId === 'null' ||
+              childHead.contentLength > 8 * 1024 * 1024) throw new ConflictException('HLS resource requires a bounded immutable version');
+          resourceVersions[child] = childHead.versionId;
+          await inspect(child, childHead.versionId, childHead.contentType, depth + 1);
+        }
+      };
+      await inspect(input.objectKey, input.versionId, head.contentType, 0);
+      const id = uuidV7();
+      // This fingerprint identifies the pinned source version, not a claimed hash of un-read video bytes.
+      const fingerprint = createHash('sha256').update(JSON.stringify([provider.id, input.objectKey, input.versionId])).digest('hex');
+      await sql`insert into media_assets (id, owner_type, owner_tenant_id, kind, storage_provider_id,
+        object_key, mime_type, size_bytes, checksum, status, transcode_status, metadata_json, created_by)
+        values (${id}, 'platform', null, ${input.kind}, ${provider.id}, ${input.objectKey}, ${head.contentType!},
+          ${head.contentLength}, ${'version-sha256:' + fingerprint}, 'ready', 'not_required',
+          ${sql.json({ sourceReference: { ...input, etag: head.etag, resourceVersions } })}, ${metadata.actorId})`;
+      const result = { id, status: 'ready', version: 0 };
+      await insertPlatformAudit(sql, metadata, { action: 'platform.content.media.source_register',
+        after: { providerId: provider.id, shanchuangWorkId: input.shanchuangWorkId,
+          shanchuangCreatorId: input.shanchuangCreatorId, resourceCount: Object.keys(resourceVersions).length },
+        resourceId: id });
+      await this.completePlatformCommand(sql, command.id, result, 201, id);
+      return result;
+    }).catch((error: unknown) => {
+      if ((error as { code?: string })?.code === '23505') {
+        throw new ConflictException('Source object was registered concurrently; retry the same request');
+      }
+      throw error;
+    });
+  }
 
   async createPlatformUploadIntent(
     rawInput: CreateStorageUploadIntentInput,

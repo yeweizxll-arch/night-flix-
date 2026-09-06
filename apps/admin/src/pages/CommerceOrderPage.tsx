@@ -81,6 +81,10 @@ interface OrderListResponse {
 }
 
 const API_BASE = '/api/v1/tenant/commerce/orders';
+interface NativeOrder {
+  id: string; store: string; environment: string; store_product_id: string; kind: OrderType;
+  currency: string; gross_minor: string; refunded_minor: string; status: string; purchased_at: string;
+}
 const emptyData: OrderListResponse = { items: [], page: 1, pageSize: 20, total: 0 };
 const statusLabels: Record<OrderStatus, { color?: string; label: string }> = {
   cancelled: { label: '已取消' },
@@ -237,6 +241,7 @@ export function CommerceOrderPage() {
 
       {canReadOrders ? (
         <>
+      <NativeOrderPanel />
       <div className="tenant-content-toolbar">
         <Input.Search
           allowClear
@@ -417,6 +422,35 @@ export function CommerceOrderPage() {
       </Modal> : null}
     </>
   );
+}
+
+function NativeOrderPanel() {
+  const { request } = useAuth();
+  const [rows, setRows] = useState<NativeOrder[]>([]);
+  const [error, setError] = useState<string>();
+  const [loading, setLoading] = useState(false);
+  const load = useCallback(async () => {
+    setLoading(true); setError(undefined);
+    try { setRows((await request<{ items: NativeOrder[] }>('/api/v1/tenant/commerce/native-store/transactions')).items); }
+    catch { setError('商店交易加载失败，请重试'); }
+    finally { setLoading(false); }
+  }, [request]);
+  useEffect(() => { void load(); }, [load]);
+  return <Card title="Apple / Google 商店交易（最近 100 笔）" className="page-card"
+    extra={<Button loading={loading} onClick={() => void load()}>刷新商店交易</Button>}>
+    <Typography.Paragraph type="secondary">商店退款由商店处理，服务端验签后回收权益并冲正；与下方渠道订单分开记录。金额为各币种最小单位。</Typography.Paragraph>
+    {error ? <Alert type="error" showIcon message={error} /> : null}
+    <Table<NativeOrder> size="small" rowKey="id" loading={loading} dataSource={rows} scroll={{ x: 800 }} pagination={{ pageSize: 10 }}
+      columns={[
+        { dataIndex: 'id', title: '交易记录', ellipsis: true },
+        { dataIndex: 'store', title: '商店', width: 80 },
+        { dataIndex: 'environment', title: '环境', width: 95, render: value => <Tag color={value === 'Sandbox' ? 'orange' : 'green'}>{value === 'Sandbox' ? '测试' : '正式'}</Tag> },
+        { dataIndex: 'store_product_id', title: '商店 SKU', ellipsis: true },
+        { title: '实付 / 已退', render: (_, row) => row.gross_minor + ' / ' + row.refunded_minor + ' ' + row.currency },
+        { dataIndex: 'status', title: '状态', width: 100 },
+        { dataIndex: 'purchased_at', title: '购买时间', render: value => formatDateTime(value) },
+      ]} />
+  </Card>;
 }
 
 function OrderDetail({ detail }: { detail: TenantOrderDetail }) {

@@ -42,12 +42,14 @@ export interface PresignedConditionalPut {
 }
 
 export interface HeadStorageObjectInput {
+  versionId?: string;
   credentials: S3StorageCredentials;
   objectKey: string;
   target: S3StorageTarget;
 }
 
 export interface PresignGetObjectInput {
+  versionId?: string;
   credentials: S3StorageCredentials;
   expiresInSeconds: number;
   objectKey: string;
@@ -78,6 +80,9 @@ export interface MissingStorageObjectHead {
 }
 
 export interface S3CompatibleStorageAdapter {
+  readObject?(input: HeadStorageObjectInput & { maxBytes: number; range?: string }): Promise<{
+    body: Buffer; contentType?: string; contentRange?: string;
+  }>;
   headObject(input: HeadStorageObjectInput): Promise<MissingStorageObjectHead | StorageObjectHead>;
   presignConditionalPut(input: PresignConditionalPutInput): Promise<PresignedConditionalPut>;
   presignGetObject(input: PresignGetObjectInput): Promise<PresignedGetObject>;
@@ -100,6 +105,39 @@ export class AwsSdkS3CompatibleStorageAdapter implements S3CompatibleStorageAdap
     private readonly clock: () => Date = () => new Date(),
   ) {}
 
+  async readObject(input: HeadStorageObjectInput & { maxBytes: number; range?: string }) {
+    validateHeadInput(input);
+    if (!Number.isSafeInteger(input.maxBytes) || input.maxBytes < 1 || input.maxBytes > 8 * 1024 * 1024) {
+      throw new TypeError('Invalid storage read limit');
+    }
+    if (input.range && !/^bytes=\d+-\d*$/.test(input.range)) throw new TypeError('Invalid byte range');
+    const client = this.clientFactory(clientConfiguration(input.target, input.credentials));
+    const abort = new AbortController();
+    const timeout = setTimeout(() => abort.abort(), 15_000);
+    try {
+      const response = await client.send(new GetObjectCommand({
+        Bucket: input.target.bucket, Key: input.objectKey, Range: input.range, VersionId: input.versionId,
+      }), { abortSignal: abort.signal });
+      if (!response.Body || (response.ContentLength ?? 0) > input.maxBytes) {
+        throw new S3StorageAdapterError('Storage object exceeds the playback read limit');
+      }
+      const parts: Buffer[] = [];
+      let size = 0;
+      for await (const chunk of response.Body as AsyncIterable<Uint8Array>) {
+        size += chunk.length;
+        if (size > input.maxBytes) throw new S3StorageAdapterError('Storage object exceeds the playback read limit');
+        parts.push(Buffer.from(chunk));
+      }
+      return { body: Buffer.concat(parts), contentType: response.ContentType, contentRange: response.ContentRange };
+    } catch {
+      throw new S3StorageAdapterError('Secure storage read is unavailable');
+    } finally {
+      clearTimeout(timeout);
+      abort.abort();
+      client.destroy();
+    }
+  }
+
   async presignGetObject(rawInput: PresignGetObjectInput): Promise<PresignedGetObject> {
     const input = validateGetPresignInput(rawInput);
     const now = this.clock();
@@ -109,6 +147,7 @@ export class AwsSdkS3CompatibleStorageAdapter implements S3CompatibleStorageAdap
       const command = new GetObjectCommand({
         Bucket: input.target.bucket,
         Key: input.objectKey,
+        VersionId: input.versionId,
         ResponseCacheControl: 'private, no-store, max-age=0',
         ResponseContentDisposition: 'inline',
       });
@@ -199,12 +238,15 @@ export class AwsSdkS3CompatibleStorageAdapter implements S3CompatibleStorageAdap
   ): Promise<MissingStorageObjectHead | StorageObjectHead> {
     const input = validateHeadInput(rawInput);
     const client = this.clientFactory(clientConfiguration(input.target, input.credentials));
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), 15_000);
     try {
       const result = await client.send(new HeadObjectCommand({
         Bucket: input.target.bucket,
         ChecksumMode: 'ENABLED',
         Key: input.objectKey,
-      }));
+        VersionId: input.versionId,
+      }), { abortSignal: abort.signal });
       const contentLength = result.ContentLength;
       const etag = normalizeEtag(result.ETag);
       if (!Number.isSafeInteger(contentLength) || (contentLength as number) < 0 || !etag) {
@@ -225,6 +267,8 @@ export class AwsSdkS3CompatibleStorageAdapter implements S3CompatibleStorageAdap
       if (error instanceof S3StorageAdapterError) throw error;
       throw new S3StorageAdapterError('Object storage HEAD request failed');
     } finally {
+      clearTimeout(timer);
+      abort.abort();
       client.destroy();
     }
   }
@@ -319,7 +363,7 @@ function validateTarget(target: S3StorageTarget): void {
   validateStorageEndpoint(target.endpoint);
 }
 
-function validateObjectKey(value: string): void {
+export function validateObjectKey(value: string): void {
   if (
     typeof value !== 'string'
     || value.length < 16

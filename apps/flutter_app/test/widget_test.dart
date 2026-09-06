@@ -105,6 +105,8 @@ void main() {
     expect(find.text('剧场'), findsOneWidget);
     expect(find.text('我的'), findsOneWidget);
     await tester.tap(find.text('推荐'));
+    await tester.pump();
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
     await tester.pumpAndSettle();
     expect(find.text('最后的契约'), findsOneWidget);
     expect(find.text('追剧'), findsWidgets);
@@ -158,6 +160,7 @@ void main() {
     await tester.tap(find.text('Episodes'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('2'));
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
     await tester.pumpAndSettle();
     expect(find.text('Watch ad · unlock 1 episode'), findsOneWidget);
   });

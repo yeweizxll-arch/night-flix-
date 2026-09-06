@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "app:release": "tsx src/cli/build-tenant-release.ts",
     "admin:bootstrap": "tsx src/cli/bootstrap-super-admin.ts",
     "prebuild": "pnpm --filter @drama/contracts build",
     "build": "tsc -p tsconfig.build.json",
@@ -24,6 +25,7 @@
     "worker:app-build": "tsx src/cli/run-app-build-worker.ts"
   },
   "dependencies": {
+    "@apple/app-store-server-library": "^3.1.0",
     "@aws-sdk/client-s3": "^3.1115.0",
     "@aws-sdk/s3-request-presigner": "^3.1115.0",
     "@drama/contracts": "workspace:*",
@@ -31,7 +33,9 @@
     "@nestjs/common": "^11.2.1",
     "@nestjs/core": "^11.2.1",
     "@nestjs/platform-fastify": "^11.2.1",
-    "fastify": "^5.11.3",
+    "fastify": "^5.12.1",
+    "google-auth-library": "^11.0.2",
+    "jose": "^6.2.12",
     "postgres": "^3.4.7",
     "redis": "^6.2.1",
     "reflect-metadata": "^0.2.2",

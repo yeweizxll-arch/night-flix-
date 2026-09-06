@@ -319,6 +319,13 @@ describe('notification database security boundaries', () => {
   });
 
   it('lets tenant cancellation only mark an unclaimed campaign delivery skipped', async () => {
+    // Use the actual runtime authority, not the offline migration/function owner.
+    await database.exec(`
+      create role notification_cancellation_probe nosuperuser nobypassrls;
+      grant usage on schema app, public to notification_cancellation_probe;
+      grant select, update on notification_deliveries to notification_cancellation_probe;
+      set role notification_cancellation_probe;
+    `);
     await database.exec(`
       begin;
       select set_config('app.access_scope', 'tenant', true),
@@ -335,7 +342,7 @@ describe('notification database security boundaries', () => {
         last_error = 'campaign_cancelled', body = 'tampered'
       where id = '01910000-0000-7000-8000-000000000040';
     `)).rejects.toThrow(/only cancel/);
-    await database.exec('rollback');
+    await database.exec('rollback; reset role');
   });
 
   it('does not let the tenant database role forge a transactional inbox message', async () => {

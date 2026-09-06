@@ -7,11 +7,12 @@ import {
 } from '@nestjs/common';
 
 import { uuidV7 } from '../common/uuid-v7';
+import { createHash } from 'node:crypto';
 import { DatabaseService } from '../database/database.service';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const INCOME_TYPES = ['coin_unlock', 'content_ad', 'membership'] as const;
-const CURRENCIES = ['CNY', 'USD', 'EUR', 'JPY', 'KRW'] as const;
+const CURRENCIES = Intl.supportedValuesOf('currency');
 
 export interface RevenueMutationMetadata { actorId?: string; requestId: string }
 
@@ -36,10 +37,146 @@ export interface RecordRevenueInput {
   sourceType: 'ad_revenue' | 'apple_transaction' | 'coin_unlock' | 'google_transaction';
   tenantId: string;
 }
+export interface CashStatementInput { sourceId: string; currency: string; grossMinor: string; netMinor: string; reportId: string; rowId: string; reportSha256: string }
+export interface AdStatementInput { currency: string; grossMinor: string; netMinor?: string; dramaId: string; episodeId?: string; occurredAt: string; reportId: string; rowId: string; reportSha256: string }
 
 @Injectable()
 export class RevenueShareService {
   constructor(@Inject(DatabaseService) private readonly database: DatabaseService) {}
+
+  async cashStatus(tenantId: string) {
+    uuid(tenantId, 'tenantId');
+    return this.database.inPlatformContext(async tx => {
+      const basis = await tx<{ basis: 'gross' | 'net' }[]>`select basis from content_revenue_basis where tenant_id = ${tenantId}`;
+      const pending = await tx<{ count: number }[]>`select count(*)::integer as count from content_revenue_events
+        where tenant_id = ${tenantId} and state = 'unvalued'`;
+      const legacy = await tx<{ reason: string }[]>`select reason from content_revenue_legacy_review where tenant_id = ${tenantId} and resolved_at is null`;
+      return { basis: basis[0]?.basis ?? null, unvalued: pending[0]?.count ?? 0, legacyReview: legacy[0]?.reason ?? null };
+    });
+  }
+
+  async acknowledgeLegacyReview(tenantId: string, input: { reportId: string; reportSha256: string }, metadata: RevenueMutationMetadata) {
+    uuid(tenantId, 'tenantId'); uuid(metadata.actorId, 'actorId');
+    if (!input || typeof input.reportId !== 'string' || !input.reportId.trim() || input.reportId.length > 200
+      || !/^[a-f0-9]{64}$/.test(input.reportSha256 ?? '')) throw new BadRequestException('Signed-off reconciliation report required');
+    return this.database.inPlatformContext(async tx => {
+      await tx`select id from tenants where id = ${tenantId} for update`;
+      const pending = await tx`select id from content_revenue_events where tenant_id = ${tenantId} and state = 'unvalued' limit 1`;
+      if (pending.length) throw new ConflictException('Value historical cash events before signing off the reconciliation');
+      const rows = await tx<{ report_id: string | null; report_sha256: string | null; resolved_at: Date | null }[]>`
+        select report_id, report_sha256, resolved_at from content_revenue_legacy_review where tenant_id = ${tenantId} for update`;
+      if (!rows[0]) throw new ConflictException('No historical review required');
+      if (rows[0].resolved_at) {
+        if (rows[0].report_id !== input.reportId || rows[0].report_sha256 !== input.reportSha256) throw new ConflictException('Historical sign-off is immutable');
+        return { duplicate: true };
+      }
+      await tx`update content_revenue_legacy_review set resolved_at = statement_timestamp(), resolved_by = ${metadata.actorId!},
+        report_id = ${input.reportId}, report_sha256 = ${input.reportSha256} where tenant_id = ${tenantId}`;
+      await tx`insert into audit_logs(id, scope_type, actor_type, actor_id, action, resource_type, resource_id, request_id, after_json)
+        values (${uuidV7()}, 'platform', 'platform_staff', ${metadata.actorId!}, 'finance.content_revenue.legacy_review', 'tenant', ${tenantId},
+          ${metadata.requestId}, ${tx.json(input)})`;
+      return { duplicate: false };
+    });
+  }
+
+  async sources(tenantId: string) {
+    uuid(tenantId, 'tenantId');
+    return this.database.inPlatformContext(async tx => ({ items: await tx`select id, source_type, currency,
+      gross_minor::text, net_minor::text, refunded_minor::text, sandbox, occurred_at
+      from content_cash_sources where tenant_id = ${tenantId} order by occurred_at desc, id desc limit 100` }));
+  }
+
+  async attachNetStatement(tenantId: string, input: CashStatementInput, metadata: RevenueMutationMetadata) {
+    uuid(tenantId, 'tenantId'); uuid(metadata.actorId, 'actorId'); uuid(input?.sourceId, 'sourceId'); statement(input);
+    const net = moneyString(input.netMinor); const gross = moneyString(input.grossMinor);
+    if (net > gross) throw new BadRequestException('Net revenue exceeds original paid amount');
+    return this.database.inPlatformContext(async tx => {
+      const sources = await tx<{ currency: string; gross_minor: string; net_minor: string | null }[]>`select currency, gross_minor::text, net_minor::text
+        from content_cash_sources where tenant_id = ${tenantId} and id = ${input.sourceId} for update`;
+      const source = sources[0];
+      if (!source || source.currency !== input.currency || BigInt(source.gross_minor) !== gross)
+        throw new ConflictException('Statement does not match the verified original payment');
+      const existing = await tx<{ report_id: string; row_id: string; report_sha256: string; net_minor: string }[]>`select report_id, row_id, report_sha256, net_minor::text
+        from content_cash_statements where source_id = ${input.sourceId}`;
+      if (existing[0]) {
+        if (existing[0].report_id !== input.reportId || existing[0].row_id !== input.rowId || existing[0].report_sha256 !== input.reportSha256
+          || BigInt(existing[0].net_minor) !== net) throw new ConflictException('Statement facts are immutable');
+        return { duplicate: true };
+      }
+      if (source.net_minor !== null && BigInt(source.net_minor) !== net) throw new ConflictException('Verified net revenue is already fixed');
+      await tx`insert into content_cash_statements(id, tenant_id, source_id, report_id, row_id, report_sha256, net_minor, created_by)
+        values (${uuidV7()}, ${tenantId}, ${input.sourceId}, ${input.reportId}, ${input.rowId}, ${input.reportSha256}, ${net.toString()}, ${metadata.actorId!})`;
+      await tx`update content_cash_sources set net_minor = ${net.toString()} where tenant_id = ${tenantId} and id = ${input.sourceId}`;
+      return { duplicate: false };
+    });
+  }
+
+  // Only finance-authorized headquarters can import a reconciled report. Client ILRD/SSV is never cash.
+  async importAdStatement(tenantId: string, input: AdStatementInput, metadata: RevenueMutationMetadata) {
+    uuid(tenantId, 'tenantId'); uuid(metadata.actorId, 'actorId'); uuid(input?.dramaId, 'dramaId'); statement(input);
+    if (input.episodeId) uuid(input.episodeId, 'episodeId');
+    const gross = moneyString(input.grossMinor); const net = input.netMinor === undefined ? null : moneyString(input.netMinor);
+    if (net !== null && net > gross) throw new BadRequestException('Net revenue exceeds gross revenue');
+    const at = new Date(input.occurredAt);
+    if (!CURRENCIES.includes(input.currency) || !Number.isFinite(at.getTime()) || at.toISOString() !== input.occurredAt
+      || at.getTime() > Date.now()) throw new BadRequestException('Invalid report currency or date');
+    const hash = createHash('sha256').update(JSON.stringify([tenantId, input.dramaId, input.episodeId ?? null, input.currency,
+      gross.toString(), net?.toString() ?? null, input.occurredAt, input.reportId, input.rowId, input.reportSha256])).digest('hex');
+    return this.database.inPlatformContext(async tx => {
+      await tx`select id from tenants where id = ${tenantId} for update`;
+      const existing = await tx<{ id: string; request_hash: string }[]>`select id, request_hash from content_ad_report_rows
+        where tenant_id = ${tenantId} and report_id = ${input.reportId} and row_id = ${input.rowId}`;
+      if (existing[0]) {
+        if (existing[0].request_hash !== hash) throw new ConflictException('Ad report row was reused with different facts');
+        return { id: existing[0].id, duplicate: true };
+      }
+      const dramas = await tx<{ scope: string; creator: string | null }[]>`select case owner_type when 'platform' then 'public' else 'private' end as scope,
+        case owner_type when 'platform' then shanchuang_creator_id else null end as creator
+        from dramas where id = ${input.dramaId} and (owner_type = 'platform' or owner_tenant_id = ${tenantId}) for share`;
+      const drama = dramas[0];
+      if (!drama || (drama.scope === 'public' && !drama.creator)) throw new NotFoundException('Report content is unavailable');
+      if (input.episodeId) {
+        const episodes = await tx`select id from episodes where id = ${input.episodeId} and drama_id = ${input.dramaId}`;
+        if (!episodes[0]) throw new BadRequestException('Report episode mismatch');
+      }
+      const id = uuidV7();
+      await tx`insert into content_cash_sources(id, tenant_id, source_type, currency, gross_minor, net_minor, occurred_at)
+        values (${id}, ${tenantId}, 'ad_report', ${input.currency}, ${gross.toString()}, ${net?.toString() ?? null}, ${at})`;
+      await tx`insert into content_ad_report_rows(id, tenant_id, report_id, row_id, report_sha256, request_hash, created_by)
+        values (${id}, ${tenantId}, ${input.reportId}, ${input.rowId}, ${input.reportSha256}, ${hash}, ${metadata.actorId!})`;
+      await tx`insert into content_revenue_events(id, tenant_id, source_id, drama_id, episode_id, creator_id, content_scope, income_type, denominator, points, occurred_at)
+        values (${id}, ${tenantId}, ${id}, ${input.dramaId}, ${input.episodeId ?? null}, ${drama.creator}, ${drama.scope}, 'content_ad', 1, 1, ${at})`;
+      await tx`select app.post_cash_event(${id}::uuid)`;
+      return { id, duplicate: false };
+    });
+  }
+
+  async configureBasis(tenantId: string, basis: unknown, metadata: RevenueMutationMetadata) {
+    uuid(tenantId, 'tenantId'); uuid(metadata.actorId, 'actorId');
+    if (basis !== 'gross' && basis !== 'net') throw new BadRequestException('Choose gross or net explicitly');
+    return this.database.inPlatformContext(async tx => {
+      await tx`select id from tenants where id = ${tenantId} for update`;
+      await tx`insert into content_revenue_basis(tenant_id, basis, updated_by) values (${tenantId}, ${basis}, ${metadata.actorId!})
+        on conflict (tenant_id) do update set basis = excluded.basis, updated_by = excluded.updated_by, updated_at = statement_timestamp()`;
+      await tx`insert into audit_logs(id, scope_type, actor_type, actor_id, action, resource_type, resource_id, after_json, request_id)
+        values (${uuidV7()}, 'platform', 'platform_staff', ${metadata.actorId!}, 'finance.content_revenue.basis', 'tenant',
+          ${tenantId}, ${tx.json({ basis, affects: 'future_and_unconfigured_events_only' })}, ${metadata.requestId})`;
+      return { tenantId, basis };
+    });
+  }
+
+  async reconcile(tenantId: string, metadata: RevenueMutationMetadata) {
+    uuid(tenantId, 'tenantId'); uuid(metadata.actorId, 'actorId');
+    return this.database.inPlatformContext(async tx => {
+      const events = await tx<{ id: string }[]>`select id from content_revenue_events where tenant_id = ${tenantId}
+        and state = 'unvalued' order by occurred_at, id limit 500 for update skip locked`;
+      for (const event of events) await tx`select app.post_cash_event(${event.id}::uuid, true)`;
+      await tx`insert into audit_logs(id, scope_type, actor_type, actor_id, action, resource_type, resource_id, after_json, request_id)
+        values (${uuidV7()}, 'platform', 'platform_staff', ${metadata.actorId!}, 'finance.content_revenue.reconcile', 'tenant',
+          ${tenantId}, ${tx.json({ attempted: events.length, acceptsCurrentPolicyForPreviouslyUnconfiguredEvents: true })}, ${metadata.requestId})`;
+      return { attempted: events.length };
+    });
+  }
 
   async upsertPolicy(
     tenantId: string,
@@ -159,8 +296,8 @@ export class RevenueShareService {
       `;
       const policy = policies[0];
       if (!policy) throw new ConflictException('Active revenue share policy is not configured');
-      const headquartersMinor = Math.floor(input.grossMinor * policy.headquarters_bps / 10_000);
-      const creatorMinor = Math.floor(input.grossMinor * policy.creator_bps / 10_000);
+      const headquartersMinor = Number(BigInt(input.grossMinor) * BigInt(policy.headquarters_bps) / 10_000n);
+      const creatorMinor = Number(BigInt(input.grossMinor) * BigInt(policy.creator_bps) / 10_000n);
       const tenantMinor = input.grossMinor - headquartersMinor - creatorMinor;
       const id = uuidV7();
       const occurredAt = new Date(input.occurredAt);
@@ -233,7 +370,14 @@ export class RevenueShareService {
             or settlement_month = (${`${month ?? '2000-01'}-01`})::date)
         order by occurred_at desc, id desc limit 1000
       `;
-      return { items: rows.map((row) => ({
+      const totals = await transaction<Array<{ currency: string; gross: string; headquarters: string; tenant: string; creator: string; count: string }>>`
+        select currency, sum(gross_minor)::text as gross, sum(headquarters_minor)::text as headquarters,
+          sum(tenant_minor)::text as tenant, sum(creator_minor)::text as creator, count(*)::text as count
+        from content_revenue_ledger
+        where (${tenantId ?? null}::uuid is null or tenant_id = ${tenantId ?? null})
+          and (${month ?? null}::text is null or settlement_month = (${`${month ?? '2000-01'}-01`})::date)
+          and status <> 'reversed' group by currency`;
+      return { totals, items: rows.map((row) => ({
         contentScope: row.content_scope,
         creatorId: row.creator_id_snapshot ?? undefined,
         creatorMinor: row.creator_minor,
@@ -272,6 +416,17 @@ export class RevenueShareService {
       throw new BadRequestException('currency is invalid');
     }
     return this.database.inPlatformContext(async (transaction) => {
+      // Serialize closing with other statements for this tenant. Unvalued cash is never silently omitted.
+      await transaction`select id from tenants where id = ${tenantId} for update`;
+      const closed = await transaction<{ entry_count: number }[]>`select entry_count from content_revenue_closures
+        where tenant_id = ${tenantId} and currency = ${currency} and settlement_month = ${settlementMonth}::date`;
+      if (closed[0]) return { alreadySettled: true, count: closed[0].entry_count, currency, month, tenantId };
+      const unresolved = await transaction<{ blocked: boolean }[]>`select
+        exists(select 1 from content_revenue_legacy_review where tenant_id = ${tenantId} and resolved_at is null)
+        or exists(select 1 from content_revenue_events e join content_cash_sources s on s.id = e.source_id
+          where e.tenant_id = ${tenantId} and s.currency = ${currency} and e.state = 'unvalued'
+            and e.occurred_at < (${settlementMonth}::date + interval '1 month')) as blocked`;
+      if (unresolved[0]?.blocked) throw new ConflictException('Unvalued revenue or legacy cash reconciliation blocks settlement');
       const rows = await transaction<Array<{
         creator_minor: string; gross_minor: string; headquarters_minor: string;
         id: string; tenant_minor: string;
@@ -294,6 +449,8 @@ export class RevenueShareService {
             and currency = ${currency}
             and status = 'settled'
         `;
+        await transaction`insert into content_revenue_closures(tenant_id, currency, settlement_month, entry_count, created_by)
+          values (${tenantId}, ${currency}, ${settlementMonth}::date, ${existing[0]?.count ?? 0}, ${actorId})`;
         return {
           alreadySettled: (existing[0]?.count ?? 0) > 0,
           count: existing[0]?.count ?? 0,
@@ -313,6 +470,8 @@ export class RevenueShareService {
         headquartersMinor: sum.headquartersMinor + BigInt(row.headquarters_minor),
         tenantMinor: sum.tenantMinor + BigInt(row.tenant_minor),
       }), { creatorMinor: 0n, grossMinor: 0n, headquartersMinor: 0n, tenantMinor: 0n });
+      await transaction`insert into content_revenue_closures(tenant_id, currency, settlement_month, entry_count, created_by)
+        values (${tenantId}, ${currency}, ${settlementMonth}::date, ${rows.length}, ${actorId})`;
       await transaction`
         insert into audit_logs (
           id, scope_type, actor_type, actor_id, action, resource_type,
@@ -351,6 +510,17 @@ function closedSettlementMonth(value: string): string {
     throw new BadRequestException('Only a closed UTC month can be settled');
   }
   return `${value}-01`;
+}
+
+function moneyString(value: unknown): bigint {
+  if (typeof value !== 'string' || !/^(0|[1-9][0-9]{0,15})$/.test(value) || BigInt(value) > 9_000_000_000_000_000n)
+    throw new BadRequestException('Money must be an integer minor-unit string');
+  return BigInt(value);
+}
+function statement(input: { reportId: string; rowId: string; reportSha256: string }) {
+  if (!input || !/^[a-f0-9]{64}$/.test(input.reportSha256 ?? '')
+    || [input.reportId, input.rowId].some(v => typeof v !== 'string' || !v.trim() || v.length > 200 || /[\r\n\0]/.test(v)))
+    throw new BadRequestException('An identified headquarters-verified report is required');
 }
 
 function policyInput(input: RevenueSharePolicyInput) {

@@ -2,6 +2,9 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <key>FlutterDeepLinkingEnabled</key><false/>
+    <key>UIBackgroundModes</key><array><string>remote-notification</string></array>
+    <!-- NIGHTFLIX_TENANT_URL_TYPES -->
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>
@@ -16,7 +19,7 @@
 	<string>6.0</string>
 	<key>CFBundleName</key>
 	<string>night_flix</string>
-	<!-- Test App ID. Tenant release automation replaces this at build time. -->
+	<!-- Internal builds only. NativeAppBuilder replaces this for signed tenant releases. -->
 	<key>GADApplicationIdentifier</key>
 	<string>ca-app-pub-3940256099942544~1458002511</string>
 	<key>CFBundlePackageType</key>

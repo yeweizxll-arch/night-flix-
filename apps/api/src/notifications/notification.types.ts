@@ -1,6 +1,5 @@
-export const NOTIFICATION_LOCALES = [
-  'zh-CN', 'zh-TW', 'en-US', 'fr-FR', 'ja-JP', 'ko-KR',
-] as const;
+import { SUPPORTED_APP_LOCALES } from '@drama/contracts';
+export const NOTIFICATION_LOCALES = SUPPORTED_APP_LOCALES;
 export type NotificationLocale = (typeof NOTIFICATION_LOCALES)[number];
 
 export interface UpdateNotificationPreferencesInput {

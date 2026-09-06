@@ -4,10 +4,11 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
   ServiceUnavailableException,
 } from '@nestjs/common';
 
-import type { CustomerPrincipal } from '../customer-auth/customer-auth.types';
+import type { PlaybackViewer } from './playback.types';
 import { DatabaseService } from '../database/database.service';
 import {
   S3_COMPATIBLE_STORAGE_ADAPTER,
@@ -17,12 +18,15 @@ import { StorageCredentialCipher } from '../storage/storage-credentials';
 import type { S3StorageCredentials } from '../storage/storage-credentials';
 import { CustomerPlaybackAccessService } from './customer-playback-access.service';
 import { PlaybackUrlRateLimiterService } from './playback-url-rate-limiter.service';
+import { HlsPlaybackService } from './hls-playback.service';
 
 const DEFAULT_EXPIRY_SECONDS = 180;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 interface SecureAssetRow {
+  object_version?: string;
+  mime_type?: string;
   bucket: string;
   credential_ciphertext: string;
   endpoint: string | null;
@@ -50,20 +54,22 @@ export class CustomerPlaybackUrlService {
     private readonly storage: S3CompatibleStorageAdapter,
     @Inject(PlaybackUrlRateLimiterService)
     private readonly rateLimiter: PlaybackUrlRateLimiterService,
+    @Optional() @Inject(HlsPlaybackService) private readonly hls?: HlsPlaybackService,
   ) {}
 
   async issue(
-    principal: CustomerPrincipal,
+    principal: PlaybackViewer,
     episodeIdValue: unknown,
     expiryValue: unknown,
     ipValue: unknown,
+    publicOrigin?: string,
   ) {
     assertPrincipal(principal);
     const episodeId = uuid(episodeIdValue, 'episodeId');
     const expiresInSeconds = expirySeconds(expiryValue);
     const ip = requestIp(ipValue);
     await this.rateLimiter.consume({
-      accountId: principal.accountId,
+      accountId: principal.accountId ?? `guest:${ip}`,
       ip,
       tenantId: principal.tenantId,
     });
@@ -105,7 +111,9 @@ export class CustomerPlaybackUrlService {
             provider.bucket,
             provider.credential_ciphertext,
             provider.key_version,
-            media.object_key
+            media.object_key, media.mime_type,
+            coalesce(media.metadata_json #>> '{uploadVerification,versionId}',
+              media.metadata_json #>> '{sourceReference,versionId}') as object_version
           from media_assets as media
           inner join storage_providers as provider
             on provider.id = media.storage_provider_id
@@ -131,7 +139,8 @@ export class CustomerPlaybackUrlService {
                 and media.owner_tenant_id = ${principal.tenantId}
               )
             )
-          for share of media, provider
+            and app.lock_customer_row('media_assets', media.id, to_jsonb(media))
+            and app.lock_customer_row('storage_providers', provider.id, to_jsonb(provider.*))
         `;
         const asset = rows[0];
         if (!asset) {
@@ -146,7 +155,11 @@ export class CustomerPlaybackUrlService {
           throw new NotFoundException('Secure playback asset is unavailable');
         }
         try {
-          const signed = await this.signAsset(asset, expiresInSeconds);
+          const isHls = asset.mime_type?.includes('mpegurl');
+          if (isHls && (!this.hls || !publicOrigin)) throw new Error('HLS gateway is unavailable');
+          const signed = isHls
+            ? this.hls!.issue(principal, episodeId, mediaAssetId, asset.object_key, expiresInSeconds, publicOrigin!)
+            : await this.signAsset(asset, expiresInSeconds);
           return {
             access: access.access,
             expiresAt: signed.expiresAt.toISOString(),
@@ -168,7 +181,7 @@ export class CustomerPlaybackUrlService {
   }
 
   async issueTrack(
-    principal: CustomerPrincipal,
+    principal: PlaybackViewer,
     episodeIdValue: unknown,
     trackIdValue: unknown,
     expiryValue: unknown,
@@ -180,7 +193,7 @@ export class CustomerPlaybackUrlService {
     const expiresInSeconds = expirySeconds(expiryValue);
     const ip = requestIp(ipValue);
     await this.rateLimiter.consume({
-      accountId: principal.accountId,
+      accountId: principal.accountId ?? `guest:${ip}`,
       ip,
       tenantId: principal.tenantId,
     });
@@ -204,6 +217,8 @@ export class CustomerPlaybackUrlService {
           provider.credential_ciphertext,
           provider.key_version,
           media.object_key,
+          coalesce(media.metadata_json #>> '{uploadVerification,versionId}',
+            media.metadata_json #>> '{sourceReference,versionId}') as object_version,
           track.track_type,
           track.locale,
           track.label
@@ -229,7 +244,9 @@ export class CustomerPlaybackUrlService {
               and media.owner_tenant_id = ${principal.tenantId}
             )
           )
-        for share of track, media, provider
+          and app.lock_customer_row('episode_media_tracks', track.id, to_jsonb(track))
+          and app.lock_customer_row('media_assets', media.id, to_jsonb(media))
+          and app.lock_customer_row('storage_providers', provider.id, to_jsonb(provider.*))
       `;
       const track = rows[0];
       if (!track) throw new NotFoundException('Playback track is unavailable');
@@ -269,6 +286,7 @@ export class CustomerPlaybackUrlService {
       credentials,
       expiresInSeconds,
       objectKey: asset.object_key,
+      ...(asset.object_version ? { versionId: asset.object_version } : {}),
       target: { bucket: asset.bucket, endpoint: asset.endpoint },
     });
     return { expiresAt: validSignedResponse(signed, expiresInSeconds), url: signed.url };
@@ -324,12 +342,12 @@ function validSignedResponse(
   return value.expiresAt;
 }
 
-function assertPrincipal(principal: CustomerPrincipal): void {
+function assertPrincipal(principal: PlaybackViewer): void {
   if (!principal || typeof principal !== 'object') {
     throw new ForbiddenException('Customer principal is required');
   }
   uuid(principal.tenantId, 'tenantId');
-  uuid(principal.accountId, 'accountId');
+  if (principal.accountId !== undefined) uuid(principal.accountId, 'accountId');
 }
 
 function uuid(value: unknown, field: string): string {

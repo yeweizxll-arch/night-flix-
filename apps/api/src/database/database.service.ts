@@ -4,6 +4,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import postgres, { type Sql, type TransactionSql } from 'postgres';
+import { currentRequestCountry } from '../tenancy/tenant-context.service';
 
 export type DatabaseTransaction = TransactionSql;
 
@@ -108,6 +109,7 @@ export class DatabaseService implements OnApplicationShutdown {
     }
 
     const result = await this.platformClient.begin(async (transaction) => {
+      await transaction`select set_config('app.request_country', ${currentRequestCountry() ?? ''}, true)`;
       return callback(transaction);
     });
     return result as T;
@@ -154,6 +156,7 @@ export class DatabaseService implements OnApplicationShutdown {
       await transaction`
         select
           set_config('app.access_scope', 'tenant', true),
+          set_config('app.request_country', ${currentRequestCountry() ?? ''}, true),
           set_config('app.tenant_id', ${tenantId}, true)
       `;
       return callback(transaction);

@@ -190,7 +190,7 @@ export class PublicDramaPoolService {
           and drama.status = 'published'
           and drama.deleted_at is null
           and drama.emergency_takedown_at is null
-        for update of drama
+          and app.freeze_public_release(drama.id)
       `;
       if (!dramas[0]) throw new NotFoundException('Public drama is unavailable');
       await this.upsertPointPrices(transaction, tenantId, dramaId, input, metadata.actorId);
@@ -210,11 +210,6 @@ export class PublicDramaPoolService {
       `;
       const saved = rows[0];
       if (!saved) throw new ConflictException('Public drama publication has changed');
-      await transaction`
-        update dramas
-        set public_release_locked_at = coalesce(public_release_locked_at, statement_timestamp())
-        where id = ${dramaId}
-      `;
       await this.auditTenant(transaction, tenantId, metadata, {
         action: 'public_drama.publish',
         resourceId: saved.id,

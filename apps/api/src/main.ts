@@ -6,7 +6,7 @@ import {
   FastifyAdapter,
   NestFastifyApplication,
 } from '@nestjs/platform-fastify';
-import type { FastifyServerOptions } from 'fastify';
+import { resolveTrustProxy } from './runtime/trusted-proxy';
 
 import { AppModule } from './app.module';
 import { DatabaseService } from './database/database.service';
@@ -48,23 +48,6 @@ async function bootstrap(): Promise<void> {
 }
 
 void bootstrap();
-
-function resolveTrustProxy(): FastifyServerOptions['trustProxy'] {
-  const rawValue = process.env.TRUST_PROXY?.trim();
-  if (!rawValue || rawValue === 'false') {
-    return false;
-  }
-  if (rawValue === 'true') {
-    if (process.env.NODE_ENV === 'production') {
-      throw new Error('TRUST_PROXY=true is not allowed in production; configure trusted hops or CIDRs');
-    }
-    return true;
-  }
-  if (/^[1-9]\d?$/.test(rawValue)) {
-    return Number(rawValue);
-  }
-  return rawValue.split(',').map((value) => value.trim()).filter(Boolean);
-}
 
 function resolvePort(serviceRole: ReturnType<typeof resolveApiServiceRole>): number {
   const defaultPorts = { admin: 3201, agent: 3202, all: 3000, web: 3200 } as const;

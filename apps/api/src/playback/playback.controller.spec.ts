@@ -51,6 +51,7 @@ describe('PlaybackController', () => {
       episodeId,
       '180',
       '203.0.113.10',
+      'https://undefined',
     );
     expect(Reflect.getMetadata(
       HEADERS_METADATA,
@@ -58,11 +59,12 @@ describe('PlaybackController', () => {
     )).toContainEqual({ name: 'Cache-Control', value: 'no-store' });
 
     await expect(controller.playbackUrl(episodeId, undefined, request()))
-      .rejects.toBeInstanceOf(UnauthorizedException);
-    expect(issue).toHaveBeenCalledTimes(1);
+      .resolves.toMatchObject({ access: 'full' });
+    expect(issue).toHaveBeenLastCalledWith({ tenantId }, episodeId, undefined, '203.0.113.10', 'https://undefined');
+    expect(authenticateAccess).toHaveBeenCalledTimes(1);
   });
 
-  it('requires a bearer token and authenticates before resolving access', async () => {
+  it('allows guest policy resolution but validates any supplied bearer token', async () => {
     const getAccess = vi.fn(async () => ({ access: 'locked' }));
     const authenticateAccess = vi.fn(async () => ({
       accountId,
@@ -72,9 +74,13 @@ describe('PlaybackController', () => {
     const controller = makeController({ getAccess }, { authenticateAccess });
 
     await expect(controller.access(episodeId, request()))
-      .rejects.toBeInstanceOf(UnauthorizedException);
+      .resolves.toEqual({ access: 'locked' });
     expect(authenticateAccess).not.toHaveBeenCalled();
-    expect(getAccess).not.toHaveBeenCalled();
+    expect(getAccess).toHaveBeenCalledWith({ tenantId }, episodeId);
+    await expect(controller.access(episodeId, request({ authorization: 'invalid' })))
+      .rejects.toBeInstanceOf(UnauthorizedException);
+    await expect(controller.upsertProgress({ dramaId: episodeId, episodeId, positionSeconds: 0 }, request()))
+      .rejects.toBeInstanceOf(UnauthorizedException);
 
     await expect(controller.access(
       episodeId,

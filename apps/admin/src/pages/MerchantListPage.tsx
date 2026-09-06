@@ -1,3 +1,4 @@
+import { APP_LOCALE_OPTIONS } from '@drama/contracts';
 import {
   Alert,
   Button,
@@ -248,14 +249,7 @@ export function MerchantListPage() {
               <Input placeholder="merchant-a" />
             </Form.Item>
             <Form.Item label="默认语言" name="defaultLocale" rules={[{ required: true }]}>
-              <Select options={[
-                { label: '简体中文', value: 'zh-CN' },
-                { label: '繁体中文', value: 'zh-TW' },
-                { label: 'English', value: 'en-US' },
-                { label: 'Français', value: 'fr-FR' },
-                { label: '日本語', value: 'ja-JP' },
-                { label: '한국어', value: 'ko-KR' },
-              ]} />
+              <Select options={APP_LOCALE_OPTIONS} />
             </Form.Item>
             <Form.Item label="默认币种" name="defaultCurrency" rules={[{ required: true }]}>
               <Select options={['USD', 'JPY', 'EUR', 'KRW', 'CNY'].map((value) => ({ label: value, value }))} />

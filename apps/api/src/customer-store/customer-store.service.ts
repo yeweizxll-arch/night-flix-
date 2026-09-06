@@ -22,6 +22,8 @@ import type {
   CustomerStoreCurrency,
   CustomerStoreQuery,
 } from './customer-store.types';
+import { nativeIntegrationConfig } from '../runtime/native-integration-config';
+import { nativeStoreCatalog } from '../commerce/native-store-config';
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -129,18 +131,22 @@ export class CustomerStoreService {
         store_products_json: {},
         supported_locales: [...CUSTOMER_CONTENT_LOCALES],
       };
+      const identity = nativeIntegrationConfig(tenantId);
+      const nativeProducts = nativeStoreCatalog(tenantId);
+      const nativePurchases = Object.values(nativeProducts).some(products => products.length > 0);
       return {
         capabilities: {
           admob: Object.keys(safeObject(runtime.admob_json)).length > 0,
-          appleSignIn: false,
+          appleSignIn: Boolean(identity.appleClientId),
           commerceCatalog: true,
           customerAuthentication: true,
           entitlements: true,
-          googleSignIn: false,
-          inAppPurchases: false,
-          nativePurchaseReceiptVerification: false,
+          googleSignIn: Boolean(identity.googleClientId),
+          inAppPurchases: nativePurchases,
+          nativePurchaseReceiptVerification: nativePurchases,
           pointsWallet: true,
         },
+        identity,
         admob: safeObject(runtime.admob_json),
         allowedCountries: runtime.allowed_countries,
         defaultLocale: tenant.default_locale,
@@ -150,7 +156,7 @@ export class CustomerStoreService {
         logoMediaAssetId: tenant.logo_media_asset_id ?? undefined,
         onlineOnly: true,
         siteName: tenant.site_name,
-        storeProducts: safeObject(runtime.store_products_json),
+        storeProducts: nativePurchases ? nativeProducts : safeObject(runtime.store_products_json),
         supportedLocales: runtime.supported_locales,
         theme: safeTheme(tenant.theme_json),
       };

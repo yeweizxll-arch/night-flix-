@@ -1,3 +1,4 @@
+import { lockPublicDistribution } from '../public-drama-pool/public-distribution';
 import {
   BadRequestException,
   Inject,
@@ -115,7 +116,8 @@ export class CustomerAssetService {
               and media.owner_tenant_id = ${tenantId}
             )
           )
-        for share of media, provider
+          and app.lock_customer_row('media_assets', media.id, to_jsonb(media))
+          and app.lock_customer_row('storage_providers', provider.id, to_jsonb(provider.*))
       `;
       const asset = rows[0];
       if (!asset) throw new NotFoundException('Customer image is unavailable');
@@ -181,29 +183,20 @@ export class CustomerAssetService {
       where drama.cover_file_id = ${mediaId}
         and drama.status = 'published'
         and drama.deleted_at is null
+          and drama.emergency_takedown_at is null
+          and app.customer_region_allowed(${tenantId}, drama.id)
         and (drama.release_at is null or drama.release_at <= statement_timestamp())
         and (drama.unpublish_at is null or drama.unpublish_at > statement_timestamp())
         and (
           (drama.owner_type = 'tenant' and drama.owner_tenant_id = ${tenantId})
           or (
             drama.owner_type = 'platform'
-            and exists (
-              select 1
-              from content_license_items as license_item
-              inner join content_licenses as license
-                on license.id = license_item.license_id
-                and license.tenant_id = license_item.tenant_id
-              where license_item.tenant_id = ${tenantId}
-                and license_item.drama_id = drama.id
-                and license.status in ('scheduled', 'active')
-                and license.starts_at <= statement_timestamp()
-                and license.expires_at > statement_timestamp()
-            )
+            and app.tenant_drama_published(drama.id)
           )
         )
+        and app.lock_customer_row('dramas', drama.id, to_jsonb(drama))
       order by drama.id
       limit 1
-      for share of drama
     `;
     return rows[0];
   }
@@ -213,34 +206,7 @@ export class CustomerAssetService {
     tenantId: string,
     dramaId: string,
   ): Promise<void> {
-    const licenses = await transaction<{ id: string }[]>`
-      select license.id
-      from content_licenses as license
-      where license.tenant_id = ${tenantId}
-        and license.status in ('scheduled', 'active')
-        and license.starts_at <= statement_timestamp()
-        and license.expires_at > statement_timestamp()
-        and exists (
-          select 1 from content_license_items as item
-          where item.tenant_id = license.tenant_id
-            and item.license_id = license.id
-            and item.drama_id = ${dramaId}
-        )
-      order by license.id
-      limit 1
-      for share of license
-    `;
-    const license = licenses[0];
-    if (!license) throw new NotFoundException('Customer image is unavailable');
-    const items = await transaction<{ id: string }[]>`
-      select item.id
-      from content_license_items as item
-      where item.tenant_id = ${tenantId}
-        and item.license_id = ${license.id}
-        and item.drama_id = ${dramaId}
-      for share of item
-    `;
-    if (!items[0]) throw new NotFoundException('Customer image is unavailable');
+    await lockPublicDistribution(transaction, tenantId, dramaId);
   }
 }
 

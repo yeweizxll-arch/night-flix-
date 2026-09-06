@@ -245,3 +245,4 @@ export interface TenantSummary {
   defaultLocale: string;
   timezone: string;
 }
+export { SUPPORTED_APP_LOCALES, APP_LOCALE_NAMES, APP_LOCALE_OPTIONS, type AppLocale } from './locales.js';

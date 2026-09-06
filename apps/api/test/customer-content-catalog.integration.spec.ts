@@ -291,7 +291,7 @@ describe('anonymous customer content catalog', () => {
       .rejects.toBeInstanceOf(BadRequestException);
     await expect(catalog.listDramas(tenantA, { q: ['duplicate', 'query'] }))
       .rejects.toBeInstanceOf(BadRequestException);
-    await expect(catalog.listDramas(tenantA, { locale: 'de-DE' }))
+    await expect(catalog.listDramas(tenantA, { locale: 'xx-XX' }))
       .rejects.toBeInstanceOf(BadRequestException);
     await expect(catalog.listDramas(tenantA, { pageSize: 51 }))
       .rejects.toBeInstanceOf(BadRequestException);

@@ -1,0 +1,14 @@
+# Optional overlay for already-built local/CI images. Never stores credentials in an image.
+# Paths inside native-stores.private.json must be /run/nightflix-native/<private-file>.
+services:
+  web-api:
+    environment:
+      NATIVE_STORES_FILE: /run/nightflix-native/native-stores.private.json
+      NATIVE_INTEGRATIONS_FILE: /run/nightflix-native/native-integrations.private.json
+    volumes:
+      - type: bind
+        source: ${NATIVE_CREDENTIALS_DIRECTORY:?set an existing private credential directory}
+        target: /run/nightflix-native
+        read_only: true
+        bind:
+          create_host_path: false

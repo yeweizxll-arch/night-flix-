@@ -40,6 +40,46 @@ const mutationMetadata = {
 };
 
 describe('StorageUploadService', () => {
+  it('registers original versioned HLS storage without uploading and pins every referenced resource', async () => {
+    const root = 'shanchuang/work-1/episode-1/master.m3u8';
+    let stored: Record<string, unknown> | undefined;
+    const tx = fakeTransaction((query, values) => {
+      if (query.includes('insert into command_idempotency') || query.includes('update command_idempotency')) return [{ id: commandId }];
+      if (query.includes('from storage_providers')) return [{ ...providerRow(), owner_type: 'platform', owner_tenant_id: null }];
+      if (query.includes('insert into media_assets')) {
+        stored = values.find((v) => typeof v === 'object' && v !== null && 'sourceReference' in v) as Record<string, unknown>;
+      }
+      return [];
+    });
+    const adapter = adapterMock({
+      headObject: vi.fn(async (input) => ({ exists: true, objectKey: input.objectKey, contentLength: 64,
+        contentType: input.objectKey.endsWith('.m3u8') ? 'application/vnd.apple.mpegurl' : 'application/octet-stream',
+        etag: 'server-etag', versionId: input.objectKey === root ? 'root-v1' : 'child-v1' })),
+      readObject: vi.fn(async (input) => {
+        expect(input.versionId).toBe('root-v1');
+        return { body: Buffer.from('#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI="key.bin"\n#EXTINF:6,\nsegment1.ts\n#EXT-X-ENDLIST') };
+      }),
+    });
+    await expect(makeService(tx, adapter).registerPlatformSourceObject({
+      providerId, objectKey: root, versionId: 'root-v1', kind: 'video',
+      shanchuangWorkId: 'work-1', shanchuangCreatorId: 'creator-1',
+    }, mutationMetadata)).resolves.toMatchObject({ status: 'ready' });
+    expect(stored).toMatchObject({ sourceReference: {
+      resourceVersions: { [root]: 'root-v1',
+        'shanchuang/work-1/episode-1/key.bin': 'child-v1',
+        'shanchuang/work-1/episode-1/segment1.ts': 'child-v1' },
+    } });
+    expect(adapter.presignConditionalPut).not.toHaveBeenCalled();
+  });
+  it('rejects unversioned or cross-owner original source storage', async () => {
+    const service = makeService(fakeTransaction((query) =>
+      query.includes('insert into command_idempotency') ? [{ id: commandId }] : []));
+    const input = { providerId, objectKey, versionId: 'v1', kind: 'image' as const,
+      shanchuangWorkId: 'work-1', shanchuangCreatorId: 'creator-1' };
+    await expect(service.registerPlatformSourceObject(input, mutationMetadata)).rejects.toThrow('Platform S3 provider');
+    await expect(service.registerPlatformSourceObject({ ...input, versionId: 'null' }, mutationMetadata)).rejects.toThrow('versioning');
+    await expect(service.registerPlatformSourceObject({ ...input, objectKey: '../../etc/passwd' }, mutationMetadata)).rejects.toThrow('Invalid source');
+  });
   it('creates only a platform-owned S3 upload and writes platform audit and outbox facts', async () => {
     let generatedMediaId: string | undefined;
     const queries: string[] = [];

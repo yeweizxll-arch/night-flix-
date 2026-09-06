@@ -148,6 +148,15 @@ const TEMPLATES: Record<CommunicationLocale, {
   'fr-FR': { subject: (s) => `Code de vérification ${s}`, body: (s, c, m) => `Code de vérification ${s} : ${c}. Valable ${m} minutes. Ne le partagez pas.` },
   'ja-JP': { subject: (s) => `${s} 認証コード`, body: (s, c, m) => `${s}の認証コード：${c}。有効期限は${m}分です。共有しないでください。` },
   'ko-KR': { subject: (s) => `${s} 인증 코드`, body: (s, c, m) => `${s} 인증 코드: ${c}. ${m}분 동안 유효합니다. 공유하지 마세요.` },
+  'es-ES': { subject: s => `${s}: código de verificación`, body: (s,c,m) => `${s}: ${c}. Caduca en ${m} minutos. No compartas este código.` },
+  'pt-BR': { subject: s => `${s}: código de verificação`, body: (s,c,m) => `${s}: ${c}. Expira em ${m} minutos. Não compartilhe este código.` },
+  'id-ID': { subject: s => `${s}: kode verifikasi`, body: (s,c,m) => `${s}: ${c}. Berlaku ${m} menit. Jangan bagikan kode ini.` },
+  'th-TH': { subject: s => `${s}: รหัสยืนยัน`, body: (s,c,m) => `${s}: ${c} รหัสมีอายุ ${m} นาที อย่าเปิดเผยรหัสนี้` },
+  'vi-VN': { subject: s => `${s}: mã xác minh`, body: (s,c,m) => `${s}: ${c}. Hết hạn sau ${m} phút. Không chia sẻ mã này.` },
+  'de-DE': { subject: s => `${s}: Bestätigungscode`, body: (s,c,m) => `${s}: ${c}. Gültig für ${m} Minuten. Teilen Sie diesen Code nicht.` },
+  'ar-SA': { subject: s => `${s}: رمز التحقق`, body: (s,c,m) => `${s}: ${c}. تنتهي صلاحيته خلال ${m} دقائق. لا تشارك هذا الرمز.` },
+  'hi-IN': { subject: s => `${s}: सत्यापन कोड`, body: (s,c,m) => `${s}: ${c}। ${m} मिनट तक मान्य। यह कोड साझा न करें।` },
+  'tr-TR': { subject: s => `${s}: doğrulama kodu`, body: (s,c,m) => `${s}: ${c}. ${m} dakika geçerlidir. Bu kodu paylaşmayın.` },
 };
 
 export function otpTemplate(

@@ -2,3 +2,6 @@ packages:
   - apps/*
   - packages/*
 
+# Keep Nest's adapter and cookie module on the same patched Fastify instance.
+overrides:
+  fastify: 5.12.3

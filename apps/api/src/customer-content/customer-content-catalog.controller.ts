@@ -6,7 +6,11 @@ import {
   Inject,
   Param,
   Query,
+  Req,
 } from '@nestjs/common';
+import type { FastifyRequest } from 'fastify';
+import { bearerToken } from '../customer-auth/customer-authentication.controller';
+import { CustomerAuthenticationService } from '../customer-auth/customer-authentication.service';
 
 import { PublicEndpoint } from '../auth/public-endpoint.decorator';
 import { TenantContextService } from '../tenancy/tenant-context.service';
@@ -20,6 +24,8 @@ export class CustomerContentCatalogController {
     private readonly catalog: CustomerContentCatalogService,
     @Inject(TenantContextService)
     private readonly tenantContext: TenantContextService,
+    @Inject(CustomerAuthenticationService)
+    private readonly authentication: CustomerAuthenticationService,
   ) {}
 
   @Get('dramas')
@@ -30,11 +36,16 @@ export class CustomerContentCatalogController {
 
   @Get('dramas/:dramaId')
   @PublicEndpoint()
-  detail(
+  async detail(
     @Param('dramaId') dramaId: string,
     @Query('locale') locale: unknown,
+    @Req() request: FastifyRequest,
   ) {
-    return this.catalog.getDrama(this.verifiedTenantId(), dramaId, locale);
+    const tenantId = this.verifiedTenantId();
+    const principal = request.headers.authorization !== undefined
+      ? await this.authentication.authenticateAccess(tenantId, bearerToken(request))
+      : undefined;
+    return this.catalog.getDrama(tenantId, dramaId, locale, principal?.accountId);
   }
 
   private verifiedTenantId(): string {

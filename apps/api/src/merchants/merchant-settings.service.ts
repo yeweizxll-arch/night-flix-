@@ -1,3 +1,4 @@
+import { SUPPORTED_APP_LOCALES } from '@drama/contracts';
 import {
   BadRequestException,
   ConflictException,
@@ -70,14 +71,7 @@ const HOST_PATTERN =
   /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
 const SUBDOMAIN_LABEL_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const COLOR_PATTERN = /^#[0-9a-f]{6}$/i;
-const SUPPORTED_LOCALES = new Set([
-  'zh-CN',
-  'zh-TW',
-  'en-US',
-  'fr-FR',
-  'ja-JP',
-  'ko-KR',
-]);
+const SUPPORTED_LOCALES = new Set<string>(SUPPORTED_APP_LOCALES);
 const DEFAULT_THEME: SiteTheme = {
   accentColor: '#7c3aed',
   colorMode: 'light',

@@ -1,3 +1,4 @@
+import { type AppLocale, APP_LOCALE_OPTIONS } from '@drama/contracts';
 import {
   Alert,
   Button,
@@ -35,7 +36,7 @@ import {
 type Provider = 'apns' | 'fcm';
 type Channel = 'in_app' | 'push';
 type CampaignStatus = 'draft' | 'scheduled' | 'dispatching' | 'completed' | 'cancelled';
-type NotificationLocale = 'zh-CN' | 'zh-TW' | 'en-US' | 'fr-FR' | 'ja-JP' | 'ko-KR';
+type NotificationLocale = AppLocale;
 
 interface ProviderConfig {
   environment: PushProviderEnvironment;
@@ -104,14 +105,7 @@ interface FcmCredentials {
 }
 
 const API_BASE = '/api/v1/tenant/notifications';
-const locales: Array<{ label: string; value: NotificationLocale }> = [
-  { label: '简体中文', value: 'zh-CN' },
-  { label: '繁體中文', value: 'zh-TW' },
-  { label: 'English', value: 'en-US' },
-  { label: 'Français', value: 'fr-FR' },
-  { label: '日本語', value: 'ja-JP' },
-  { label: '한국어', value: 'ko-KR' },
-];
+const locales: Array<{ label: string; value: NotificationLocale }> = APP_LOCALE_OPTIONS;
 const campaignStatus: Record<CampaignStatus, { color?: string; label: string }> = {
   cancelled: { label: '已取消' },
   completed: { color: 'green', label: '已完成' },

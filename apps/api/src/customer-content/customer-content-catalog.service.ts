@@ -1,3 +1,4 @@
+import { lockPublicDistribution } from '../public-drama-pool/public-distribution';
 import {
   BadRequestException,
   ForbiddenException,
@@ -102,6 +103,8 @@ export class CustomerContentCatalogService {
           and cover.deleted_at is null
         where drama.status = 'published'
           and drama.deleted_at is null
+          and drama.emergency_takedown_at is null
+          and app.customer_region_allowed(${tenantId}, drama.id)
           and (drama.release_at is null or drama.release_at <= statement_timestamp())
           and (drama.unpublish_at is null or drama.unpublish_at > statement_timestamp())
           and (
@@ -111,27 +114,7 @@ export class CustomerContentCatalogService {
             )
             or (
               drama.owner_type = 'platform'
-              and (
-                exists (
-                  select 1
-                  from tenant_public_drama_publications as publication
-                  where publication.tenant_id = ${tenantId}
-                    and publication.drama_id = drama.id
-                    and publication.status = 'published'
-                )
-                or exists (
-                  select 1
-                  from content_license_items as license_item
-                  inner join content_licenses as license
-                    on license.id = license_item.license_id
-                    and license.tenant_id = license_item.tenant_id
-                  where license_item.tenant_id = ${tenantId}
-                    and license_item.drama_id = drama.id
-                    and license.status in ('scheduled', 'active')
-                    and license.starts_at <= statement_timestamp()
-                    and license.expires_at > statement_timestamp()
-                )
-              )
+              and app.tenant_drama_published(drama.id)
             )
           )
           and (
@@ -199,9 +182,11 @@ export class CustomerContentCatalogService {
     tenantId: string,
     dramaId: string,
     localeValue: unknown,
+    accountId?: string,
   ): Promise<CustomerDramaCatalogDetail> {
     assertUuid(tenantId, 'tenantId');
     assertUuid(dramaId, 'dramaId');
+    if (accountId) assertUuid(accountId, 'accountId');
     const locale = optionalLocale(localeValue);
     return this.database.inTenantContext(tenantId, async (transaction) => {
       const context = await this.requireAvailableTenant(transaction, tenantId);
@@ -248,41 +233,40 @@ export class CustomerContentCatalogService {
         where drama.id = ${dramaId}
           and drama.status = 'published'
           and drama.deleted_at is null
+          and drama.emergency_takedown_at is null
+          and app.customer_region_allowed(${tenantId}, drama.id)
           and (drama.release_at is null or drama.release_at <= statement_timestamp())
           and (drama.unpublish_at is null or drama.unpublish_at > statement_timestamp())
           and (
             (drama.owner_type = 'tenant' and drama.owner_tenant_id = ${tenantId})
             or (
               drama.owner_type = 'platform'
-              and (
-                exists (
-                  select 1
-                  from tenant_public_drama_publications as publication
-                  where publication.tenant_id = ${tenantId}
-                    and publication.drama_id = drama.id
-                    and publication.status = 'published'
+              and (app.tenant_drama_published(drama.id) or (
+                ${accountId ?? null}::uuid is not null
+                and exists (
+                  select 1 from tenant_public_drama_publications p
+                  where p.tenant_id = ${tenantId} and p.drama_id = drama.id and p.status = 'unpublished'
                 )
-                or exists (
-                  select 1
-                  from content_license_items as license_item
-                  inner join content_licenses as license
-                    on license.id = license_item.license_id
-                    and license.tenant_id = license_item.tenant_id
-                  where license_item.tenant_id = ${tenantId}
-                    and license_item.drama_id = drama.id
-                    and license.status in ('scheduled', 'active')
-                    and license.starts_at <= statement_timestamp()
-                    and license.expires_at > statement_timestamp()
+                and exists (
+                  select 1 from entitlements e
+                  where e.tenant_id = ${tenantId} and e.account_id = ${accountId ?? null}
+                    and e.revoked_at is null and e.expires_at is null and e.starts_at <= statement_timestamp()
+                    and ((e.entitlement_type = 'drama' and e.product_id = drama.id)
+                      or (e.entitlement_type = 'episode' and exists (
+                        select 1 from episodes ep where ep.id = e.product_id and ep.drama_id = drama.id
+                      )))
+                    and app.lock_customer_row('entitlements', e.id, to_jsonb(e.*))
                 )
-              )
+              ))
             )
           )
-        for share of drama
+        and app.lock_customer_row('dramas', drama.id, to_jsonb(drama.*))
       `;
       const drama = rows[0];
       if (!drama) throw new NotFoundException('Published drama is unavailable');
       if (drama.owner_type === 'platform') {
-        await this.lockEffectiveLicense(transaction, tenantId, drama.id);
+        await lockPublicDistribution(transaction, tenantId, drama.id,
+          accountId ? ['published', 'unpublished'] : ['published']);
       }
       const episodes = await transaction<Array<{
         duration_seconds: number;
@@ -355,8 +339,9 @@ export class CustomerContentCatalogService {
           and episode.deleted_at is null
           and (episode.release_at is null or episode.release_at <= statement_timestamp())
           and (episode.unpublish_at is null or episode.unpublish_at > statement_timestamp())
+          and app.lock_customer_row('episodes', episode.id, to_jsonb(episode.*))
+          and app.lock_customer_row('media_assets', media.id, to_jsonb(media.*))
         order by episode.episode_no, episode.id
-        for share of episode, media
       `;
       return {
         ...mapDrama(drama),
@@ -396,44 +381,6 @@ export class CustomerContentCatalogService {
     return { defaultLocale: tenant.default_locale };
   }
 
-  private async lockEffectiveLicense(
-    transaction: DatabaseTransaction,
-    tenantId: string,
-    dramaId: string,
-  ): Promise<void> {
-    const licenses = await transaction<{ id: string; source: string }[]>`
-      select publication.id, 'public_pool'::text as source
-      from tenant_public_drama_publications as publication
-      where publication.tenant_id = ${tenantId}
-        and publication.drama_id = ${dramaId}
-        and publication.status = 'published'
-      union all
-      select license.id, 'legacy_license'::text as source
-      from content_licenses as license
-      where license.tenant_id = ${tenantId}
-        and license.status in ('scheduled', 'active')
-        and license.starts_at <= statement_timestamp()
-        and license.expires_at > statement_timestamp()
-        and exists (
-          select 1 from content_license_items as item
-          where item.tenant_id = license.tenant_id
-            and item.license_id = license.id and item.drama_id = ${dramaId}
-        )
-      order by source, id
-      limit 1
-    `;
-    const license = licenses[0];
-    if (!license) throw new NotFoundException('Published drama is unavailable');
-    if (license.source === 'legacy_license') {
-      const items = await transaction<{ id: string }[]>`
-        select item.id from content_license_items as item
-        where item.tenant_id = ${tenantId}
-          and item.license_id = ${license.id} and item.drama_id = ${dramaId}
-        for share of item
-      `;
-      if (!items[0]) throw new NotFoundException('Published drama is unavailable');
-    }
-  }
 }
 
 function catalogQuery(raw: CustomerDramaCatalogQuery) {

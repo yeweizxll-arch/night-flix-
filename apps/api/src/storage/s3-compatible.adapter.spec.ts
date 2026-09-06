@@ -1,5 +1,6 @@
 import type { HeadObjectCommandOutput, S3Client, S3ClientConfig } from '@aws-sdk/client-s3';
 import { describe, expect, it, vi } from 'vitest';
+import { Readable } from 'node:stream';
 
 import {
   AwsSdkS3CompatibleStorageAdapter,
@@ -16,6 +17,19 @@ const uploadId = '11111111-1111-4111-8111-111111111111';
 const objectKey = 'tenant-media/abcdefghijklmno/image/abcdefghijklmnopqrstuvwxyz0123456789abcd.png';
 
 describe('AwsSdkS3CompatibleStorageAdapter', () => {
+  it('reads a pinned byte range and bounds bytes even without Content-Length', async () => {
+    const send = vi.fn(async (_command: unknown) => ({ Body: Readable.from([Buffer.from('abcd')]), ContentRange: 'bytes 0-3/8' }));
+    const destroy = vi.fn();
+    const adapter = new AwsSdkS3CompatibleStorageAdapter(() => ({ send, destroy }) as unknown as S3Client);
+    const input = { credentials, objectKey, target: { bucket: 'media-bucket', endpoint: null },
+      versionId: 'object-v1', range: 'bytes=0-3', maxBytes: 4 };
+    expect((await adapter.readObject(input)).body.toString()).toBe('abcd');
+    expect(send.mock.calls[0]?.[0]).toMatchObject({ input: { VersionId: 'object-v1', Range: 'bytes=0-3' } });
+    expect(destroy).toHaveBeenCalledOnce();
+    await expect(adapter.readObject({ ...input, maxBytes: 3 })).rejects.toThrow('Secure storage read');
+    expect(destroy).toHaveBeenCalledTimes(2);
+    await expect(adapter.readObject({ ...input, range: 'bytes=0-3,7-9' })).rejects.toThrow('Invalid byte range');
+  });
   it('creates a short-lived inline GET using the official SDK without network access', async () => {
     const adapter = new AwsSdkS3CompatibleStorageAdapter();
     const result = await adapter.presignGetObject({

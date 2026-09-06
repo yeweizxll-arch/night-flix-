@@ -1,3 +1,4 @@
+import { SUPPORTED_APP_LOCALES } from '@drama/contracts';
 import { Inject, Injectable, ServiceUnavailableException } from '@nestjs/common';
 
 import { uuidV7 } from '../common/uuid-v7';
@@ -64,7 +65,7 @@ export class OtpDeliveryService {
 }
 
 export function communicationLocale(value: string): CommunicationLocale {
-  return ['zh-CN', 'zh-TW', 'en-US', 'fr-FR', 'ja-JP', 'ko-KR'].includes(value)
+  return SUPPORTED_APP_LOCALES.some(locale => locale === value)
     ? value as CommunicationLocale : 'en-US';
 }
 

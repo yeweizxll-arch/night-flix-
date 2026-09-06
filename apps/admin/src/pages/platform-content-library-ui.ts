@@ -1,14 +1,8 @@
-export type ContentLocale = 'zh-CN' | 'zh-TW' | 'en-US' | 'fr-FR' | 'ja-JP' | 'ko-KR';
+import { type AppLocale, APP_LOCALE_OPTIONS } from '@drama/contracts';
+export type ContentLocale = AppLocale;
 export type DramaStatus = 'approved' | 'draft' | 'published' | 'rejected' | 'unpublished';
 
-export const contentLocaleOptions: Array<{ label: string; value: ContentLocale }> = [
-  { label: '简体中文', value: 'zh-CN' },
-  { label: '繁體中文', value: 'zh-TW' },
-  { label: 'English', value: 'en-US' },
-  { label: 'Français', value: 'fr-FR' },
-  { label: '日本語', value: 'ja-JP' },
-  { label: '한국어', value: 'ko-KR' },
-];
+export const contentLocaleOptions: Array<{ label: string; value: ContentLocale }> = APP_LOCALE_OPTIONS;
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 

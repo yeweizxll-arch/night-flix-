@@ -1,3 +1,4 @@
+import { lockPublicDistribution } from '../public-drama-pool/public-distribution';
 import {
   BadRequestException,
   ConflictException,
@@ -379,6 +380,7 @@ export class CommerceCatalogService {
             where drama.id = ${targetId}
               and drama.status = 'published'
               and drama.deleted_at is null
+          and drama.emergency_takedown_at is null
               and (
                 (drama.owner_type = 'tenant' and drama.owner_tenant_id = ${tenantId})
                 or (drama.owner_type = 'platform' and app.tenant_has_drama_license(drama.id))
@@ -393,6 +395,7 @@ export class CommerceCatalogService {
               and episode.deleted_at is null
               and drama.status = 'published'
               and drama.deleted_at is null
+          and drama.emergency_takedown_at is null
               and (
                 (drama.owner_type = 'tenant' and drama.owner_tenant_id = ${tenantId})
                 or (drama.owner_type = 'platform' and app.tenant_has_drama_license(drama.id))
@@ -674,11 +677,12 @@ export class CommerceCatalogService {
           where drama.id = ${targetId}
             and drama.status = 'published'
             and drama.deleted_at is null
+          and drama.emergency_takedown_at is null
             and (
               (drama.owner_type = 'tenant' and drama.owner_tenant_id = ${tenantId})
               or (drama.owner_type = 'platform' and app.tenant_has_drama_license(drama.id))
             )
-          for share of drama
+          and app.lock_customer_row('dramas', drama.id, to_jsonb(drama.*))
         `
       : await transaction<Array<{ drama_id: string; owner_type: 'platform' | 'tenant' }>>`
           select drama.id as drama_id, drama.owner_type
@@ -689,29 +693,18 @@ export class CommerceCatalogService {
             and episode.deleted_at is null
             and drama.status = 'published'
             and drama.deleted_at is null
+          and drama.emergency_takedown_at is null
             and (
               (drama.owner_type = 'tenant' and drama.owner_tenant_id = ${tenantId})
               or (drama.owner_type = 'platform' and app.tenant_has_drama_license(drama.id))
             )
-          for share of episode, drama
+          and app.lock_customer_row('episodes', episode.id, to_jsonb(episode.*))
+          and app.lock_customer_row('dramas', drama.id, to_jsonb(drama.*))
         `;
     const target = targets[0];
     if (!target) throw new BadRequestException('Content is not published or licensed');
     if (target.owner_type === 'platform') {
-      const licenses = await transaction<{ id: string }[]>`
-        select license.id
-        from content_licenses as license
-        inner join content_license_items as item
-          on item.license_id = license.id and item.tenant_id = license.tenant_id
-        where license.tenant_id = ${tenantId}
-          and item.drama_id = ${target.drama_id}
-          and license.status in ('scheduled', 'active')
-          and license.starts_at <= transaction_timestamp()
-          and license.expires_at > transaction_timestamp()
-        order by license.id limit 1
-        for share of license, item
-      `;
-      if (!licenses[0]) throw new BadRequestException('Content is not published or licensed');
+      await lockPublicDistribution(transaction, tenantId, target.drama_id, ['approved', 'published', 'unpublished']);
     }
   }
 

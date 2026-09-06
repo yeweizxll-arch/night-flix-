@@ -1,6 +1,10 @@
 import { Module } from '@nestjs/common';
+import { NativeReceiptVerifier } from './native-receipt-verifier';
+import { NativeStoreService } from './native-store.service';
+import { CustomerNativeStoreController, NativeStoreWebhookController, TenantNativeStoreController } from './native-store.controller';
 
 import { CustomerAuthModule } from '../customer-auth/customer-auth.module';
+import { AuthenticationModule } from '../auth/authentication.module';
 import { ReferralModule } from '../referrals/referral.module';
 import { CommerceCatalogService } from './commerce-catalog.service';
 import {
@@ -27,8 +31,9 @@ import {
 } from './payment.controller';
 
 @Module({
-  imports: [CustomerAuthModule, ReferralModule],
+  imports: [CustomerAuthModule, ReferralModule, AuthenticationModule],
   controllers: [
+    CustomerNativeStoreController, NativeStoreWebhookController, TenantNativeStoreController,
     TenantCommerceCatalogController,
     TenantCommerceOrderController,
     CustomerCommerceController,
@@ -41,6 +46,7 @@ import {
     PlatformRefundController,
   ],
   providers: [
+    NativeReceiptVerifier, NativeStoreService,
     CommerceCatalogService,
     CommerceOrderService,
     FakePaymentAdapter,

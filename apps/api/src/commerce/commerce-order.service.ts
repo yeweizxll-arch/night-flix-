@@ -1,3 +1,4 @@
+import { lockPublicDistribution } from '../public-drama-pool/public-distribution';
 import {
   BadRequestException,
   ConflictException,
@@ -455,6 +456,8 @@ export class CommerceOrderService {
     input: ReturnType<typeof validateOrderInput>,
   ): Promise<CommerceQuote> {
     let product: ProductRow | undefined;
+    const region = await transaction<{ allowed: boolean }[]>`select app.customer_region_allowed(${tenantId}::uuid, null::uuid) as allowed`;
+    if (!region[0]?.allowed) throw new NotFoundException('Purchases are unavailable in this region');
     if (input.productType === 'membership') {
       const products = await transaction<ProductRow[]>`
         select
@@ -538,11 +541,13 @@ export class CommerceOrderService {
         where drama.id = ${input.productId}
           and drama.status = 'published'
           and drama.deleted_at is null
+          and drama.emergency_takedown_at is null
+          and app.customer_region_allowed(${tenantId}, drama.id)
           and (
             (drama.owner_type = 'tenant' and drama.owner_tenant_id = ${tenantId})
             or (drama.owner_type = 'platform' and app.tenant_has_drama_license(drama.id))
           )
-        for share of drama
+        and app.lock_customer_row('dramas', drama.id, to_jsonb(drama.*))
       `;
       product = products[0];
       if (product) {
@@ -579,7 +584,7 @@ export class CommerceOrderService {
         where episode.id = ${input.productId}
           and episode.status = 'published'
           and episode.deleted_at is null
-        for share of episode
+        and app.lock_customer_row('episodes', episode.id, to_jsonb(episode.*))
       `;
       product = products[0];
       if (product?.drama_id) {
@@ -589,11 +594,13 @@ export class CommerceOrderService {
           where drama.id = ${product.drama_id}
             and drama.status = 'published'
             and drama.deleted_at is null
+          and drama.emergency_takedown_at is null
+          and app.customer_region_allowed(${tenantId}, drama.id)
             and (
               (drama.owner_type = 'tenant' and drama.owner_tenant_id = ${tenantId})
               or (drama.owner_type = 'platform' and app.tenant_has_drama_license(drama.id))
             )
-          for share of drama
+          and app.lock_customer_row('dramas', drama.id, to_jsonb(drama.*))
         `;
         const drama = dramas[0];
         if (!drama) product = undefined;
@@ -686,37 +693,8 @@ export class CommerceOrderService {
     tenantId: string,
     dramaId: string,
   ): Promise<void> {
-    const licenses = await transaction<Array<{ id: string }>>`
-      select license.id
-      from content_licenses as license
-      where license.tenant_id = ${tenantId}
-        and license.status in ('scheduled', 'active')
-        and license.starts_at <= statement_timestamp()
-        and license.expires_at > statement_timestamp()
-        and exists (
-          select 1
-          from content_license_items as item
-          where item.tenant_id = license.tenant_id
-            and item.license_id = license.id
-            and item.drama_id = ${dramaId}
-        )
-      order by license.id
-      limit 1
-      for share of license
-    `;
-    const license = licenses[0];
-    if (!license) throw new NotFoundException('Purchasable product or price not found');
-    const items = await transaction<Array<{ id: string }>>`
-      select item.id
-      from content_license_items as item
-      where item.tenant_id = ${tenantId}
-        and item.license_id = ${license.id}
-        and item.drama_id = ${dramaId}
-      for share of item
-    `;
-    if (!items[0]) throw new NotFoundException('Purchasable product or price not found');
+    await lockPublicDistribution(transaction, tenantId, dramaId);
   }
-
   private async beginCommand(
     transaction: DatabaseTransaction,
     principal: CommerceCustomerPrincipal,

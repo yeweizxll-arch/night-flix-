@@ -1,14 +1,8 @@
+import { SUPPORTED_APP_LOCALES } from '@drama/contracts';
 import type { CustomerPrincipal } from '../customer-auth/customer-auth.types';
 
 export const COMMERCE_CURRENCIES = ['CNY', 'USD', 'EUR', 'JPY', 'KRW'] as const;
-export const COMMERCE_LOCALES = [
-  'zh-CN',
-  'zh-TW',
-  'en-US',
-  'fr-FR',
-  'ja-JP',
-  'ko-KR',
-] as const;
+export const COMMERCE_LOCALES = SUPPORTED_APP_LOCALES;
 
 export type CommerceCurrency = (typeof COMMERCE_CURRENCIES)[number];
 export type CommerceLocale = (typeof COMMERCE_LOCALES)[number];

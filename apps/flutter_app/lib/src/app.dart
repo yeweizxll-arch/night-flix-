@@ -2,18 +2,22 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
-import 'package:google_mobile_ads/google_mobile_ads.dart';
-import 'package:in_app_purchase/in_app_purchase.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:video_player/video_player.dart';
 
 import 'drama_repository.dart';
 import 'app_strings.dart';
+import 'app_errors.dart';
 import 'models.dart';
+import 'account_sheet.dart';
+import 'native_purchases.dart';
+import 'mobile_links.dart';
+import 'tenant_ads.dart';
 
 const _ink = Color(0xff080911);
 const _purple = Color(0xff7558ff);
 const _pink = Color(0xffff4d8d);
+final _playerRouteObserver = RouteObserver<ModalRoute<void>>();
 
 Color _themeColor(dynamic value, Color fallback) {
   if (value is! String || !RegExp(r'^#[0-9a-fA-F]{6}$').hasMatch(value)) {
@@ -41,6 +45,7 @@ class DramaApp extends StatelessWidget {
     );
     final accent = _themeColor(controller.config.theme['accentColor'], _pink);
     return MaterialApp(
+      navigatorObservers: [_playerRouteObserver],
       title: controller.config.siteName,
       debugShowCheckedModeBanner: false,
       locale: localeFromTag(controller.locale),
@@ -97,57 +102,109 @@ class AppShell extends StatefulWidget {
 
 class _AppShellState extends State<AppShell> {
   int index = 0;
+  late final NativePurchases purchases;
+  late final MobileLinks links;
+  int _linkRevision = 0;
+  @override
+  void initState() {
+    super.initState();
+    purchases = NativePurchases(widget.controller);
+    adsFor(widget.controller).mayShowOpen = () =>
+        mounted &&
+        index == 0 &&
+        !purchases.busy &&
+        ModalRoute.of(context)?.isCurrent == true;
+    links = MobileLinks(
+      widget.controller,
+      (id) => unawaited(_openLinkedDrama(id)),
+    );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(links.start());
+      if (mounted) unawaited(adsFor(widget.controller).start());
+    });
+  }
+
+  @override
+  void dispose() {
+    purchases.dispose();
+    links.dispose();
+    adsFor(widget.controller).dispose();
+    super.dispose();
+  }
+
+  Future<void> _openLinkedDrama(String id) async {
+    final revision = ++_linkRevision;
+    try {
+      final drama = await widget.controller.repository.detail(
+        Drama.fromJson({'id': id}),
+        widget.controller.locale,
+      );
+      if (!mounted || revision != _linkRevision) return;
+      await _openDrama(context, widget.controller, drama);
+    } catch (_) {
+      if (mounted && revision == _linkRevision) {
+        _message(
+          context,
+          context.tr('contentUnavailable', 'This content is unavailable.'),
+        );
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final pages = [
-      FeedScreen(controller: widget.controller),
+      FeedScreen(controller: widget.controller, active: index == 0),
       TheaterScreen(controller: widget.controller),
       RewardsScreen(controller: widget.controller),
       LibraryScreen(controller: widget.controller),
       ProfileScreen(controller: widget.controller),
     ];
-    return Scaffold(
-      extendBody: index == 0,
-      body: IndexedStack(index: index, children: pages),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: index,
-        onDestinationSelected: (value) => setState(() => index = value),
-        destinations: [
-          NavigationDestination(
-            icon: const Icon(Icons.smart_display_outlined),
-            selectedIcon: const Icon(Icons.smart_display),
-            label: context.tr('forYou', 'For You'),
-          ),
-          NavigationDestination(
-            icon: const Icon(Icons.local_movies_outlined),
-            selectedIcon: const Icon(Icons.local_movies),
-            label: context.tr('drama', 'Drama'),
-          ),
-          NavigationDestination(
-            icon: const Icon(Icons.card_giftcard_outlined),
-            selectedIcon: const Icon(Icons.card_giftcard),
-            label: context.tr('rewards', 'Rewards'),
-          ),
-          NavigationDestination(
-            icon: const Icon(Icons.bookmark_border),
-            selectedIcon: const Icon(Icons.bookmark),
-            label: context.tr('library', 'Library'),
-          ),
-          NavigationDestination(
-            icon: const Icon(Icons.person_outline),
-            selectedIcon: const Icon(Icons.person),
-            label: context.tr('me', 'Me'),
-          ),
-        ],
+    return NativePurchaseScope(
+      purchases: purchases,
+      child: Scaffold(
+        extendBody: index == 0,
+        body: IndexedStack(index: index, children: pages),
+        bottomNavigationBar: NavigationBar(
+          selectedIndex: index,
+          onDestinationSelected: (value) => setState(() => index = value),
+          destinations: [
+            NavigationDestination(
+              icon: const Icon(Icons.smart_display_outlined),
+              selectedIcon: const Icon(Icons.smart_display),
+              label: context.tr('forYou', 'For You'),
+            ),
+            NavigationDestination(
+              icon: const Icon(Icons.local_movies_outlined),
+              selectedIcon: const Icon(Icons.local_movies),
+              label: context.tr('drama', 'Drama'),
+            ),
+            NavigationDestination(
+              icon: const Icon(Icons.card_giftcard_outlined),
+              selectedIcon: const Icon(Icons.card_giftcard),
+              label: context.tr('rewards', 'Rewards'),
+            ),
+            NavigationDestination(
+              icon: const Icon(Icons.bookmark_border),
+              selectedIcon: const Icon(Icons.bookmark),
+              label: context.tr('library', 'Library'),
+            ),
+            NavigationDestination(
+              icon: const Icon(Icons.person_outline),
+              selectedIcon: const Icon(Icons.person),
+              label: context.tr('me', 'Me'),
+            ),
+          ],
+        ),
       ),
     );
   }
 }
 
 class FeedScreen extends StatefulWidget {
-  const FeedScreen({super.key, required this.controller});
+  const FeedScreen({super.key, required this.controller, this.active = true});
   final AppController controller;
+  final bool active;
   @override
   State<FeedScreen> createState() => _FeedScreenState();
 }
@@ -256,7 +313,7 @@ class _FeedScreenState extends State<FeedScreen> {
       },
       itemBuilder: (context, index) => DramaPage(
         key: ValueKey(dramas[index].id),
-        active: activeIndex == index,
+        active: widget.active && activeIndex == index,
         controller: widget.controller,
         drama: dramas[index],
         followingFeed: followingFeed,
@@ -274,17 +331,20 @@ class DramaPage extends StatefulWidget {
     required this.drama,
     required this.followingFeed,
     required this.onFeedChanged,
+    this.showFeedTabs = true,
   });
   final bool active;
   final AppController controller;
   final Drama drama;
   final bool followingFeed;
   final ValueChanged<bool> onFeedChanged;
+  final bool showFeedTabs;
   @override
   State<DramaPage> createState() => _DramaPageState();
 }
 
-class _DramaPageState extends State<DramaPage> {
+class _DramaPageState extends State<DramaPage>
+    with WidgetsBindingObserver, RouteAware {
   Drama? detail;
   Episode? episode;
   VideoPlayerController? video;
@@ -303,18 +363,122 @@ class _DramaPageState extends State<DramaPage> {
   String captionText = '';
   bool syncingDubbing = false;
   DateTime lastDubbingSync = DateTime.fromMillisecondsSinceEpoch(0);
+  int _playRevision = 0;
+  bool _foreground = true;
+  bool _routeVisible = true;
+  String? _accountKey;
+  DateTime? _preloadedAt;
+  Timer? _playbackRefresh;
+  Episode? _playingEpisode;
+  String? _playingScope;
+  DateTime _lastProgressSave = DateTime.fromMillisecondsSinceEpoch(0);
+  bool _pausedByAd = false;
+  bool _rewardLoading = false;
+  bool _wasAdBusy = false;
+
+  void _adsChanged() {
+    final busy = adsFor(widget.controller).busy;
+    if (busy == _wasAdBusy) return;
+    _wasAdBusy = busy;
+    if (busy) {
+      _pausedByAd =
+          video?.value.isPlaying == true &&
+          video?.value.isCompleted != true &&
+          !completedHandled;
+      unawaited(_pausePlayers());
+    } else if (_canPlay && (_pausedByAd || video == null)) {
+      _pausedByAd = false;
+      unawaited(_play(resumeAt: video?.value.position));
+    }
+  }
+
+  Future<void> _saveVideoProgress({bool completed = false}) async {
+    final player = video;
+    final selected = _playingEpisode;
+    if (player == null ||
+        selected == null ||
+        !player.value.isInitialized ||
+        _playingScope != widget.controller.accountScope) {
+      return;
+    }
+    final seconds = player.value.position.inSeconds.clamp(
+      0,
+      selected.preview ? selected.previewSeconds : selected.durationSeconds,
+    );
+    await widget.controller.recordProgress(
+      PlaybackProgress(
+        dramaId: (detail ?? widget.drama).id,
+        episodeId: selected.id,
+        positionSeconds: seconds,
+        completed: !selected.preview && (completed || player.value.isCompleted),
+        updatedAt: DateTime.now(),
+      ),
+    );
+  }
+
+  bool get _canPlay =>
+      mounted &&
+      widget.active &&
+      _foreground &&
+      _routeVisible &&
+      !adsFor(widget.controller).busy;
+
+  Future<void> _pausePlayers() async {
+    _playbackRefresh?.cancel();
+    ++_playRevision;
+    if (mounted && switching) setState(() => switching = false);
+    unawaited(_saveVideoProgress());
+    await Future.wait([
+      if (video != null) video!.pause(),
+      if (dubbingAudio != null) dubbingAudio!.pause(),
+    ]);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route != null) _playerRouteObserver.subscribe(this, route);
+  }
+
+  @override
+  void didPushNext() {
+    _routeVisible = false;
+    unawaited(_pausePlayers());
+  }
+
+  @override
+  void didPopNext() {
+    _routeVisible = true;
+    if (_canPlay) unawaited(_play());
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _foreground = state == AppLifecycleState.resumed;
+    if (_canPlay) {
+      unawaited(_play());
+    } else {
+      unawaited(_pausePlayers());
+    }
+  }
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    adsFor(widget.controller).addListener(_adsChanged);
+    _accountKey = widget.controller.session?.accountId;
     _load();
   }
 
   @override
   void didUpdateWidget(covariant DramaPage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.active && !oldWidget.active) _play();
-    if (!widget.active && oldWidget.active) video?.pause();
+    final accountChanged = _accountKey != widget.controller.session?.accountId;
+    _accountKey = widget.controller.session?.accountId;
+    if (!widget.active || accountChanged) unawaited(_pausePlayers());
+    if (_canPlay && (!oldWidget.active || accountChanged)) unawaited(_play());
   }
 
   Future<void> _load() async {
@@ -323,7 +487,16 @@ class _DramaPageState extends State<DramaPage> {
       final loaded = await widget.controller.loadDetail(widget.drama);
       if (!mounted) return;
       detail = loaded;
-      episode = loaded.episodes.firstOrNull;
+      final saved = widget.controller.progress[loaded.id];
+      episode =
+          loaded.episodes.where((e) => e.id == saved?.episodeId).firstOrNull ??
+          loaded.episodes.firstOrNull;
+      if (saved?.completed == true) {
+        final index = loaded.episodes.indexWhere(
+          (e) => e.id == saved!.episodeId,
+        );
+        episode = loaded.episodes.elementAtOrNull(index + 1) ?? episode;
+      }
       if (widget.controller.session != null) {
         try {
           summary = await widget.controller.loadInteractions(loaded.id);
@@ -331,7 +504,7 @@ class _DramaPageState extends State<DramaPage> {
           // Playback remains available if engagement counters fail to load.
         }
       }
-      if (widget.active) await _play();
+      if (_canPlay) await _play();
     } catch (_) {
       // Catalog copy remains useful when a detail request temporarily fails.
     } finally {
@@ -341,12 +514,29 @@ class _DramaPageState extends State<DramaPage> {
 
   Future<void> _play({Duration? resumeAt}) async {
     final selected = episode;
-    if (selected == null ||
-        (widget.controller.session == null &&
-            !widget.controller.repository.demoMode)) {
-      return;
-    }
-    if (mounted) {
+    if (selected == null || !_canPlay) return;
+    _playbackRefresh?.cancel();
+    final revision = ++_playRevision;
+    bool current() =>
+        _canPlay && revision == _playRevision && episode?.id == selected.id;
+    final previous = video;
+    final previousAudio = dubbingAudio;
+    unawaited(_saveVideoProgress());
+    final saved = widget.controller.progress[(detail ?? widget.drama).id];
+    final position =
+        resumeAt ??
+        (previous?.value.isInitialized == true &&
+                _playingEpisode?.id == selected.id
+            ? previous!.value.position
+            : saved?.episodeId == selected.id && saved?.completed != true
+            ? Duration(seconds: saved!.positionSeconds)
+            : Duration.zero);
+    video = null;
+    dubbingAudio = null;
+    previous?.removeListener(_videoListener);
+    await previous?.pause();
+    await previousAudio?.pause();
+    if (current()) {
       setState(() {
         switching = true;
         playbackError = null;
@@ -354,10 +544,16 @@ class _DramaPageState extends State<DramaPage> {
         completedHandled = false;
       });
     }
+    VideoPlayerController? next;
+    VideoPlayerController? audio;
     try {
+      await previous?.dispose();
+      await previousAudio?.dispose();
+      if (!current()) return;
       final playable = await widget.controller.loadPlayback(selected);
-      if (!mounted || playable.playbackUrl == null) return;
-      episode = playable;
+      if (!current()) return;
+      setState(() => episode = playable);
+      if (playable.playbackUrl == null) return;
       subtitleTrack = _availableTrack(playable, subtitleTrack, 'subtitle');
       dubbingTrack = _availableTrack(playable, dubbingTrack, 'dubbing');
       Future<ClosedCaptionFile>? captions;
@@ -367,72 +563,121 @@ class _DramaPageState extends State<DramaPage> {
             playable,
             subtitleTrack!,
           );
-          captions = widget.controller.repository
-              .downloadTrackText(signed.url)
-              .then<ClosedCaptionFile>(WebVTTCaptionFile.new);
-        } catch (cause) {
+          final text = await widget.controller.repository.downloadTrackText(
+            signed.url,
+          );
+          captions = Future.value(WebVTTCaptionFile(text));
+        } catch (_) {
           subtitleTrack = null;
-          if (mounted) _message(context, 'Subtitle unavailable: $cause');
         }
       }
-      await video?.dispose();
-      await dubbingAudio?.dispose();
-      dubbingAudio = null;
+      if (!current()) return;
       final usePreloaded =
           subtitleTrack == null &&
           preloadedEpisodeId == playable.id &&
-          preloadedVideo != null;
-      if (!usePreloaded && preloadedEpisodeId == playable.id) {
-        await preloadedVideo?.dispose();
-      }
-      final next = usePreloaded
-          ? preloadedVideo!
-          : _videoController(playable.playbackUrl!, captions: captions);
-      if (preloadedEpisodeId == playable.id) {
+          preloadedVideo != null &&
+          _preloadedAt != null &&
+          DateTime.now().difference(_preloadedAt!) <
+              const Duration(seconds: 90);
+      if (usePreloaded) {
+        next = preloadedVideo;
         preloadedVideo = null;
         preloadedEpisodeId = null;
+      } else {
+        next = _videoController(playable.playbackUrl!, captions: captions);
       }
-      video = next;
-      if (!next.value.isInitialized) await next.initialize();
+      if (!next!.value.isInitialized) {
+        await next.initialize().timeout(const Duration(seconds: 20));
+      }
+      if (!current()) return;
       await next.setLooping(false);
       await next.setPlaybackSpeed(speed);
-      if (resumeAt != null) await next.seekTo(resumeAt);
-      next.addListener(_videoListener);
+      if (position > Duration.zero &&
+          position < next.value.duration &&
+          !playable.preview) {
+        await next.seekTo(position);
+      }
       if (dubbingTrack != null) {
         try {
           final signed = await widget.controller.loadPlaybackTrack(
             playable,
             dubbingTrack!,
           );
-          final audio = VideoPlayerController.networkUrl(Uri.parse(signed.url));
-          await audio.initialize();
+          if (!current()) return;
+          audio = VideoPlayerController.networkUrl(Uri.parse(signed.url));
+          await audio.initialize().timeout(const Duration(seconds: 20));
           await audio.setLooping(false);
           await audio.setPlaybackSpeed(speed);
           await audio.seekTo(next.value.position);
           await next.setVolume(0);
-          dubbingAudio = audio;
-        } catch (cause) {
+        } catch (_) {
+          await audio?.dispose();
+          audio = null;
           dubbingTrack = null;
           await next.setVolume(1);
-          if (mounted) _message(context, 'Dubbing unavailable: $cause');
         }
       } else {
         await next.setVolume(1);
       }
+      if (!current()) return;
+      video = next;
+      dubbingAudio = audio;
+      _playingEpisode = playable;
+      _playingScope = widget.controller.accountScope;
+      next.addListener(_videoListener);
       await next.play();
-      await dubbingAudio?.play();
+      if (!current()) {
+        await next.pause();
+        await audio?.pause();
+        return;
+      }
+      await audio?.play();
+      if (!current()) {
+        await next.pause();
+        await audio?.pause();
+        return;
+      }
+      unawaited(widget.controller.markWatched((detail ?? widget.drama).id));
       unawaited(_preloadNext());
+      final expires = playable.playbackExpiresAt;
+      if (expires != null) {
+        final delay =
+            expires.difference(DateTime.now()) - const Duration(seconds: 20);
+        _playbackRefresh = Timer(
+          delay > Duration.zero ? delay : const Duration(seconds: 1),
+          () {
+            if (current() && video?.value.isPlaying == true) {
+              unawaited(_play(resumeAt: video?.value.position));
+            }
+          },
+        );
+      }
       if (mounted) setState(() {});
     } catch (cause) {
-      if (mounted) setState(() => playbackError = cause.toString());
+      if (current()) {
+        if (cause is ApiException &&
+            cause.statusCode == 403 &&
+            (cause.data['access'] == 'locked' ||
+                (detail ?? widget.drama).pointsAmount != null)) {
+          setState(() => episode = selected.withPlayback({'access': 'locked'}));
+        } else {
+          setState(() => playbackError = friendlyError(context, cause));
+        }
+      }
     } finally {
-      if (mounted) setState(() => switching = false);
+      if (next != null && !identical(video, next)) await next.dispose();
+      if (audio != null && !identical(dubbingAudio, audio)) {
+        await audio.dispose();
+      }
+      if (mounted && revision == _playRevision) {
+        setState(() => switching = false);
+      }
     }
   }
 
   void _videoListener() {
     final current = video;
-    if (current == null || !current.value.isInitialized) {
+    if (current == null || !current.value.isInitialized || !_canPlay) {
       return;
     }
     final nextCaption = current.value.caption.text;
@@ -440,6 +685,11 @@ class _DramaPageState extends State<DramaPage> {
       setState(() => captionText = nextCaption);
     }
     _syncDubbing(current);
+    if (DateTime.now().difference(_lastProgressSave) >=
+        const Duration(seconds: 10)) {
+      _lastProgressSave = DateTime.now();
+      unawaited(_saveVideoProgress());
+    }
     if (completedHandled) return;
     final duration = current.value.duration;
     if (duration <= Duration.zero ||
@@ -447,6 +697,7 @@ class _DramaPageState extends State<DramaPage> {
       return;
     }
     completedHandled = true;
+    unawaited(_saveVideoProgress(completed: true));
     if (episode?.preview == true) {
       if (mounted) setState(() => previewEnded = true);
     } else {
@@ -456,7 +707,12 @@ class _DramaPageState extends State<DramaPage> {
 
   void _syncDubbing(VideoPlayerController current) {
     final audio = dubbingAudio;
-    if (audio == null || syncingDubbing || !audio.value.isInitialized) return;
+    if (audio == null ||
+        syncingDubbing ||
+        !audio.value.isInitialized ||
+        !_canPlay) {
+      return;
+    }
     final now = DateTime.now();
     if (now.difference(lastDubbingSync) < const Duration(milliseconds: 750)) {
       return;
@@ -465,25 +721,25 @@ class _DramaPageState extends State<DramaPage> {
     final drift = (audio.value.position - current.value.position).abs();
     syncingDubbing = true;
     Future<void>(() async {
+      if (!_canPlay || audio != dubbingAudio || current != video) return;
       if (drift > const Duration(milliseconds: 300)) {
         await audio.seekTo(current.value.position);
       }
+      if (!_canPlay || audio != dubbingAudio || current != video) return;
       if (current.value.isPlaying && !audio.value.isPlaying) {
         await audio.play();
       }
-      if (!current.value.isPlaying && audio.value.isPlaying) {
+      if ((!_canPlay || !current.value.isPlaying) && audio.value.isPlaying) {
         await audio.pause();
       }
-    }).whenComplete(() => syncingDubbing = false);
+    }).catchError((Object _) {}).whenComplete(() => syncingDubbing = false);
   }
 
   Future<void> _preloadNext() async {
+    final revision = _playRevision;
     final drama = detail;
     final selected = episode;
-    if (drama == null ||
-        selected == null ||
-        (widget.controller.session == null &&
-            !widget.controller.repository.demoMode)) {
+    if (drama == null || selected == null || !_canPlay) {
       return;
     }
     final index = drama.episodes.indexWhere((item) => item.id == selected.id);
@@ -492,19 +748,29 @@ class _DramaPageState extends State<DramaPage> {
     preloadedVideo = null;
     preloadedEpisodeId = null;
     if (nextEpisode == null) return;
+    VideoPlayerController? pending;
     try {
       final playable = await widget.controller.loadPlayback(nextEpisode);
-      if (!mounted || playable.playbackUrl == null) return;
-      final controller = _videoController(playable.playbackUrl!);
-      await controller.initialize();
-      if (!mounted || episode?.id != selected.id) {
-        await controller.dispose();
+      if (!_canPlay ||
+          revision != _playRevision ||
+          playable.playbackUrl == null) {
+        return;
+      }
+      final controller = pending = _videoController(playable.playbackUrl!);
+      await controller.initialize().timeout(const Duration(seconds: 20));
+      if (!_canPlay ||
+          revision != _playRevision ||
+          episode?.id != selected.id) {
         return;
       }
       preloadedVideo = controller;
       preloadedEpisodeId = playable.id;
+      _preloadedAt = DateTime.now();
+      pending = null;
     } catch (_) {
       // A locked or temporarily unavailable next episode should not interrupt playback.
+    } finally {
+      await pending?.dispose();
     }
   }
 
@@ -528,10 +794,23 @@ class _DramaPageState extends State<DramaPage> {
   Future<void> _advanceEpisode() async {
     final drama = detail;
     final selected = episode;
-    if (drama == null || selected == null) return;
+    if (drama == null || selected == null || !_canPlay) return;
     final index = drama.episodes.indexWhere((item) => item.id == selected.id);
     final next = drama.episodes.elementAtOrNull(index + 1);
     if (next == null) return;
+    final scope = widget.controller.accountScope;
+    await adsFor(widget.controller).betweenEpisodes(
+      () =>
+          _canPlay &&
+          episode?.id == selected.id &&
+          scope == widget.controller.accountScope,
+      content: {'dramaId': drama.id, 'episodeId': selected.id},
+    );
+    if (!_canPlay ||
+        episode?.id != selected.id ||
+        scope != widget.controller.accountScope) {
+      return;
+    }
     episode = next;
     subtitleTrack = null;
     dubbingTrack = null;
@@ -540,6 +819,12 @@ class _DramaPageState extends State<DramaPage> {
 
   @override
   void dispose() {
+    ++_playRevision;
+    _playbackRefresh?.cancel();
+    unawaited(_saveVideoProgress());
+    _playerRouteObserver.unsubscribe(this);
+    WidgetsBinding.instance.removeObserver(this);
+    adsFor(widget.controller).removeListener(_adsChanged);
     video?.dispose();
     preloadedVideo?.dispose();
     dubbingAudio?.dispose();
@@ -597,27 +882,28 @@ class _DramaPageState extends State<DramaPage> {
             padding: const EdgeInsets.fromLTRB(18, 8, 12, 90),
             child: Column(
               children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    _feedTab(
-                      context.tr('following', 'Following'),
-                      widget.followingFeed,
-                      () => widget.onFeedChanged(true),
-                    ),
-                    const SizedBox(width: 22),
-                    _feedTab(
-                      context.tr('forYou', 'For You'),
-                      !widget.followingFeed,
-                      () => widget.onFeedChanged(false),
-                    ),
-                    const Spacer(),
-                    IconButton(
-                      icon: const Icon(Icons.search, size: 27),
-                      onPressed: () => _openSearch(context),
-                    ),
-                  ],
-                ),
+                if (widget.showFeedTabs)
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      _feedTab(
+                        context.tr('following', 'Following'),
+                        widget.followingFeed,
+                        () => widget.onFeedChanged(true),
+                      ),
+                      const SizedBox(width: 22),
+                      _feedTab(
+                        context.tr('forYou', 'For You'),
+                        !widget.followingFeed,
+                        () => widget.onFeedChanged(false),
+                      ),
+                      const Spacer(),
+                      IconButton(
+                        icon: const Icon(Icons.search, size: 27),
+                        onPressed: () => _openSearch(context),
+                      ),
+                    ],
+                  ),
                 const Spacer(),
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.end,
@@ -699,7 +985,10 @@ class _DramaPageState extends State<DramaPage> {
                               await widget.controller.toggleLike(drama.id);
                             } catch (cause) {
                               if (context.mounted) {
-                                _message(context, cause.toString());
+                                _message(
+                                  context,
+                                  friendlyError(context, cause),
+                                );
                               }
                             }
                           },
@@ -720,7 +1009,10 @@ class _DramaPageState extends State<DramaPage> {
                               await widget.controller.toggleFavorite(drama.id);
                             } catch (cause) {
                               if (context.mounted) {
-                                _message(context, cause.toString());
+                                _message(
+                                  context,
+                                  friendlyError(context, cause),
+                                );
                               }
                             }
                           },
@@ -823,22 +1115,13 @@ class _DramaPageState extends State<DramaPage> {
                     );
                     await _play();
                   } catch (cause) {
-                    if (context.mounted) _message(context, cause.toString());
+                    if (context.mounted) {
+                      _message(context, friendlyError(context, cause));
+                    }
                   }
                 }
               },
               watchAd: () => _watchAdUnlock(context),
-            ),
-          ),
-        if (widget.controller.session == null &&
-            !widget.controller.repository.demoMode)
-          Center(
-            child: FilledButton.icon(
-              onPressed: () async {
-                if (await _showLogin(context, widget.controller)) _play();
-              },
-              icon: const Icon(Icons.play_arrow),
-              label: Text(context.tr('signInToWatch', 'Sign in to watch')),
             ),
           ),
       ],
@@ -852,7 +1135,18 @@ class _DramaPageState extends State<DramaPage> {
       await current.pause();
       await dubbingAudio?.pause();
     } else {
+      if (!_canPlay) return;
+      final expires = _playingEpisode?.playbackExpiresAt;
+      if (expires != null &&
+          expires.isBefore(DateTime.now().add(const Duration(seconds: 25)))) {
+        await _play(resumeAt: current.value.position);
+        return;
+      }
       await current.play();
+      if (!_canPlay || video != current) {
+        await current.pause();
+        return;
+      }
       await dubbingAudio?.play();
     }
   }
@@ -901,17 +1195,28 @@ class _DramaPageState extends State<DramaPage> {
     return _showLogin(
       context,
       widget.controller,
-      reason: context.isChinese ? '$action需要登录' : '$action requires an account',
+      reason: context.tr(
+        'accountHint',
+        'Your purchases, favorites and history stay with you.',
+      ),
     );
   }
 
   Future<void> _watchAdUnlock(BuildContext context) async {
+    if (_rewardLoading) return;
     final selected = episode;
     if (selected == null ||
         !await _requireLogin(context, context.tr('watchAd', 'Watch ad'))) {
       return;
     }
     if (!context.mounted) return;
+    final scope = widget.controller.accountScope;
+    bool current() =>
+        mounted &&
+        widget.active &&
+        episode?.id == selected.id &&
+        widget.controller.accountScope == scope;
+    _rewardLoading = true;
     try {
       final challenge = await widget.controller.createRewardedChallenge(
         selected.id,
@@ -925,50 +1230,44 @@ class _DramaPageState extends State<DramaPage> {
       if (challengeId == null || adUnitId == null) {
         throw const ApiException('Rewarded ad is unavailable', 409);
       }
-      RewardedAd.load(
-        adUnitId: adUnitId,
-        request: const AdRequest(),
-        rewardedAdLoadCallback: RewardedAdLoadCallback(
-          onAdLoaded: (ad) {
-            ad.setServerSideOptions(
-              ServerSideVerificationOptions(customData: challengeId),
-            );
-            ad.fullScreenContentCallback = FullScreenContentCallback(
-              onAdDismissedFullScreenContent: (ad) => ad.dispose(),
-              onAdFailedToShowFullScreenContent: (ad, error) {
-                ad.dispose();
-                if (mounted) {
-                  _message(this.context, 'The ad could not be shown');
-                }
-              },
-            );
-            ad.show(
-              onUserEarnedReward: (_, _) async {
-                if (mounted) {
-                  _message(this.context, 'Confirming episode unlock…');
-                }
-                final granted = await widget.controller.waitForReward(
-                  challengeId,
-                );
-                if (!mounted) return;
-                if (granted) {
-                  await _play();
-                } else {
-                  _message(
-                    this.context,
-                    'Reward confirmation is delayed. Try again shortly.',
-                  );
-                }
-              },
-            );
-          },
-          onAdFailedToLoad: (error) {
-            if (mounted) _message(this.context, 'Rewarded ad is unavailable');
-          },
-        ),
+      final earned = await adsFor(widget.controller).rewarded(
+        adUnitId,
+        challengeId,
+        () => current() && _canPlay,
+        content: {'dramaId': widget.drama.id, 'episodeId': selected.id},
       );
+      if (!mounted || !current()) return;
+      if (!earned) {
+        _message(
+          this.context,
+          this.context.tr(
+            'adUnavailable',
+            'Ad unavailable. Please try again later.',
+          ),
+        );
+        return;
+      }
+      _message(
+        this.context,
+        this.context.tr('confirmingUnlock', 'Confirming episode unlock…'),
+      );
+      final granted = await widget.controller.waitForReward(challengeId);
+      if (!mounted || !current()) return;
+      if (granted) {
+        await _play();
+      } else {
+        _message(
+          this.context,
+          this.context.tr(
+            'unlockDelayed',
+            'Unlock confirmation is delayed. Please try again shortly.',
+          ),
+        );
+      }
     } catch (cause) {
-      if (mounted) _message(this.context, cause.toString());
+      if (mounted) _message(this.context, friendlyError(this.context, cause));
+    } finally {
+      _rewardLoading = false;
     }
   }
 
@@ -979,7 +1278,7 @@ class _DramaPageState extends State<DramaPage> {
       comments = await widget.controller.comments(drama.id);
     } catch (cause) {
       input.dispose();
-      if (context.mounted) _message(context, cause.toString());
+      if (context.mounted) _message(context, friendlyError(context, cause));
       return;
     }
     if (!context.mounted) return;
@@ -1062,7 +1361,7 @@ class _DramaPageState extends State<DramaPage> {
                           );
                         } catch (cause) {
                           if (context.mounted) {
-                            _message(context, cause.toString());
+                            _message(context, friendlyError(context, cause));
                           }
                         }
                       },
@@ -1260,86 +1559,205 @@ class _TrackPickerState extends State<_TrackPicker> {
   }
 }
 
-class TheaterScreen extends StatelessWidget {
-  const TheaterScreen({super.key, required this.controller});
-  final AppController controller;
-
-  @override
-  Widget build(BuildContext context) => SafeArea(
-    child: CustomScrollView(
-      slivers: [
-        SliverAppBar.large(
-          title: Text(context.tr('dramaTheater', 'Drama Theater')),
-          backgroundColor: _ink,
-        ),
-        SliverToBoxAdapter(
-          child: SizedBox(
-            height: 48,
-            child: ListView(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              scrollDirection: Axis.horizontal,
-              children:
-                  [
-                        ('trending', 'Trending'),
-                        ('romance', 'Romance'),
-                        ('revenge', 'Revenge'),
-                        ('billionaire', 'Billionaire'),
-                        ('fantasy', 'Fantasy'),
-                      ]
-                      .map(
-                        (item) => Padding(
-                          padding: const EdgeInsets.only(right: 8),
-                          child: FilterChip(
-                            label: Text(context.tr(item.$1, item.$2)),
-                            selected: item.$1 == 'trending',
-                            onSelected: (_) {},
-                          ),
-                        ),
-                      )
-                      .toList(),
+Future<void> _openDrama(
+  BuildContext context,
+  AppController controller,
+  Drama drama,
+) async {
+  await Navigator.of(context).push<void>(
+    MaterialPageRoute(
+      builder: (context) => Scaffold(
+        body: Stack(
+          children: [
+            DramaPage(
+              active: true,
+              controller: controller,
+              drama: drama,
+              followingFeed: false,
+              onFeedChanged: (_) {},
+              showFeedTabs: false,
             ),
-          ),
-        ),
-        SliverPadding(
-          padding: const EdgeInsets.all(16),
-          sliver: SliverGrid.builder(
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 2,
-              childAspectRatio: .62,
-              crossAxisSpacing: 12,
-              mainAxisSpacing: 18,
+            Positioned(
+              top: MediaQuery.paddingOf(context).top + 8,
+              left: 8,
+              child: const BackButton(),
             ),
-            itemCount: controller.dramas.length,
-            itemBuilder: (context, index) {
-              final drama = controller.dramas[index];
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(16),
-                      child: _CoverImage(controller: controller, drama: drama),
-                    ),
-                  ),
-                  const SizedBox(height: 9),
-                  Text(
-                    drama.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                  Text(
-                    '${drama.totalEpisodes} ${context.tr('episodeCount', 'episodes')}',
-                    style: const TextStyle(color: Colors.white54, fontSize: 12),
-                  ),
-                ],
-              );
-            },
-          ),
+          ],
         ),
-      ],
+      ),
     ),
   );
+}
+
+class TheaterScreen extends StatefulWidget {
+  const TheaterScreen({super.key, required this.controller});
+  final AppController controller;
+  @override
+  State<TheaterScreen> createState() => _TheaterScreenState();
+}
+
+class _TheaterScreenState extends State<TheaterScreen> {
+  String selected = 'trending';
+  Map<String, String> genres = {};
+  List<Drama>? filtered;
+  bool busy = false;
+  String? error;
+  int revision = 0;
+  String? locale;
+  AppController get controller => widget.controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCategories();
+  }
+
+  @override
+  void didUpdateWidget(covariant TheaterScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (locale != controller.locale) {
+      selected = 'trending';
+      filtered = null;
+      _loadCategories();
+    }
+  }
+
+  Future<void> _loadCategories() async {
+    final requestedLocale = locale = controller.locale;
+    try {
+      final loaded = await controller.repository.categories(requestedLocale);
+      if (mounted && locale == requestedLocale) setState(() => genres = loaded);
+    } catch (_) {
+      /* The trending catalog remains accessible when categories fail. */
+    }
+  }
+
+  Future<void> _select(String category) async {
+    final request = ++revision;
+    setState(() {
+      selected = category;
+      busy = true;
+      error = null;
+    });
+    try {
+      final result = category == 'trending'
+          ? null
+          : await controller.repository.categoryDramas(
+              category,
+              controller.locale,
+            );
+      if (mounted && request == revision) setState(() => filtered = result);
+    } catch (cause) {
+      if (mounted && request == revision) {
+        setState(() => error = friendlyError(context, cause));
+      }
+    } finally {
+      if (mounted && request == revision) setState(() => busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final items = filtered ?? controller.dramas;
+    return SafeArea(
+      child: CustomScrollView(
+        slivers: [
+          SliverAppBar.large(
+            title: Text(context.tr('dramaTheater', 'Drama Theater')),
+            backgroundColor: _ink,
+          ),
+          SliverToBoxAdapter(child: NativeAdPlacement(controller: controller)),
+          SliverToBoxAdapter(
+            child: SizedBox(
+              height: 48,
+              child: ListView(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                scrollDirection: Axis.horizontal,
+                children:
+                    {'trending': context.tr('trending', 'Trending'), ...genres}
+                        .entries
+                        .map(
+                          (item) => Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: FilterChip(
+                              label: Text(
+                                controller.repository.demoMode
+                                    ? context.tr(item.key, item.value)
+                                    : item.value,
+                              ),
+                              selected: item.key == selected,
+                              onSelected: (_) => _select(item.key),
+                            ),
+                          ),
+                        )
+                        .toList(),
+              ),
+            ),
+          ),
+          if (busy) const SliverToBoxAdapter(child: LinearProgressIndicator()),
+          if (error != null)
+            SliverToBoxAdapter(
+              child: TextButton(
+                onPressed: () => _select(selected),
+                child: Text(context.tr('tryAgain', 'Try again')),
+              ),
+            ),
+          if (items.isEmpty && !busy)
+            SliverFillRemaining(
+              child: Center(
+                child: Text(context.tr('noDramas', 'No dramas yet')),
+              ),
+            ),
+          SliverPadding(
+            padding: const EdgeInsets.all(16),
+            sliver: SliverGrid.builder(
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2,
+                childAspectRatio: .62,
+                crossAxisSpacing: 12,
+                mainAxisSpacing: 18,
+              ),
+              itemCount: items.length,
+              itemBuilder: (context, index) {
+                final drama = items[index];
+                return InkWell(
+                  onTap: () => _openDrama(context, controller, drama),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(16),
+                          child: _CoverImage(
+                            controller: controller,
+                            drama: drama,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 9),
+                      Text(
+                        drama.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                      Text(
+                        '${drama.totalEpisodes} ${context.tr('episodeCount', 'episodes')}',
+                        style: const TextStyle(
+                          color: Colors.white54,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class RewardsScreen extends StatefulWidget {
@@ -1424,13 +1842,15 @@ class LibraryScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final saved = controller.dramas
+    final all = {
+      for (final d in controller.dramas) d.id: d,
+      ...controller.libraryDramas,
+    };
+    final saved = all.values
         .where((drama) => controller.favorites.contains(drama.id))
         .toList();
     final watched = controller.history
-        .map(
-          (id) => controller.dramas.where((item) => item.id == id).firstOrNull,
-        )
+        .map((id) => all[id])
         .whereType<Drama>()
         .toList();
     return SafeArea(
@@ -1495,7 +1915,11 @@ class ProfileScreen extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    controller.session?.email ?? context.tr('guest', 'Guest'),
+                    controller.session == null
+                        ? context.tr('guest', 'Guest')
+                        : controller.session!.email.isNotEmpty
+                        ? controller.session!.email
+                        : context.tr('accountConnected', 'Account connected'),
                     style: const TextStyle(
                       fontSize: 22,
                       fontWeight: FontWeight.w800,
@@ -1550,6 +1974,25 @@ class ProfileScreen extends StatelessWidget {
           context.tr('settings', 'Settings'),
           context.tr('settingsHint', 'Playback, subtitles and privacy'),
         ),
+        ListenableBuilder(
+          listenable: adsFor(controller),
+          builder: (context, _) => adsFor(controller).privacyRequired
+              ? _profileTile(
+                  Icons.privacy_tip_outlined,
+                  context.tr('adPrivacy', 'Ad privacy choices'),
+                  '',
+                  onTap: () async {
+                    try {
+                      await adsFor(controller).privacyOptions();
+                    } catch (cause) {
+                      if (context.mounted) {
+                        _message(context, friendlyError(context, cause));
+                      }
+                    }
+                  },
+                )
+              : const SizedBox.shrink(),
+        ),
         _profileTile(
           Icons.help_outline,
           context.tr('help', 'Help & support'),
@@ -1559,7 +2002,15 @@ class ProfileScreen extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.only(top: 18),
             child: OutlinedButton(
-              onPressed: controller.logout,
+              onPressed: () async {
+                try {
+                  await controller.logout();
+                } catch (cause) {
+                  if (context.mounted) {
+                    _message(context, friendlyError(context, cause));
+                  }
+                }
+              },
               child: Text(context.tr('signOut', 'Sign out')),
             ),
           ),
@@ -1572,8 +2023,11 @@ class DramaSearch extends SearchDelegate<void> {
   DramaSearch(this.controller);
   final AppController controller;
   @override
-  String get searchFieldLabel =>
-      controller.locale.startsWith('zh') ? '搜索短剧' : 'Search dramas';
+  String get searchFieldLabel => translateAppString(
+    localeFromTag(controller.locale),
+    'searchDramas',
+    'Search dramas',
+  );
   @override
   List<Widget> buildActions(BuildContext context) => [
     IconButton(onPressed: () => query = '', icon: const Icon(Icons.clear)),
@@ -1587,18 +2041,85 @@ class DramaSearch extends SearchDelegate<void> {
   Widget buildResults(BuildContext context) => _results();
   @override
   Widget buildSuggestions(BuildContext context) => _results();
-  Widget _results() {
-    final lowered = query.toLowerCase();
-    return _DramaList(
-      controller: controller,
-      items: controller.dramas
-          .where(
-            (drama) =>
-                drama.title.toLowerCase().contains(lowered) ||
-                drama.summary.toLowerCase().contains(lowered),
-          )
-          .toList(),
-    );
+  Widget _results() => _SearchResults(controller: controller, query: query);
+}
+
+class _SearchResults extends StatefulWidget {
+  const _SearchResults({required this.controller, required this.query});
+  final AppController controller;
+  final String query;
+  @override
+  State<_SearchResults> createState() => _SearchResultsState();
+}
+
+class _SearchResultsState extends State<_SearchResults> {
+  Timer? _timer;
+  int _revision = 0;
+  List<Drama> _items = [];
+  bool _loading = true;
+  Object? _error;
+  @override
+  void initState() {
+    super.initState();
+    _search();
+  }
+
+  @override
+  void didUpdateWidget(covariant _SearchResults oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.query != widget.query ||
+        oldWidget.controller != widget.controller) {
+      _search();
+    }
+  }
+
+  void _search() {
+    _timer?.cancel();
+    final revision = ++_revision;
+    _loading = true;
+    _error = null;
+    _timer = Timer(const Duration(milliseconds: 300), () async {
+      try {
+        final items = await widget.controller.repository.dramas(
+          locale: widget.controller.locale,
+          query: widget.query,
+        );
+        if (mounted && revision == _revision) {
+          setState(() {
+            _items = items;
+            _loading = false;
+          });
+        }
+      } catch (cause) {
+        if (mounted && revision == _revision) {
+          setState(() {
+            _error = cause;
+            _loading = false;
+          });
+        }
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _revision++;
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_error != null) {
+      return Center(
+        child: TextButton(
+          onPressed: () => setState(_search),
+          child: Text(friendlyError(context, _error!)),
+        ),
+      );
+    }
+    return _DramaList(controller: widget.controller, items: _items);
   }
 }
 
@@ -1620,43 +2141,46 @@ class _DramaList extends StatelessWidget {
           separatorBuilder: (_, _) => const SizedBox(height: 12),
           itemBuilder: (context, index) {
             final drama = items[index];
-            return Row(
-              children: [
-                SizedBox(
-                  width: 82,
-                  height: 112,
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
-                    child: _CoverImage(controller: controller, drama: drama),
+            return InkWell(
+              onTap: () => _openDrama(context, controller, drama),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 82,
+                    height: 112,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: _CoverImage(controller: controller, drama: drama),
+                    ),
                   ),
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        drama.title,
-                        style: const TextStyle(
-                          fontSize: 17,
-                          fontWeight: FontWeight.bold,
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          drama.title,
+                          style: const TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        '${drama.totalEpisodes} ${context.tr('episodeCount', 'episodes')}',
-                        style: const TextStyle(color: Colors.white54),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        drama.summary,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
+                        const SizedBox(height: 6),
+                        Text(
+                          '${drama.totalEpisodes} ${context.tr('episodeCount', 'episodes')}',
+                          style: const TextStyle(color: Colors.white54),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          drama.summary,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             );
           },
         );
@@ -1747,9 +2271,7 @@ class _UnlockCard extends StatelessWidget {
         const SizedBox(height: 6),
         Text(
           points > 0
-              ? context.isChinese
-                    ? '使用 $points 金币解锁本集'
-                    : 'Unlock this episode for $points coins'
+              ? "${context.tr('unlock', 'Unlock')} · $points ${context.tr('coins', 'Coins')}"
               : context.tr('chooseUnlock', 'Choose an unlock option'),
           textAlign: TextAlign.center,
         ),
@@ -1771,9 +2293,7 @@ class _UnlockCard extends StatelessWidget {
             onPressed: buy,
             child: Text(
               points > 0
-                  ? context.isChinese
-                        ? '$points 金币解锁'
-                        : 'Unlock for $points coins'
+                  ? "${context.tr('unlock', 'Unlock')} · $points ${context.tr('coins', 'Coins')}"
                   : context.tr('purchaseOptions', 'Purchase options'),
             ),
           ),
@@ -1911,92 +2431,7 @@ Future<bool> _showLogin(
   BuildContext context,
   AppController controller, {
   String? reason,
-}) async {
-  final email = TextEditingController(
-    text: controller.repository.demoMode ? 'demo@nightflix.test' : '',
-  );
-  final password = TextEditingController(
-    text: controller.repository.demoMode ? 'Demo123!' : '',
-  );
-  String? error;
-  final result = await showModalBottomSheet<bool>(
-    context: context,
-    isScrollControlled: true,
-    useSafeArea: true,
-    builder: (context) => StatefulBuilder(
-      builder: (context, setState) => Padding(
-        padding: EdgeInsets.fromLTRB(
-          22,
-          12,
-          22,
-          MediaQuery.viewInsetsOf(context).bottom + 24,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              reason ?? context.tr('welcomeBack', 'Welcome back'),
-              style: const TextStyle(fontSize: 23, fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              controller.repository.demoMode
-                  ? context.tr(
-                      'demoReady',
-                      'Demo account is ready. Tap continue to test likes, comments and unlocking.',
-                    )
-                  : context.tr(
-                      'accountHint',
-                      'Your purchases, favorites and history stay with you.',
-                    ),
-              style: TextStyle(color: Colors.white60),
-            ),
-            const SizedBox(height: 18),
-            TextField(
-              controller: email,
-              keyboardType: TextInputType.emailAddress,
-              decoration: InputDecoration(
-                labelText: context.tr('email', 'Email'),
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: password,
-              obscureText: true,
-              decoration: InputDecoration(
-                labelText: context.tr('password', 'Password'),
-              ),
-            ),
-            if (error != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 10),
-                child: Text(
-                  error!,
-                  style: const TextStyle(color: Colors.redAccent),
-                ),
-              ),
-            const SizedBox(height: 16),
-            FilledButton(
-              onPressed: () async {
-                try {
-                  await controller.login(email.text, password.text);
-                  if (context.mounted) Navigator.pop(context, true);
-                } catch (cause) {
-                  setState(() => error = cause.toString());
-                }
-              },
-              child: Text(context.tr('continueEmail', 'Continue with email')),
-            ),
-          ],
-        ),
-      ),
-    ),
-  );
-  email.dispose();
-  password.dispose();
-  return result == true;
-}
+}) => showAccountSheet(context, controller, reason: reason);
 
 void _languageSheet(BuildContext context, AppController controller) =>
     showModalBottomSheet<void>(
@@ -2017,8 +2452,16 @@ void _languageSheet(BuildContext context, AppController controller) =>
                   ? const Icon(Icons.check, color: _purple)
                   : null,
               onTap: () async {
-                await controller.setLocale(locale);
-                if (context.mounted) Navigator.pop(context);
+                try {
+                  await controller.setLocale(locale);
+                  if (context.mounted) Navigator.pop(context);
+                } catch (error) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text(friendlyError(context, error))),
+                    );
+                  }
+                }
               },
             ),
           ),
@@ -2034,7 +2477,10 @@ Future<void> _openStoreForController(
       !await _showLogin(
         context,
         controller,
-        reason: 'Purchases require an account',
+        reason: context.tr(
+          'accountHint',
+          'Your purchases, favorites and history stay with you.',
+        ),
       )) {
     return;
   }
@@ -2042,51 +2488,28 @@ Future<void> _openStoreForController(
   if (!controller.config.inAppPurchasesEnabled) {
     _message(
       context,
-      'Purchases are unavailable until this brand finishes secure store verification',
+      context.tr(
+        'storeUnavailable',
+        'Store unavailable. Please try again later.',
+      ),
     );
     return;
   }
-  final ids = controller.config.storeProducts.values
-      .whereType<String>()
-      .toSet();
-  if (ids.isEmpty) {
-    _message(context, 'Store products are not configured for this tenant');
-    return;
-  }
-  final available = await InAppPurchase.instance.isAvailable();
-  if (!available) {
-    if (context.mounted) _message(context, 'The App Store is unavailable');
-    return;
-  }
-  final response = await InAppPurchase.instance.queryProductDetails(ids);
-  if (!context.mounted) return;
-  await showModalBottomSheet<void>(
-    context: context,
-    builder: (context) => ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
-        const Text(
-          'Store',
-          style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+  final purchases = NativePurchaseScope.of(context) ?? purchasesFor(controller);
+  if (purchases == null) return;
+  try {
+    await showNativeStore(context, purchases);
+  } catch (_) {
+    if (context.mounted) {
+      _message(
+        context,
+        context.tr(
+          'storeUnavailable',
+          'Store unavailable. Please try again later.',
         ),
-        if (response.notFoundIDs.isNotEmpty)
-          Text(
-            'Unavailable products: ${response.notFoundIDs.join(', ')}',
-            style: const TextStyle(color: Colors.orangeAccent),
-          ),
-        ...response.productDetails.map(
-          (product) => ListTile(
-            title: Text(product.title),
-            subtitle: Text(product.description),
-            trailing: Text(product.price),
-            onTap: () => InAppPurchase.instance.buyConsumable(
-              purchaseParam: PurchaseParam(productDetails: product),
-            ),
-          ),
-        ),
-      ],
-    ),
-  );
+      );
+    }
+  }
 }
 
 Future<void> _showWallet(BuildContext context, AppController controller) async {
@@ -2100,7 +2523,7 @@ Future<void> _showWallet(BuildContext context, AppController controller) async {
     await showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Coin balance'),
+        title: Text(context.tr('coinBalance', 'Coin balance')),
         content: Text(
           wallet.balancePoints,
           style: const TextStyle(fontSize: 30, fontWeight: FontWeight.bold),
@@ -2108,13 +2531,13 @@ Future<void> _showWallet(BuildContext context, AppController controller) async {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
+            child: Text(context.tr('close', 'Close')),
           ),
         ],
       ),
     );
   } catch (cause) {
-    if (context.mounted) _message(context, cause.toString());
+    if (context.mounted) _message(context, friendlyError(context, cause));
   }
 }
 
@@ -2135,16 +2558,23 @@ Future<void> _showInbox(BuildContext context, AppController controller) async {
           height: MediaQuery.sizeOf(context).height * .72,
           child: Column(
             children: [
-              const Padding(
-                padding: EdgeInsets.all(18),
+              Padding(
+                padding: const EdgeInsets.all(18),
                 child: Text(
-                  'Messages',
-                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                  context.tr('messages', 'Messages'),
+                  style: const TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
               Expanded(
                 child: items.isEmpty
-                    ? const Center(child: Text('No messages'))
+                    ? Center(
+                        child: Text(
+                          context.tr('nothingHere', 'Nothing here yet'),
+                        ),
+                      )
                     : ListView.builder(
                         itemCount: items.length,
                         itemBuilder: (context, index) {
@@ -2170,7 +2600,22 @@ Future<void> _showInbox(BuildContext context, AppController controller) async {
                             ),
                             onTap: item.status == 'unread'
                                 ? () async {
-                                    await controller.markMessageRead(item.id);
+                                    final scope = controller.accountScope;
+                                    try {
+                                      await controller.markMessageRead(item.id);
+                                    } catch (cause) {
+                                      if (context.mounted) {
+                                        _message(
+                                          context,
+                                          friendlyError(context, cause),
+                                        );
+                                      }
+                                      return;
+                                    }
+                                    if (!context.mounted ||
+                                        controller.accountScope != scope) {
+                                      return;
+                                    }
                                     final changed = InboxMessage(
                                       body: item.body,
                                       id: item.id,
@@ -2192,7 +2637,7 @@ Future<void> _showInbox(BuildContext context, AppController controller) async {
       ),
     );
   } catch (cause) {
-    if (context.mounted) _message(context, cause.toString());
+    if (context.mounted) _message(context, friendlyError(context, cause));
   }
 }
 

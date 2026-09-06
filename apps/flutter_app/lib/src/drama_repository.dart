@@ -1,17 +1,32 @@
 import 'dart:convert';
+import 'dart:async';
 import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'models.dart';
+import 'native_identity.dart';
 
 class DramaRepository {
-  DramaRepository({required String apiBaseUrl})
-    : apiBaseUrl = apiBaseUrl.replaceAll(RegExp(r'/$'), '');
+  DramaRepository({
+    required String apiBaseUrl,
+    FlutterSecureStorage? secureStorage,
+  }) : apiBaseUrl = apiBaseUrl.replaceAll(RegExp(r'/$'), ''),
+       _secureStorage = secureStorage ?? const FlutterSecureStorage();
 
   final String apiBaseUrl;
+  final FlutterSecureStorage _secureStorage;
+  UserSession? session;
+  Future<void> Function(UserSession?)? onSessionChanged;
+  Future<UserSession?>? _refreshing;
+  Future<void> _sessionPersistence = Future.value();
+  int _authEpoch = 0;
+  final Set<String> _activeTokens = {};
+  String get _sessionKey => 'nightflix:$apiBaseUrl:session:v1';
+  String get _deviceKey => 'nightflix:$apiBaseUrl:device:v1';
   final Set<String> _demoUnlockedEpisodes = {};
   bool get demoMode => apiBaseUrl.isEmpty;
 
@@ -41,7 +56,97 @@ class DramaRepository {
     final uri = Uri.parse(
       '$apiBaseUrl/api/v1/customer/content/dramas/${drama.id}',
     ).replace(queryParameters: {'locale': locale});
-    return Drama.fromJson(await _request(uri), palette: drama.palette);
+    return Drama.fromJson(
+      await _request(uri, accessToken: session?.accessToken),
+      palette: drama.palette,
+    );
+  }
+
+  Future<Map<String, String>> categories(String locale) async {
+    if (demoMode) {
+      return {
+        'romance': 'Romance',
+        'revenge': 'Revenge',
+        'billionaire': 'Billionaire',
+        'fantasy': 'Fantasy',
+      };
+    }
+    final json = await _get(
+      '/api/v1/customer/categories?locale=${Uri.encodeComponent(locale)}',
+    );
+    return {
+      for (final item in json['items'] as List? ?? [])
+        item['code'] as String: item['name'] as String,
+    };
+  }
+
+  Future<List<Drama>> categoryDramas(String category, String locale) async {
+    if (demoMode) {
+      const mapping = {
+        'romance': ['demo-1'],
+        'revenge': ['demo-2'],
+        'billionaire': ['demo-3'],
+      };
+      return _demoDramasForLocale(locale)
+          .where((d) => (mapping[category] ?? []).contains(d.id))
+          .toList();
+    }
+    final uri = Uri.parse('$apiBaseUrl/api/v1/customer/content/dramas').replace(
+      queryParameters: {
+        'locale': locale,
+        'category': category,
+        'pageSize': '50',
+      },
+    );
+    final json = await _request(uri);
+    return (json['items'] as List? ?? []).indexed
+        .map(
+          (entry) => Drama.fromJson(
+            Map<String, dynamic>.from(entry.$2 as Map),
+            palette: entry.$1,
+          ),
+        )
+        .toList();
+  }
+
+  Future<List<PlaybackProgress>> watchHistory(String token) async {
+    if (demoMode) return [];
+    final json = await _get(
+      '/api/v1/customer/playback/history?page=1&pageSize=100',
+      accessToken: token,
+    );
+    return (json['items'] as List? ?? [])
+        .map(
+          (item) =>
+              PlaybackProgress.fromJson(Map<String, dynamic>.from(item as Map)),
+        )
+        .toList();
+  }
+
+  Future<List<String>> savedDramas(String token) async {
+    if (demoMode) return [];
+    final json = await _get(
+      '/api/v1/customer/playback/favorites?page=1&pageSize=100',
+      accessToken: token,
+    );
+    return (json['items'] as List? ?? [])
+        .map((item) => item['dramaId'] as String)
+        .toList();
+  }
+
+  Future<void> saveProgress(PlaybackProgress progress, String token) async {
+    if (demoMode) return;
+    await _request(
+      Uri.parse('$apiBaseUrl/api/v1/customer/playback/progress'),
+      method: 'PUT',
+      payload: {
+        'dramaId': progress.dramaId,
+        'episodeId': progress.episodeId,
+        'positionSeconds': progress.positionSeconds,
+        'completed': progress.completed,
+      },
+      accessToken: token,
+    );
   }
 
   Future<String?> assetUrl(String mediaId) async {
@@ -58,11 +163,20 @@ class DramaRepository {
       }
       return episode;
     }
-    final json = await _get(
-      '/api/v1/customer/playback/episodes/${episode.id}/url',
-      accessToken: accessToken,
-    );
-    return episode.withPlayback(json);
+    try {
+      final json = await _get(
+        '/api/v1/customer/playback/episodes/${episode.id}/url',
+        accessToken: accessToken.isEmpty ? null : accessToken,
+      );
+      return episode.withPlayback(json);
+    } on ApiException catch (error) {
+      if (error.statusCode == 403 &&
+          (error.data['access'] == 'locked' ||
+              error.data['code'] == 'PREVIEW_PLAYBACK_ASSET_UNAVAILABLE')) {
+        return episode.withPlayback({'access': 'locked'});
+      }
+      rethrow;
+    }
   }
 
   Future<SignedTrack> playbackTrack(
@@ -74,7 +188,7 @@ class DramaRepository {
     return SignedTrack.fromJson(
       await _get(
         '/api/v1/customer/playback/episodes/${episode.id}/tracks/${track.id}/url',
-        accessToken: accessToken,
+        accessToken: accessToken.isEmpty ? null : accessToken,
       ),
     );
   }
@@ -277,25 +391,285 @@ class DramaRepository {
         'pending';
   }
 
+  Future<void> registerPushToken(
+    String token,
+    String deviceId,
+    String accessToken,
+  ) async {
+    await _request(
+      Uri.parse('$apiBaseUrl/api/v1/customer/notifications/push-tokens'),
+      method: 'POST',
+      accessToken: accessToken,
+      payload: {
+        'token': token,
+        'deviceId': deviceId,
+        'platform': Platform.isIOS ? 'ios' : 'android',
+      },
+    );
+  }
+
+  Future<void> adObservation(Map<String, dynamic> observation) async {
+    if (demoMode) return;
+    await _request(
+      Uri.parse('$apiBaseUrl/api/v1/customer/ads/observations'),
+      method: 'POST',
+      payload: observation,
+    );
+  }
+
+  Future<String> nativePurchaseBinding(
+    String accessToken, {
+    String? store,
+    String? productId,
+  }) async =>
+      (await _request(
+            Uri.parse('$apiBaseUrl/api/v1/customer/native-store/prepare'),
+            method: 'POST',
+            accessToken: accessToken,
+            payload: store == null
+                ? null
+                : {'store': store, 'productId': productId},
+          ))['accountBinding']
+          as String;
+
+  Future<String> confirmNativePurchase(
+    String store,
+    String productId,
+    String receipt,
+    String accessToken,
+  ) async {
+    final result = await _request(
+      Uri.parse('$apiBaseUrl/api/v1/customer/native-store/verify'),
+      method: 'POST',
+      accessToken: accessToken,
+      payload: {'store': store, 'productId': productId, 'receipt': receipt},
+    );
+    return result['status'] as String;
+  }
+
+  Future<void> identityLogin(
+    String provider,
+    AppRuntimeConfig config,
+    String locale,
+    List<Map<String, dynamic>> consents,
+  ) async {
+    final epoch = ++_authEpoch;
+    _activeTokens.clear();
+    final challenge = await _request(
+      Uri.parse('$apiBaseUrl/api/v1/customer/auth/identity/challenge'),
+      method: 'POST',
+      payload: {'provider': provider},
+    );
+    final identityToken = await nativeIdentityToken(
+      provider,
+      challenge['nonce'] as String,
+      config.identity,
+    );
+    if (epoch != _authEpoch) {
+      throw const ApiException('Login was cancelled', 401);
+    }
+    final device = await _secureStorage.read(key: _deviceKey);
+    final json = await _request(
+      Uri.parse('$apiBaseUrl/api/v1/customer/auth/identity/login'),
+      method: 'POST',
+      payload: {
+        'provider': provider,
+        'challengeId': challenge['challengeId'],
+        'identityToken': identityToken,
+        'devicePlatform': Platform.isIOS ? 'ios' : 'android',
+        'deviceLabel': 'Night Flix',
+        'deviceToken': ?device,
+        'legalLocale': locale,
+        'legalConsents': consents,
+      },
+    );
+    if (epoch != _authEpoch) {
+      throw const ApiException('Login was cancelled', 401);
+    }
+    await _setSession(UserSession.fromJson(json));
+  }
+
   Future<UserSession> login(String email, String password) async {
+    final epoch = ++_authEpoch;
+    _activeTokens.clear();
     if (demoMode) {
-      return UserSession(
+      final value = UserSession(
         accessToken: 'demo',
         refreshToken: 'demo',
         email: email,
+        accountId: email.trim().toLowerCase(),
       );
+      await _setSession(value);
+      return value;
     }
+    final device = await _secureStorage.read(key: _deviceKey);
     final json = await _post('/api/v1/customer/auth/login', {
       'deviceLabel': 'Night Flix App',
       'devicePlatform': Platform.isIOS ? 'ios' : 'android',
       'identifier': email.trim(),
       'password': password,
+      'deviceToken': ?device,
     });
-    return UserSession(
-      accessToken: json['accessToken'] as String,
-      refreshToken: json['refreshToken'] as String,
-      email: email.trim(),
+    if (epoch != _authEpoch) throw const ApiException('Session changed', 401);
+    final value = UserSession.fromJson(json, email: email.trim());
+    await _setSession(value);
+    return value;
+  }
+
+  Future<void> restoreSession() async {
+    if (demoMode) return;
+    final raw = await _secureStorage.read(key: _sessionKey);
+    if (raw == null) return;
+    try {
+      session = UserSession.fromJson(
+        Map<String, dynamic>.from(jsonDecode(raw) as Map),
+      );
+      _activeTokens.add(session!.accessToken);
+      await onSessionChanged?.call(session);
+    } on FormatException {
+      await _setSession(null);
+    } on TypeError {
+      await _setSession(null);
+    }
+  }
+
+  Future<void> _setSession(UserSession? value) async {
+    session = value;
+    if (value != null) _activeTokens.add(value.accessToken);
+    if (value == null) _activeTokens.clear();
+    final changed = onSessionChanged?.call(value);
+    final write = _sessionPersistence.catchError((Object _) {}).then((_) async {
+      if (demoMode) return;
+      if (value == null) {
+        await _secureStorage.delete(key: _sessionKey);
+      } else {
+        await _secureStorage.write(
+          key: _sessionKey,
+          value: jsonEncode(value.toJson()),
+        );
+        if (value.deviceToken != null) {
+          await _secureStorage.write(key: _deviceKey, value: value.deviceToken);
+        }
+      }
+    });
+    _sessionPersistence = write;
+    await changed;
+    await write;
+  }
+
+  Future<List<Map<String, dynamic>>> legalDocuments(String locale) async {
+    if (demoMode) return [];
+    final json = await _get(
+      '/api/v1/customer/legal/documents/current?locale=${Uri.encodeComponent(locale)}',
     );
+    return (json['documents'] as List? ?? [])
+        .map((item) => Map<String, dynamic>.from(item as Map))
+        .toList();
+  }
+
+  Future<String> requestEmailCode(String email, String purpose) async {
+    final json = await _post('/api/v1/customer/auth/otp/challenges', {
+      'channel': 'email',
+      'destination': email.trim(),
+      'purpose': purpose,
+    });
+    return json['challengeId'] as String;
+  }
+
+  Future<String> verifyEmailCode(
+    String email,
+    String purpose,
+    String challengeId,
+    String code,
+  ) async {
+    final json = await _post('/api/v1/customer/auth/otp/verify', {
+      'channel': 'email',
+      'destination': email.trim(),
+      'purpose': purpose,
+      'challengeId': challengeId,
+      'code': code.trim(),
+    });
+    return json['verificationToken'] as String;
+  }
+
+  Future<void> registerEmail({
+    required String email,
+    required String username,
+    required String password,
+    required String verificationToken,
+    required String locale,
+    required List<Map<String, dynamic>> consents,
+  }) async {
+    await _post('/api/v1/customer/auth/register', {
+      'username': username.trim(),
+      'email': email.trim(),
+      'password': password,
+      'emailVerificationToken': verificationToken,
+      'legalLocale': locale,
+      'legalConsents': consents,
+    });
+  }
+
+  Future<void> resetPassword(
+    String email,
+    String password,
+    String verificationToken,
+  ) async {
+    await _post('/api/v1/customer/auth/password/reset', {
+      'channel': 'email',
+      'destination': email.trim(),
+      'newPassword': password,
+      'verificationToken': verificationToken,
+    });
+  }
+
+  Future<void> logout() async {
+    final previous = session;
+    final refresh = _refreshing;
+    ++_authEpoch;
+    // Remove local credentials immediately; a late refresh may never resurrect them.
+    await _setSession(null);
+    if (demoMode || previous == null) return;
+    UserSession? rotated;
+    try {
+      rotated = await refresh;
+    } catch (_) {
+      /* Revoke the last known token below. */
+    }
+    await _post('/api/v1/customer/auth/logout', {
+      'refreshToken': rotated?.refreshToken ?? previous.refreshToken,
+    });
+  }
+
+  Future<UserSession?> _refreshSession() async {
+    final pending = _refreshing;
+    if (pending != null) return pending;
+    final previous = session;
+    if (previous == null) return null;
+    final epoch = _authEpoch;
+    final work = () async {
+      try {
+        final json = await _post('/api/v1/customer/auth/refresh', {
+          'refreshToken': previous.refreshToken,
+        });
+        final value = UserSession.fromJson(json, email: previous.email);
+        if (epoch == _authEpoch) await _setSession(value);
+        return value;
+      } on ApiException catch (error) {
+        if ((error.statusCode == 401 || error.statusCode == 403) &&
+            epoch == _authEpoch) {
+          ++_authEpoch;
+          await _setSession(null);
+        }
+        rethrow;
+      }
+    }();
+    _refreshing = work;
+    try {
+      return await work;
+    } finally {
+      if (identical(_refreshing, work)) _refreshing = null;
+    }
   }
 
   Future<Map<String, dynamic>> _get(String path, {String? accessToken}) =>
@@ -313,7 +687,20 @@ class DramaRepository {
     Map<String, dynamic>? payload,
     String? accessToken,
     Map<String, String>? extraHeaders,
+    bool retryAuthentication = true,
   }) async {
+    final epoch = _authEpoch;
+    final current = session;
+    if (accessToken != null && current == null) {
+      throw const ApiException('Please sign in again', 401);
+    }
+    if (accessToken != null && current != null) {
+      if (accessToken != current.accessToken &&
+          !_activeTokens.contains(accessToken)) {
+        throw const ApiException('Session changed', 401);
+      }
+      accessToken = current.accessToken;
+    }
     final headers = <String, String>{'Accept': 'application/json'};
     if (extraHeaders != null) headers.addAll(extraHeaders);
     if (payload != null) headers['Content-Type'] = 'application/json';
@@ -322,14 +709,44 @@ class DramaRepository {
     request.headers.addAll(headers);
     if (payload != null) request.body = jsonEncode(payload);
     final streamed = await request.send().timeout(const Duration(seconds: 15));
-    final resolved = await http.Response.fromStream(streamed);
-    final decoded = resolved.body.isEmpty
-        ? <String, dynamic>{}
-        : Map<String, dynamic>.from(jsonDecode(resolved.body) as Map);
+    final resolved = await http.Response.fromStream(streamed)
+        .timeout(const Duration(seconds: 15));
+    if (accessToken != null && epoch != _authEpoch) {
+      throw const ApiException('Session changed', 401);
+    }
+    if (resolved.statusCode == 401 &&
+        accessToken != null &&
+        current != null &&
+        retryAuthentication) {
+      if (session?.accessToken == accessToken) await _refreshSession();
+      if (epoch != _authEpoch || session == null) {
+        throw const ApiException('Please sign in again', 401);
+      }
+      return _request(
+        uri,
+        method: method,
+        payload: payload,
+        accessToken: session!.accessToken,
+        extraHeaders: extraHeaders,
+        retryAuthentication: false,
+      );
+    }
+    Map<String, dynamic> decoded;
+    try {
+      decoded = resolved.body.isEmpty
+          ? <String, dynamic>{}
+          : Map<String, dynamic>.from(jsonDecode(resolved.body) as Map);
+    } catch (_) {
+      throw ApiException(
+        'Invalid server response',
+        resolved.statusCode >= 400 ? resolved.statusCode : 502,
+      );
+    }
     if (resolved.statusCode < 200 || resolved.statusCode >= 300) {
       throw ApiException(
         decoded['message']?.toString() ?? 'Request failed',
         resolved.statusCode,
+        decoded,
       );
     }
     return decoded;
@@ -337,20 +754,30 @@ class DramaRepository {
 }
 
 class ApiException implements Exception {
-  const ApiException(this.message, this.statusCode);
+  const ApiException(this.message, this.statusCode, [this.data = const {}]);
   final String message;
   final int statusCode;
+  final Map<String, dynamic> data;
   @override
   String toString() => message;
 }
 
 class AppController extends ChangeNotifier {
-  AppController(this.repository);
+  AppController(this.repository) {
+    repository.onSessionChanged = (_) async {
+      if (_loadedScope != _scope) {
+        await _loadLocalState();
+        unawaited(_syncAccountData());
+      }
+      notifyListeners();
+    };
+  }
   final DramaRepository repository;
 
   AppRuntimeConfig config = AppRuntimeConfig.demo;
   List<Drama> dramas = const [];
-  UserSession? session;
+  UserSession? get session => repository.session;
+  set session(UserSession? value) => repository.session = value;
   String locale = 'en-US';
   bool loading = true;
   String? error;
@@ -359,19 +786,188 @@ class AppController extends ChangeNotifier {
   final List<String> history = [];
   final Map<String, DramaInteractionSummary> interactions = {};
   final Map<String, String?> assetUrls = {};
+  final Map<String, DateTime> _assetExpiry = {};
+  final Map<String, PlaybackProgress> progress = {};
+  final Map<String, Drama> libraryDramas = {};
+  final Map<String, PlaybackProgress> _pendingProgress = {};
+  bool _savingProgress = false;
+  bool _disposed = false;
+  int _localeRevision = 0;
+
+  @override
+  void notifyListeners() {
+    if (!_disposed) super.notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    repository.onSessionChanged = null;
+    super.dispose();
+  }
+
+  Future<void> recordProgress(PlaybackProgress value) async {
+    final scope = _scope;
+    progress[value.dramaId] = value;
+    if (session != null) _pendingProgress[value.episodeId] = value;
+    await _persistProgress(scope);
+    if (scope == _scope) await _flushProgress();
+  }
+
+  Future<void> _persistProgress(String scope) async {
+    if (scope != _scope) return;
+    final saved = jsonEncode({
+      'items': progress.values.map((p) => p.toJson()).toList(),
+      'pending': _pendingProgress.values.map((p) => p.toJson()).toList(),
+    });
+    await (await SharedPreferences.getInstance()).setString(
+      '$scope:progress',
+      saved,
+    );
+  }
+
+  Future<void> _flushProgress() async {
+    if (_savingProgress || session == null) return;
+    final scope = _scope;
+    final token = session!.accessToken;
+    _savingProgress = true;
+    try {
+      for (final item in _pendingProgress.values.toList()) {
+        if (scope != _scope) return;
+        await repository.saveProgress(item, token);
+        if (scope != _scope) return;
+        if (identical(_pendingProgress[item.episodeId], item)) {
+          _pendingProgress.remove(item.episodeId);
+        }
+      }
+      await _persistProgress(scope);
+    } catch (_) {
+      // Keep the account-scoped queue for the next progress update or app restart.
+    } finally {
+      _savingProgress = false;
+    }
+  }
+
+  Future<void> _syncAccountData() async {
+    final user = session;
+    if (user == null || repository.demoMode) return;
+    final scope = _scope;
+    try {
+      final watched = await repository.watchHistory(user.accessToken);
+      final saved = await repository.savedDramas(user.accessToken);
+      if (scope != _scope) return;
+      favorites
+        ..clear()
+        ..addAll(saved);
+      for (final item in watched.reversed) {
+        final local = progress[item.dramaId];
+        if (local == null || !local.updatedAt.isAfter(item.updatedAt)) {
+          progress[item.dramaId] = item;
+        }
+      }
+      final recent = progress.values.toList()
+        ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+      history
+        ..clear()
+        ..addAll(recent.take(100).map((p) => p.dramaId));
+      for (final id in {...saved, ...history}.take(100)) {
+        if (scope != _scope) return;
+        try {
+          final drama = await repository.detail(
+            Drama(id: id, title: '', summary: '', totalEpisodes: 0),
+            locale,
+          );
+          if (scope != _scope) return;
+          libraryDramas[id] = drama;
+        } on ApiException catch (error) {
+          if (scope != _scope) return;
+          if (error.statusCode == 403 || error.statusCode == 404) {
+            libraryDramas.remove(id);
+          }
+        }
+      }
+      final preferences = await SharedPreferences.getInstance();
+      if (scope != _scope) return;
+      final savedFavorites = favorites.toList();
+      final savedHistory = history.toList();
+      await preferences.setStringList('$scope:favorites', savedFavorites);
+      await preferences.setStringList('$scope:history', savedHistory);
+      if (scope != _scope) return;
+      await _persistProgress(scope);
+      await _flushProgress();
+      if (scope == _scope) notifyListeners();
+    } catch (_) {
+      /* Cached account data remains available during outages. */
+    }
+  }
+
+  String? _loadedScope;
+  String get accountScope => _scope;
+  String get _scope =>
+      '${repository.apiBaseUrl}:v2:${session?.accountId.isNotEmpty == true ? session!.accountId : session?.email ?? 'guest'}';
+  String get _localeKey => '${repository.apiBaseUrl}:locale';
+
+  Future<void> _loadLocalState() async {
+    final scope = _scope;
+    _loadedScope = scope;
+    favorites.clear();
+    following.clear();
+    history.clear();
+    interactions.clear();
+    progress.clear();
+    libraryDramas.clear();
+    _pendingProgress.clear();
+    notifyListeners();
+    final preferences = await SharedPreferences.getInstance();
+    if (_scope != scope) return;
+    favorites.addAll(preferences.getStringList('$scope:favorites') ?? const []);
+    following.addAll(preferences.getStringList('$scope:following') ?? const []);
+    history.addAll(preferences.getStringList('$scope:history') ?? const []);
+    final raw = preferences.getString('$scope:progress');
+    if (raw != null) {
+      try {
+        final json = jsonDecode(raw) as Map;
+        for (final item in json['items'] as List? ?? []) {
+          final p = PlaybackProgress.fromJson(
+            Map<String, dynamic>.from(item as Map),
+          );
+          progress[p.dramaId] = p;
+        }
+        for (final item in json['pending'] as List? ?? []) {
+          final p = PlaybackProgress.fromJson(
+            Map<String, dynamic>.from(item as Map),
+          );
+          _pendingProgress[p.episodeId] = p;
+        }
+      } catch (_) {
+        progress.clear();
+        _pendingProgress.clear();
+      }
+    }
+  }
 
   Future<void> initialize() async {
+    error = null;
     try {
       config = await repository.bootstrap();
+      await repository.restoreSession();
       final preferences = await SharedPreferences.getInstance();
-      locale = preferences.getString('locale') ?? config.defaultLocale;
+      locale = preferences.getString(_localeKey) ?? config.defaultLocale;
       if (!config.supportedLocales.contains(locale)) {
         locale = config.defaultLocale;
       }
-      favorites.addAll(preferences.getStringList('favorites') ?? const []);
-      following.addAll(preferences.getStringList('following') ?? const []);
-      history.addAll(preferences.getStringList('history') ?? const []);
-      dramas = await repository.dramas(locale: locale);
+      await _loadLocalState();
+      try {
+        dramas = await repository.dramas(locale: locale);
+      } on ApiException catch (failure) {
+        if (failure.statusCode != 400 || locale == config.defaultLocale) {
+          rethrow;
+        }
+        locale = config.defaultLocale;
+        dramas = await repository.dramas(locale: locale);
+      }
+      await preferences.setString(_localeKey, locale);
+      unawaited(_syncAccountData());
     } catch (cause) {
       error = cause.toString();
     } finally {
@@ -389,10 +985,12 @@ class AppController extends ChangeNotifier {
 
   Future<void> setLocale(String value) async {
     if (!config.supportedLocales.contains(value)) return;
+    final revision = ++_localeRevision;
+    final loaded = await repository.dramas(locale: value);
+    if (revision != _localeRevision) return;
     locale = value;
-    notifyListeners();
-    await (await SharedPreferences.getInstance()).setString('locale', value);
-    dramas = await repository.dramas(locale: locale);
+    dramas = loaded;
+    await (await SharedPreferences.getInstance()).setString(_localeKey, value);
     notifyListeners();
   }
 
@@ -410,24 +1008,21 @@ class AppController extends ChangeNotifier {
   Future<Drama> loadDetail(Drama drama) => repository.detail(drama, locale);
 
   Future<String?> assetUrl(String mediaId) async {
-    if (assetUrls.containsKey(mediaId)) return assetUrls[mediaId];
+    if ((_assetExpiry[mediaId]?.isAfter(DateTime.now()) ?? false)) {
+      return assetUrls[mediaId];
+    }
     final value = await repository.assetUrl(mediaId);
     assetUrls[mediaId] = value;
+    _assetExpiry[mediaId] = DateTime.now().add(const Duration(seconds: 120));
     return value;
   }
 
   Future<SignedTrack> loadPlaybackTrack(Episode episode, EpisodeTrack track) {
-    if (session == null) {
-      throw const ApiException('Sign in to select a track', 401);
-    }
-    return repository.playbackTrack(episode, track, session!.accessToken);
+    return repository.playbackTrack(episode, track, session?.accessToken ?? '');
   }
 
   Future<Episode> loadPlayback(Episode episode) async {
-    if (session == null && !repository.demoMode) {
-      throw const ApiException('Sign in to continue watching', 401);
-    }
-    return repository.playback(episode, session?.accessToken ?? 'demo');
+    return repository.playback(episode, session?.accessToken ?? '');
   }
 
   Future<DramaInteractionSummary> loadInteractions(String dramaId) async {
@@ -441,17 +1036,21 @@ class AppController extends ChangeNotifier {
             likeCount: 0,
           );
     }
+    final scope = _scope;
     final summary = await repository.interactionSummary(
       dramaId,
       session!.accessToken,
     );
+    if (scope != _scope) return summary;
     interactions[dramaId] = summary;
     if (summary.isFavorite) favorites.add(dramaId);
+    if (!summary.isFavorite) favorites.remove(dramaId);
     notifyListeners();
     return summary;
   }
 
   Future<void> toggleLike(String dramaId) async {
+    final scope = _scope;
     final current = interactions[dramaId];
     final nextLiked = !(current?.isLiked ?? false);
     if (session == null) throw const ApiException('Sign in to like', 401);
@@ -466,40 +1065,43 @@ class AppController extends ChangeNotifier {
                   ))
               .copyWith(isLiked: nextLiked)
         : await repository.setLike(dramaId, session!.accessToken, nextLiked);
+    if (scope != _scope) return;
     interactions[dramaId] = summary;
     notifyListeners();
   }
 
   Future<void> login(String email, String password) async {
-    session = await repository.login(email, password);
-    notifyListeners();
+    await repository.login(email, password);
   }
 
-  void logout() {
-    session = null;
-    notifyListeners();
-  }
+  Future<void> logout() => repository.logout();
 
   Future<void> toggleFavorite(String dramaId) async {
+    if (session == null) throw const ApiException('Sign in to save', 401);
+    final scope = _scope;
     final favorite = !favorites.contains(dramaId);
     if (session != null) {
       await repository.setFavorite(dramaId, session!.accessToken, favorite);
     }
+    if (_scope != scope) return;
     favorite ? favorites.add(dramaId) : favorites.remove(dramaId);
+    final saved = favorites.toList();
     await (await SharedPreferences.getInstance()).setStringList(
-      'favorites',
-      favorites.toList(),
+      '$scope:favorites',
+      saved,
     );
     notifyListeners();
   }
 
   Future<void> toggleFollowing(String dramaId) async {
+    final scope = _scope;
     following.contains(dramaId)
         ? following.remove(dramaId)
         : following.add(dramaId);
+    final saved = following.toList();
     await (await SharedPreferences.getInstance()).setStringList(
-      'following',
-      following.toList(),
+      '$scope:following',
+      saved,
     );
     notifyListeners();
   }
@@ -564,12 +1166,14 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> markWatched(String dramaId) async {
+    final scope = _scope;
     history.remove(dramaId);
     history.insert(0, dramaId);
     if (history.length > 100) history.removeRange(100, history.length);
+    final saved = history.toList();
     await (await SharedPreferences.getInstance()).setStringList(
-      'history',
-      history,
+      '$scope:history',
+      saved,
     );
     notifyListeners();
   }

@@ -4,6 +4,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   realpath,
   rename,
   rm,
@@ -41,16 +42,82 @@ export interface NativeAppBuildOutput {
   path: string;
 }
 
+/** Local/CI-only credentials. Never accepted by the tenant HTTP build endpoint. */
+export interface NativeReleaseConfiguration {
+  admobAppId: string;
+  androidSigningProperties?: string;
+  /** Play App Signing certificate fingerprints (not merely the upload key). */
+  androidLinkCertificateSha256?: string[];
+  iosTeamId?: string;
+  iosExportOptionsPlist?: string;
+  deepLinkHost?: string;
+  googleIosClientId?: string;
+  firebaseOptions?: {
+    apiKey: string; appId: string; messagingSenderId: string; projectId: string;
+    androidPackageName?: string; iosBundleId?: string;
+  };
+}
+
+export async function validateNativeRelease(input: NativeAppBuildInput, release: NativeReleaseConfiguration) {
+  if (release.deepLinkHost && !/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(release.deepLinkHost)) {
+    throw new Error('Invalid tenant link domain');
+  }
+  if (release.googleIosClientId && !/^[A-Za-z0-9_-]+\.apps\.googleusercontent\.com$/.test(release.googleIosClientId)) {
+    throw new Error('Invalid iOS Google client identifier');
+  }
+  if (release.firebaseOptions) {
+    const options = release.firebaseOptions;
+    if (!/^1:[0-9]+:(?:android|ios):[0-9a-f]+$/.test(options.appId)
+      || !/^[0-9]{6,30}$/.test(options.messagingSenderId) || !/^[a-z][a-z0-9-]{4,62}$/.test(options.projectId)
+      || !/^[A-Za-z0-9_-]{20,100}$/.test(options.apiKey)
+      || (input.target === 'android_debug' ? options.androidPackageName !== input.androidApplicationId || !options.appId.includes(':android:')
+        : options.iosBundleId !== input.iosBundleId || !options.appId.includes(':ios:'))) {
+      throw new Error('Firebase configuration does not match the tenant application');
+    }
+  }
+  if (!/^ca-app-pub-[0-9]{16}~[0-9]{10}$/.test(release.admobAppId)
+    || release.admobAppId.startsWith('ca-app-pub-3940256099942544')
+    || input.androidApplicationId === 'com.nightflix.template'
+    || input.iosBundleId === 'com.nightflix.template') {
+    throw new Error('Release requires tenant application identifiers and a non-test AdMob App ID');
+  }
+  const path = input.target === 'android_debug' ? release.androidSigningProperties : release.iosExportOptionsPlist;
+  if (!path || !isAbsolute(path) || !(await stat(path)).isFile()) {
+    throw new Error('Release requires an absolute private signing profile path');
+  }
+  if (input.target === 'android_debug') {
+    const profile = Object.fromEntries((await readFile(path, 'utf8')).split(/\r?\n/)
+      .filter(line => line.trim() && !line.trim().startsWith('#')).map(line => {
+        const separator = line.indexOf('='); return [line.slice(0, separator).trim(), line.slice(separator + 1).trim()];
+      }));
+    if (profile.applicationId !== input.androidApplicationId || !profile.keyAlias || profile.keyAlias === 'androiddebugkey'
+      || !profile.storePassword || !profile.keyPassword || !isAbsolute(profile.storeFile ?? '')
+      || !(await stat(profile.storeFile!)).isFile()) throw new Error('Android signing profile does not match the tenant');
+    if (release.deepLinkHost && (!release.androidLinkCertificateSha256?.length
+      || release.androidLinkCertificateSha256.length > 5
+      || release.androidLinkCertificateSha256.some(value => !/^(?:[0-9A-Fa-f]{2}:){31}[0-9A-Fa-f]{2}$/.test(value)))) {
+      throw new Error('Android links require explicit app-signing SHA256 certificates');
+    }
+  }
+  if (input.target === 'ios_simulator') {
+    if (!/^[A-Z0-9]{10}$/.test(release.iosTeamId ?? '')) throw new Error('Invalid iOS signing team');
+    const profile = await readFile(path, 'utf8');
+    const team = profile.match(/<key>teamID<\/key>\s*<string>([^<]+)<\/string>/)?.[1];
+    if (team !== release.iosTeamId) throw new Error('Export options belong to another iOS team');
+  }
+}
+
 export class NativeAppBuilder {
-  async build(input: NativeAppBuildInput): Promise<NativeAppBuildOutput> {
+  async build(input: NativeAppBuildInput, release?: NativeReleaseConfiguration): Promise<NativeAppBuildOutput> {
     const validated = await validateInput(input);
+    if (release) await validateNativeRelease(validated, release);
     const templateRoot = await resolveTemplateRoot(process.env.APP_BUILD_TEMPLATE_ROOT);
     const flutter = await resolveFlutterBinary(process.env.APP_BUILD_FLUTTER_BIN);
     const temporaryRoot = await createTemporaryRoot(process.env.APP_BUILD_TMP_ROOT);
     try {
       const built = validated.target === 'android_debug'
-        ? await this.buildAndroid(flutter, templateRoot, temporaryRoot, validated)
-        : await this.buildIosSimulator(flutter, templateRoot, temporaryRoot, validated);
+        ? await this.buildAndroid(flutter, templateRoot, temporaryRoot, validated, release)
+        : await this.buildIosSimulator(flutter, templateRoot, temporaryRoot, validated, release);
       const info = await stat(built.path);
       if (!info.isFile() || info.size < 1 || info.size > MAX_ARTIFACT_BYTES) {
         throw new AppBuildExecutionError('build_failed');
@@ -71,6 +138,7 @@ export class NativeAppBuilder {
     templateRoot: string,
     temporaryRoot: string,
     input: Awaited<ReturnType<typeof validateInput>>,
+    release?: NativeReleaseConfiguration,
   ): Promise<Omit<NativeAppBuildOutput, 'cleanup'>> {
     const target = join(temporaryRoot, 'flutter_app');
     await copyFlutterTemplate(templateRoot, target);
@@ -101,9 +169,26 @@ export class NativeAppBuilder {
     }
 
     await writeAndroidManifest(target, input);
+    const manifestPath = join(target, 'android', 'app', 'src', 'main', 'AndroidManifest.xml');
+    await writeFile(manifestPath, replaceRequired(await readFile(manifestPath, 'utf8'),
+      'nightflix.invalid', release?.deepLinkHost ?? new URL(input.h5Origin).hostname));
+    if (release?.firebaseOptions) {
+      const options = release.firebaseOptions;
+      const resource = '<?xml version="1.0" encoding="utf-8"?><resources>'
+        + Object.entries({ google_app_id: options.appId, google_api_key: options.apiKey,
+          gcm_defaultSenderId: options.messagingSenderId, project_id: options.projectId })
+          .map(([key, value]) => `<string name="${key}" translatable="false">${xmlText(value)}</string>`).join('') + '</resources>';
+      await writeFile(join(target, 'android', 'app', 'src', 'main', 'res', 'values', 'nightflix_firebase.xml'), resource);
+    }
+    if (release) {
+      const path = join(target, 'android', 'app', 'src', 'main', 'AndroidManifest.xml');
+      await writeFile(path, replaceRequired(await readFile(path, 'utf8'),
+        'ca-app-pub-3940256099942544~3347511713', release.admobAppId));
+    }
     await writeAndroidImages(target, input.icon, input.splash);
     await writeFile(join(target, 'assets', 'brand', 'app-icon-master.png'), input.icon);
     const environment: NodeJS.ProcessEnv = {
+      NIGHTFLIX_SIGNING_PROPERTIES: release?.androidSigningProperties,
       PUB_CACHE: await requiredAbsoluteDirectory(
         process.env.APP_BUILD_PUB_CACHE,
         'APP_BUILD_PUB_CACHE',
@@ -122,11 +207,12 @@ export class NativeAppBuilder {
       { cwd: target, environment: buildEnvironmentVariables },
     );
     await runFixedCommand(flutter, [
-      '--suppress-analytics', 'build', 'apk', '--debug', '--no-pub',
+      '--suppress-analytics', 'build', 'apk', release ? '--release' : '--debug', '--no-pub',
       `--dart-define=API_BASE_URL=${input.h5Origin}`,
+      ...(release?.firebaseOptions ? [`--dart-define=FIREBASE_OPTIONS=${JSON.stringify(release.firebaseOptions)}`] : []),
     ], { cwd: target, environment: buildEnvironmentVariables });
-    const produced = join(target, 'build', 'app', 'outputs', 'flutter-apk', 'app-debug.apk');
-    const filename = `${input.jobId}-android-debug.apk`;
+    const produced = join(target, 'build', 'app', 'outputs', 'flutter-apk', release ? 'app-release.apk' : 'app-debug.apk');
+    const filename = `${input.jobId}-android-${release ? 'release' : 'debug'}.apk`;
     const artifact = join(temporaryRoot, filename);
     await rename(produced, artifact);
     return {
@@ -141,6 +227,7 @@ export class NativeAppBuilder {
     templateRoot: string,
     temporaryRoot: string,
     input: Awaited<ReturnType<typeof validateInput>>,
+    release?: NativeReleaseConfiguration,
   ): Promise<Omit<NativeAppBuildOutput, 'cleanup'>> {
     if (process.platform !== 'darwin') {
       throw new AppBuildExecutionError('builder_unavailable');
@@ -159,15 +246,30 @@ export class NativeAppBuilder {
       /PRODUCT_BUNDLE_IDENTIFIER = com\.nightflix\.template\.RunnerTests;/g,
       `PRODUCT_BUNDLE_IDENTIFIER = ${input.iosBundleId}.RunnerTests;`,
     );
+    if (release) {
+      project = project.replace(/(PRODUCT_BUNDLE_IDENTIFIER = [^;]+;)/g,
+        `$1\n                DEVELOPMENT_TEAM = ${release.iosTeamId};`);
+    }
     await writeFile(projectPath, project, 'utf8');
 
     const infoPath = join(target, 'ios', 'Runner', 'Info.plist');
     let info = await readFile(infoPath, 'utf8');
+    if (release) info = replaceRequired(info, 'ca-app-pub-3940256099942544~1458002511', release.admobAppId);
+    if (release?.googleIosClientId) {
+      const scheme = release.googleIosClientId.split('.').reverse().join('.');
+      info = replaceRequired(info, '<!-- NIGHTFLIX_TENANT_URL_TYPES -->',
+        `<key>CFBundleURLTypes</key><array><dict><key>CFBundleURLSchemes</key><array><string>${xmlText(scheme)}</string></array></dict></array>`);
+    }
     info = info.replace(
       /(<key>CFBundleDisplayName<\/key>\s*<string>)[^<]*(<\/string>)/,
       `$1${xmlText(input.appName)}$2`,
     );
     await writeFile(infoPath, info, 'utf8');
+    const entitlementPath = join(target, 'ios', 'Runner', 'Runner.entitlements');
+    let entitlements = replaceRequired(await readFile(entitlementPath, 'utf8'), 'nightflix.invalid',
+      release?.deepLinkHost ?? new URL(input.h5Origin).hostname);
+    if (release) entitlements = replaceRequired(entitlements, '<string>development</string>', '<string>production</string>');
+    await writeFile(entitlementPath, entitlements, 'utf8');
     await writeIosImages(target, input.icon, input.splash);
     await writeFile(join(target, 'assets', 'brand', 'app-icon-master.png'), input.icon);
 
@@ -182,6 +284,21 @@ export class NativeAppBuilder {
       ['--suppress-analytics', 'pub', 'get', '--offline'],
       { cwd: target, environment: buildEnvironmentVariables },
     );
+    if (release) {
+      await runFixedCommand(flutter, [
+        '--suppress-analytics', 'build', 'ipa', '--release', '--no-pub',
+        `--export-options-plist=${release.iosExportOptionsPlist}`,
+        `--dart-define=API_BASE_URL=${input.h5Origin}`,
+        ...(release.firebaseOptions ? [`--dart-define=FIREBASE_OPTIONS=${JSON.stringify(release.firebaseOptions)}`] : []),
+      ], { cwd: target, environment: buildEnvironmentVariables });
+      const directory = join(target, 'build', 'ios', 'ipa');
+      const files = (await readdir(directory)).filter((name) => name.endsWith('.ipa'));
+      if (files.length !== 1) throw new AppBuildExecutionError('build_failed');
+      const filename = `${input.jobId}-ios-release.ipa`;
+      const artifact = join(temporaryRoot, filename);
+      await rename(join(directory, files[0]!), artifact);
+      return { contentType: 'application/zip', filename, path: artifact };
+    }
     await runFixedCommand(flutter, [
       '--suppress-analytics', 'build', 'ios', '--simulator', '--debug', '--no-codesign', '--no-pub',
       `--dart-define=API_BASE_URL=${input.h5Origin}`,
@@ -322,8 +439,10 @@ async function copyFlutterTemplate(source: string, target: string) {
       const pathRelative = relative(root, path);
       if (!pathRelative) return true;
       const parts = pathRelative.split(sep);
+      if (/\.(?:jks|keystore|p12|mobileprovision)$/i.test(pathRelative) || /\.private\./i.test(pathRelative)) return false;
       return !parts.some((part) => [
         '.dart_tool', '.git', '.gradle', '.idea', 'Pods', 'build', 'node_modules',
+        'local.properties', 'key.properties', 'signing.private.properties', 'tenant-release.private.json',
       ].includes(part));
     },
   });

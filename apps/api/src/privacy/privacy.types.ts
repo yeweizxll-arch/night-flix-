@@ -1,13 +1,7 @@
+import { SUPPORTED_APP_LOCALES } from '@drama/contracts';
 import type { CustomerPrincipal } from '../customer-auth/customer-auth.types';
 
-export const CUSTOMER_LEGAL_LOCALES = [
-  'zh-CN',
-  'zh-TW',
-  'en-US',
-  'fr-FR',
-  'ja-JP',
-  'ko-KR',
-] as const;
+export const CUSTOMER_LEGAL_LOCALES = SUPPORTED_APP_LOCALES;
 
 export const LEGAL_DOCUMENT_TYPES = [
   'privacy',
@@ -56,4 +50,3 @@ export interface CustomerErasureRequestInput {
   acknowledgeRetention?: unknown;
   currentPassword?: unknown;
 }
-

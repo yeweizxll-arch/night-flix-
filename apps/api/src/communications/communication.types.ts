@@ -1,6 +1,7 @@
+import { type AppLocale } from '@drama/contracts';
 export type CommunicationChannel = 'email' | 'sms';
 export type CommunicationProvider = 'resend' | 'twilio';
-export type CommunicationLocale = 'zh-CN' | 'zh-TW' | 'en-US' | 'fr-FR' | 'ja-JP' | 'ko-KR';
+export type CommunicationLocale = AppLocale;
 
 export type CommunicationCredentials =
   | { apiKey: string; fromEmail: string; type: 'resend' }
@@ -22,4 +23,3 @@ export interface TestCommunicationConfigInput {
   destination?: unknown;
   expectedVersion?: unknown;
 }
-

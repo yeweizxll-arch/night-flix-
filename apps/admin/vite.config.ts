@@ -15,32 +15,10 @@ export default defineConfig(({ mode }) => {
   ).pathname);
 
   return {
-    build: {
-      rollupOptions: {
-        output: {
-          manualChunks(id) {
-            if (id.includes('/node_modules/@ant-design/icons')) {
-              return 'vendor-icons';
-            }
-            if (id.includes('/node_modules/@rc-component/')) {
-              return 'vendor-rc';
-            }
-            if (id.includes('/node_modules/antd/')) {
-              return 'vendor-antd';
-            }
-            if (
-              id.includes('/node_modules/react/') ||
-              id.includes('/node_modules/react-dom/') ||
-              id.includes('/node_modules/scheduler/')
-            ) {
-              return 'vendor-react';
-            }
-            return undefined;
-          }
-        },
-      },
-    },
     plugins: [react()],
+    build: {
+      commonjsOptions: { include: [/node_modules/, /packages\/contracts\/dist/] },
+    },
     resolve: {
       alias: {
         '@admin-scope-shell': scopeShell,

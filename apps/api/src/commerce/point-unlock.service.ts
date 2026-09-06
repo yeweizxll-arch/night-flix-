@@ -1,3 +1,4 @@
+import { lockPublicDistribution } from '../public-drama-pool/public-distribution';
 import {
   BadRequestException,
   ConflictException,
@@ -15,6 +16,7 @@ import {
   type DatabaseTransaction,
 } from '../database/database.service';
 import { amountNumber, requireUuid } from './commerce-validation';
+import { settleNativeRefundDebt } from './native-store.service';
 
 type PointTargetType = 'drama' | 'episode';
 
@@ -71,6 +73,7 @@ export class PointUnlockService {
     requireUuid(principal.accountId, 'accountId');
     return this.database.inPlatformContext(async (transaction) => {
       await lockCustomerAvailability(transaction, principal);
+      await transaction`select set_config('app.tenant_id', ${principal.tenantId}, true)`;
       const command = await beginCommand(
         transaction,
         principal,
@@ -117,6 +120,9 @@ export class PointUnlockService {
         return response;
       }
 
+      if (await settleNativeRefundDebt(transaction, principal.tenantId, principal.accountId) > 0n) {
+        throw new ConflictException('An outstanding store refund must be repaid before spending points');
+      }
       const pointAccounts = await transaction<Array<{
         balance: string | number | bigint;
         id: string;
@@ -235,6 +241,8 @@ async function lockSellableTarget(
         where drama.id = ${targetId}
           and drama.status = 'published'
           and drama.deleted_at is null
+          and drama.emergency_takedown_at is null
+          and app.customer_region_allowed(${tenantId}, drama.id)
           and (
             (drama.owner_type = 'tenant' and drama.owner_tenant_id = ${tenantId})
             or drama.owner_type = 'platform'
@@ -250,6 +258,8 @@ async function lockSellableTarget(
           and episode.deleted_at is null
           and drama.status = 'published'
           and drama.deleted_at is null
+          and drama.emergency_takedown_at is null
+          and app.customer_region_allowed(${tenantId}, drama.id)
           and (
             (drama.owner_type = 'tenant' and drama.owner_tenant_id = ${tenantId})
             or drama.owner_type = 'platform'
@@ -259,20 +269,7 @@ async function lockSellableTarget(
   const target = targets[0];
   if (!target) throw new NotFoundException('Point-unlockable content not found');
   if (target.owner_type === 'platform') {
-    const licenses = await transaction<{ id: string }[]>`
-      select license.id
-      from content_licenses as license
-      inner join content_license_items as item
-        on item.license_id = license.id and item.tenant_id = license.tenant_id
-      where license.tenant_id = ${tenantId}
-        and item.drama_id = ${target.drama_id}
-        and license.status in ('scheduled', 'active')
-        and license.starts_at <= transaction_timestamp()
-        and license.expires_at > transaction_timestamp()
-      order by license.id limit 1
-      for share of license, item
-    `;
-    if (!licenses[0]) throw new NotFoundException('Point-unlockable content not found');
+    await lockPublicDistribution(transaction, tenantId, target.drama_id);
   }
   return target;
 }

@@ -1,3 +1,4 @@
+import { type AppLocale } from '@drama/contracts';
 import {
   Alert,
   Button,
@@ -22,7 +23,7 @@ import { useAuth } from '../auth/AuthProvider';
 
 type CatalogStatus = 'active' | 'disabled';
 type Currency = 'CNY' | 'USD' | 'EUR' | 'JPY' | 'KRW';
-type Locale = 'zh-CN' | 'zh-TW' | 'en-US' | 'fr-FR' | 'ja-JP' | 'ko-KR';
+type Locale = AppLocale;
 
 interface Translation {
   description?: string;

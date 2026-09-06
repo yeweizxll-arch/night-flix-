@@ -24,6 +24,7 @@ import { CustomerPlaybackAccessService } from './customer-playback-access.servic
 import { CustomerPlaybackUrlService } from './customer-playback-url.service';
 import { PlaybackService } from './playback.service';
 import type { UpsertWatchProgressInput } from './playback.types';
+import type { PlaybackViewer } from './playback.types';
 
 @Controller('customer/playback')
 export class PlaybackController {
@@ -49,10 +50,11 @@ export class PlaybackController {
     @Req() request: FastifyRequest,
   ) {
     return this.playbackUrls.issue(
-      await this.principal(request),
+      await this.viewer(request),
       episodeId,
       expiresInSeconds,
       request.ip,
+      `https://${this.tenantContext.current()?.host}`,
     );
   }
 
@@ -66,7 +68,7 @@ export class PlaybackController {
     @Req() request: FastifyRequest,
   ) {
     return this.playbackUrls.issueTrack(
-      await this.principal(request), episodeId, trackId, expiresInSeconds, request.ip,
+      await this.viewer(request), episodeId, trackId, expiresInSeconds, request.ip,
     );
   }
 
@@ -77,7 +79,7 @@ export class PlaybackController {
     @Req() request: FastifyRequest,
   ) {
     return this.playbackAccess.getAccess(
-      await this.principal(request),
+      await this.viewer(request),
       episodeId,
     );
   }
@@ -141,6 +143,14 @@ export class PlaybackController {
       dramaId,
       uuidV7(),
     );
+  }
+
+  private async viewer(request: FastifyRequest): Promise<PlaybackViewer> {
+    if (request.headers.authorization !== undefined) return this.principal(request);
+    const context = this.tenantContext.current();
+    if (!context?.tenantId) throw new BadRequestException('A verified tenant domain is required');
+    if (context.tenantStatus !== 'active') throw new ForbiddenException('Tenant is not available');
+    return { tenantId: context.tenantId };
   }
 
   private async principal(request: FastifyRequest) {

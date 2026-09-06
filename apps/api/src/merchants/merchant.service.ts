@@ -1,3 +1,4 @@
+import { SUPPORTED_APP_LOCALES } from '@drama/contracts';
 import { tenantOwnerPermissions } from '@drama/contracts';
 import {
   BadRequestException,
@@ -21,14 +22,7 @@ import type {
   UpdateMerchantInput,
 } from './merchant.types';
 
-const SUPPORTED_LOCALES = new Set([
-  'zh-CN',
-  'zh-TW',
-  'en-US',
-  'fr-FR',
-  'ja-JP',
-  'ko-KR',
-]);
+const SUPPORTED_LOCALES = new Set<string>(SUPPORTED_APP_LOCALES);
 const CODE_PATTERN = /^[a-z0-9][a-z0-9-]{1,62}$/;
 const USERNAME_PATTERN = /^[a-z0-9][a-z0-9_.-]{2,63}$/;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;

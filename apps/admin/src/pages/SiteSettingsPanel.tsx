@@ -19,6 +19,7 @@ import {
   Typography,
 } from 'antd';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { APP_LOCALE_OPTIONS } from '@drama/contracts';
 
 import { ApiError } from '../api/http';
 import { useAuth } from '../auth/AuthProvider';
@@ -93,14 +94,7 @@ interface SiteSettingsPanelProps {
   verifyEndpoint?: (domainId: string) => string;
 }
 
-const localeOptions = [
-  ['简体中文', 'zh-CN'],
-  ['繁体中文', 'zh-TW'],
-  ['English', 'en-US'],
-  ['Français', 'fr-FR'],
-  ['日本語', 'ja-JP'],
-  ['한국어', 'ko-KR'],
-].map(([label, value]) => ({ label, value }));
+const localeOptions = APP_LOCALE_OPTIONS;
 
 export function SiteSettingsPanel({
   canManageDomains,

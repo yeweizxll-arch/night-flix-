@@ -115,7 +115,8 @@ describe('customer store and wallet read models', () => {
       logoMediaAssetId: logo,
       onlineOnly: true,
       siteName: 'Boutique A',
-      supportedLocales: ['zh-CN', 'zh-TW', 'en-US', 'fr-FR', 'ja-JP', 'ko-KR'],
+      supportedLocales: ['zh-CN', 'zh-TW', 'en-US', 'fr-FR', 'ja-JP', 'ko-KR',
+        'es-ES', 'pt-BR', 'id-ID', 'th-TH', 'vi-VN', 'de-DE', 'ar-SA', 'hi-IN', 'tr-TR'],
       theme: { accentColor: '#abcdef', colorMode: 'dark', primaryColor: '#123456' },
     });
     expect(JSON.stringify(result)).not.toMatch(/object_key|source_url|provider|secret/i);

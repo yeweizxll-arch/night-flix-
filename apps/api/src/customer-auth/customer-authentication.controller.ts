@@ -37,6 +37,21 @@ export class CustomerAuthenticationController {
     private readonly tenantContext: TenantContextService,
   ) {}
 
+  @Post('identity/challenge')
+  @PublicEndpoint()
+  @Header('Cache-Control', 'no-store')
+  identityChallenge(@Body() input: { provider: 'apple' | 'google' }, @Req() request: FastifyRequest) {
+    return this.authentication.identityChallenge(this.requireAvailableTenant(), input?.provider, requestMetadata(request));
+  }
+
+  @Post('identity/login')
+  @PublicEndpoint()
+  @HttpCode(200)
+  @Header('Cache-Control', 'no-store')
+  identityLogin(@Body() input: Parameters<CustomerAuthenticationService['identityLogin']>[1], @Req() request: FastifyRequest) {
+    return this.authentication.identityLogin(this.requireAvailableTenant(), input, requestMetadata(request));
+  }
+
   @Post('register')
   @PublicEndpoint()
   async register(

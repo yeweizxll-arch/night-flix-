@@ -1,6 +1,8 @@
 import 'reflect-metadata';
 
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import type { FastifyRequest } from 'fastify';
+import type { CustomerAuthenticationService } from '../customer-auth/customer-authentication.service';
 import { describe, expect, it, vi } from 'vitest';
 
 import { PUBLIC_ENDPOINT_METADATA } from '../auth/public-endpoint.decorator';
@@ -21,7 +23,7 @@ describe('CustomerContentCatalogController', () => {
     }
   });
 
-  it('derives scope only from a verified active tenant domain', () => {
+  it('derives scope only from a verified active tenant domain', async () => {
     const listDramas = vi.fn();
     const getDrama = vi.fn();
     const controller = makeController({ getDrama, listDramas }, {
@@ -31,8 +33,8 @@ describe('CustomerContentCatalogController', () => {
 
     controller.list({ locale: 'ja-JP' });
     expect(listDramas).toHaveBeenCalledWith(tenantId, { locale: 'ja-JP' });
-    controller.detail(dramaId, 'fr-FR');
-    expect(getDrama).toHaveBeenCalledWith(tenantId, dramaId, 'fr-FR');
+    await controller.detail(dramaId, 'fr-FR', { headers: {} } as FastifyRequest);
+    expect(getDrama).toHaveBeenCalledWith(tenantId, dramaId, 'fr-FR', undefined);
 
     expect(() => makeController({}, undefined).list({}))
       .toThrow(BadRequestException);
@@ -50,5 +52,6 @@ function makeController(
   return new CustomerContentCatalogController(
     catalog as unknown as CustomerContentCatalogService,
     { current: vi.fn(() => context) } as unknown as TenantContextService,
+    {} as CustomerAuthenticationService,
   );
 }

@@ -19,6 +19,8 @@ const WINDOW_MS = 5 * 60 * 1_000;
 const MAX_MEMORY_KEYS = 5_000;
 
 export type AuthenticationRateLimitOperation =
+  | 'ad_observation'
+  | 'store_verify'
   | 'device_revoke'
   | 'login'
   | 'otp_create'
@@ -32,6 +34,8 @@ const OPERATION_LIMITS: Record<AuthenticationRateLimitOperation, {
   ip: number;
   total: number;
 }> = {
+  ad_observation: { identifier: 120, ip: 120, total: 10000 },
+  store_verify: { identifier: 30, ip: 120, total: 1000 },
   device_revoke: { identifier: 10, ip: 30, total: 200 },
   login: { identifier: 8, ip: 30, total: 100 },
   otp_create: { identifier: 5, ip: 20, total: 150 },

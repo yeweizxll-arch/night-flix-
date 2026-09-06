@@ -56,7 +56,8 @@ describe('CustomerAssetService', () => {
     });
     expect(JSON.stringify(result)).not.toMatch(/object_key|credential|provider|secret-key/);
     expect(fixture.sql.join('\n')).toContain('for share');
-    expect(fixture.sql.join('\n')).toContain('for share of media, provider');
+    expect(fixture.sql.join('\n')).toContain("app.lock_customer_row('media_assets', media.id");
+    expect(fixture.sql.join('\n')).toContain("app.lock_customer_row('storage_providers', provider.id");
   });
 
   it('keeps the transaction open while local signing blocks provider disable or rotation', async () => {
@@ -171,4 +172,3 @@ function serviceFixture(options: {
     storage,
   };
 }
-

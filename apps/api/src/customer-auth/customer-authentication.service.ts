@@ -1,9 +1,11 @@
+import { SUPPORTED_APP_LOCALES } from '@drama/contracts';
 import {
   BadRequestException,
   ConflictException,
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
   ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -39,6 +41,8 @@ import type {
 } from './customer-auth.types';
 import { normalizeEmail, normalizePhone } from './customer-otp.service';
 import { CustomerOtpService } from './customer-otp.service';
+import { OidcVerifier, type IdentityProvider } from './oidc-verifier';
+import { nativeIntegrationConfig } from '../runtime/native-integration-config';
 import {
   assertCustomerSiteAvailable,
   assertCustomerTenantActive,
@@ -91,7 +95,79 @@ export class CustomerAuthenticationService {
     private readonly cryptoWorkLimiter: CryptoWorkLimiterService,
     @Inject(CustomerOtpService)
     private readonly otp: CustomerOtpService,
+    @Optional() @Inject(OidcVerifier) private readonly oidc?: OidcVerifier,
   ) {}
+
+  async identityChallenge(tenantId: string, provider: IdentityProvider, metadata: CustomerRequestMetadata) {
+    assertUuid(tenantId, 'tenantId');
+    const config = nativeIntegrationConfig(tenantId);
+    if (!['apple', 'google'].includes(provider)
+      || !(provider === 'apple' ? config.appleClientId : config.googleClientId)) {
+      throw new BadRequestException('Identity provider is unavailable');
+    }
+    await this.rateLimiter.consume({ ip: metadata.ip, login: provider, operation: 'login', scope: 'tenant', tenantId });
+    const nonce = randomBytes(32).toString('base64url');
+    const challengeId = uuidV7();
+    await this.database.inPlatformContext(async (transaction) => {
+      await assertCustomerSiteAvailable(transaction, tenantId);
+      await transaction`insert into customer_identity_challenges(id, tenant_id, provider, nonce_hash, expires_at)
+        values (${challengeId}, ${tenantId}, ${provider}, ${createHash('sha256').update(nonce).digest('hex')}, statement_timestamp() + interval '5 minutes')`;
+    });
+    return { challengeId, nonce };
+  }
+
+  async identityLogin(tenantId: string, raw: {
+    provider: IdentityProvider; challengeId: string; identityToken: string;
+    devicePlatform: CustomerDevicePlatform; deviceToken?: string; deviceLabel?: string;
+    legalLocale?: unknown; legalConsents?: unknown;
+  }, metadata: CustomerRequestMetadata): Promise<CustomerSessionResponse> {
+    assertUuid(tenantId, 'tenantId');
+    if (!raw || !['apple', 'google'].includes(raw.provider)) throw new BadRequestException('Invalid identity provider');
+    assertUuid(raw.challengeId, 'challengeId');
+    const device = validateLogin({ ...raw, identifier: 'oidc-customer', password: 'Not-a-login-password-1' });
+    await this.rateLimiter.consume({ ip: metadata.ip, login: raw.provider, operation: 'login', scope: 'tenant', tenantId });
+    const challenge = await this.database.inPlatformContext(async (transaction) => {
+      await assertCustomerSiteAvailable(transaction, tenantId);
+      const rows = await transaction<{ nonce_hash: string }[]>`select nonce_hash from customer_identity_challenges
+        where id = ${raw.challengeId} and tenant_id = ${tenantId} and provider = ${raw.provider}
+          and consumed_at is null and expires_at > statement_timestamp()`;
+      if (!rows[0]) throw new UnauthorizedException('Identity challenge expired');
+      return rows[0];
+    });
+    if (!this.oidc) throw new ServiceUnavailableException('Identity verification is unavailable');
+    const identity = await this.oidc.verify(tenantId, raw.provider, raw.identityToken, challenge.nonce_hash);
+    const accountId = await this.database.inPlatformContext(async (transaction) => {
+      await assertCustomerSiteAvailable(transaction, tenantId);
+      const consumed = await transaction<{ id: string }[]>`update customer_identity_challenges
+        set consumed_at = statement_timestamp() where id = ${raw.challengeId} and tenant_id = ${tenantId}
+          and provider = ${raw.provider} and consumed_at is null and expires_at > statement_timestamp() returning id`;
+      if (!consumed[0]) throw new UnauthorizedException('Identity challenge was already consumed');
+      const existing = await transaction<{ account_id: string }[]>`select account_id from customer_external_identities
+        where tenant_id = ${tenantId} and provider = ${raw.provider} and subject = ${identity.subject}`;
+      if (existing[0]) return existing[0].account_id;
+      const locale = validateLegalLocale(raw.legalLocale);
+      const consents = validateLegalConsentInput(raw.legalConsents);
+      const documents = await requiredRegistrationDocuments(transaction, tenantId, locale);
+      validateRegistrationConsents(consents, documents);
+      const id = uuidV7();
+      // No automatic email-based account linking. Provider subject is the identity.
+      const passwordHash = await this.cryptoWorkLimiter.run(() => hashPassword(randomBytes(48).toString('base64url')));
+      await transaction`insert into customer_accounts(id, tenant_id, username, password_hash)
+        values (${id}, ${tenantId}, ${'user_' + id.replaceAll('-', '')}, ${passwordHash})`;
+      await transaction`insert into customer_external_identities(tenant_id, account_id, provider, subject)
+        values (${tenantId}, ${id}, ${raw.provider}, ${identity.subject})`;
+      for (const document of documents) {
+        await transaction`insert into customer_legal_consents(id, tenant_id, account_id, document_id,
+          document_version_no, document_type, locale, consent_source) values
+          (${uuidV7()}, ${tenantId}, ${id}, ${document.id}, ${document.version_no}, ${document.document_type}, ${document.locale}, 'registration')`;
+      }
+      await this.insertOutbox(transaction, tenantId, metadata.requestId, {
+        aggregateId: id, eventType: 'CustomerRegistered', payload: { accountId: id, tenantId },
+      });
+      return id;
+    });
+    return this.issueCustomerSession(tenantId, accountId, device, metadata);
+  }
 
   async register(
     tenantId: string,
@@ -237,7 +313,12 @@ export class CustomerAuthenticationService {
     if (!credential || !passwordMatches || credential.status !== 'active') {
       throw new UnauthorizedException('Invalid customer account or password');
     }
+    return this.issueCustomerSession(tenantId, credential.id, input, metadata, passwordHash);
+  }
 
+  private async issueCustomerSession(tenantId: string, accountId: string,
+    input: Pick<CustomerLoginInput, 'deviceToken' | 'devicePlatform' | 'deviceLabel'>,
+    metadata: CustomerRequestMetadata, expectedPasswordHash?: string): Promise<CustomerSessionResponse> {
     const access = generateAccessToken();
     const refresh = generateRefreshToken();
     return this.database.inTenantContext(tenantId, async (transaction) => {
@@ -247,11 +328,12 @@ export class CustomerAuthenticationService {
           id, username::text, password_hash, status,
           statement_timestamp() as database_now
         from customer_accounts
-        where id = ${credential.id} and tenant_id = ${tenantId}
+        where id = ${accountId} and tenant_id = ${tenantId}
         for update
       `;
       const account = lockedAccounts[0];
-      if (!account || account.status !== 'active') {
+      if (!account || account.status !== 'active'
+        || (expectedPasswordHash !== undefined && account.password_hash !== expectedPasswordHash)) {
         throw new UnauthorizedException('Customer account is disabled');
       }
       const nowMs = account.database_now.getTime();
@@ -626,6 +708,11 @@ export class CustomerAuthenticationService {
     assertUuid(tenantId, 'tenantId');
     if (!refreshToken || !/^rtk_[A-Za-z0-9_-]{43}$/.test(refreshToken)) return;
     await this.database.inTenantContext(tenantId, async (transaction) => {
+      await transaction`update customer_push_tokens as token set status = 'revoked', revoked_at = statement_timestamp(), revoke_reason = 'customer_logout'
+        where token.tenant_id = ${tenantId} and token.status = 'active' and exists (
+          select 1 from customer_sessions as session where session.tenant_id = token.tenant_id
+            and session.account_id = token.account_id and session.device_id = token.device_id
+            and session.refresh_token_hash = ${digestToken(refreshToken)} and session.revoked_at is null)`;
       await transaction`
         update customer_sessions
         set revoked_at = statement_timestamp(), revoked_reason = 'logout'
@@ -1198,7 +1285,7 @@ function validateRegistrationConsents(
 
 function validateLegalLocale(value: unknown): string {
   if (typeof value !== 'string'
-    || !['zh-CN', 'zh-TW', 'en-US', 'fr-FR', 'ja-JP', 'ko-KR'].includes(value)) {
+    || !SUPPORTED_APP_LOCALES.some(locale => locale === value)) {
     throw new BadRequestException('legalLocale is required and must be supported');
   }
   return value;

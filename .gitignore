@@ -16,3 +16,14 @@ apps/mobile/**/*.keystore
 apps/mobile/**/*.p12
 apps/mobile/**/*.mobileprovision
 apps/admin/.vite/
+**/*.p12
+**/*.mobileprovision
+**/*.jks
+**/*.keystore
+**/tenant-release.private.json
+**/signing.private.properties
+apps/flutter_app/android/build/
+**/native-integrations.private.json
+**/native-stores.private.json
+**/*.p8
+**/service-account*.json

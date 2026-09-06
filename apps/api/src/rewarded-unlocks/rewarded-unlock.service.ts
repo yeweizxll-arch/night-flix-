@@ -209,7 +209,7 @@ export class RewardedUnlockService {
           ${uuidV7()}, ${unlock.tenant_id}, ${unlock.account_id}, 'episode',
           ${unlock.episode_id}, 'rewarded_ad', ${unlock.id}, ${grant.granted_at}
         ) on conflict (tenant_id, account_id, entitlement_type, product_id)
-          where revoked_at is null do nothing
+          where revoked_at is null and source_type <> 'native_store' do nothing
       `;
       return { granted: true };
     });

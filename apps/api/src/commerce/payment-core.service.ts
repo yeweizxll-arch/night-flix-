@@ -29,6 +29,7 @@ import {
   type StripeMode,
 } from './payment-secret-cipher';
 import { RefundService } from './refund.service';
+import { settleNativeRefundDebt } from './native-store.service';
 
 interface PaymentRouteRow {
   active_secret_version: number | null;
@@ -1076,6 +1077,7 @@ export class PaymentCoreService {
         )
         on conflict (tenant_id, idempotency_key) do nothing
       `;
+      await settleNativeRefundDebt(transaction, attempt.tenant_id, attempt.account_id);
     } else {
       const durationDays = item.item_type === 'membership'
         ? snapshotSafeInteger(item.product_snapshot_json.durationDays, 'durationDays', 3650)

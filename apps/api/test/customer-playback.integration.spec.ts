@@ -17,6 +17,14 @@ import type {
   CustomerSessionResponse,
 } from '../src/customer-auth/customer-auth.types';
 import { CustomerAuthenticationService } from '../src/customer-auth/customer-authentication.service';
+import type { OidcVerifier } from '../src/customer-auth/oidc-verifier';
+vi.mock('../src/runtime/native-integration-config', () => ({ nativeIntegrationConfig: () => ({
+  googleClientId: 'test.apps.googleusercontent.com', appleClientId: 'com.tenant.test',
+}) }));
+const identityVerify = vi.fn(async (_tenant: string, _provider: string, token: string, _nonce: string) => {
+  if (token !== 'verified-by-provider') throw new UnauthorizedException();
+  return { subject: 'stable-provider-subject' };
+});
 import { CustomerOtpService } from '../src/customer-auth/customer-otp.service';
 import type {
   DatabaseService,
@@ -263,6 +271,7 @@ describe('customer authentication, OTP, devices, and playback domain', () => {
       rateLimiter,
       cryptoWorkLimiter,
       otp,
+      { verify: identityVerify } as unknown as OidcVerifier,
     );
     playbackAccess = new CustomerPlaybackAccessService(databaseService);
     playback = new PlaybackService(databaseService, playbackAccess);
@@ -1463,6 +1472,36 @@ describe('customer authentication, OTP, devices, and playback domain', () => {
       )
     `)).rejects.toThrow();
     await database.exec('rollback; reset role');
+  });
+  it('binds external identities to tenant, consumes challenges once, requires new-account consents and reuses sessions', async () => {
+    const challenge = await authentication.identityChallenge(tenantA, 'apple', metadata());
+    const input = { provider: 'apple' as const, challengeId: challenge.challengeId, identityToken: 'verified-by-provider',
+      devicePlatform: 'ios' as const, ...legalRegistration(tenantA) };
+    await expect(authentication.identityLogin(tenantB, input, metadata())).rejects.toThrow('Identity challenge expired');
+    await expect(authentication.identityLogin(tenantA, { ...input, identityToken: 'forged' }, metadata())).rejects.toThrow();
+    await expect(authentication.identityLogin(tenantA, { ...input, legalConsents: [] }, metadata())).rejects.toThrow();
+    const session = await authentication.identityLogin(tenantA, input, metadata());
+    expect(session.principal.tenantId).toBe(tenantA);
+    expect(session.deviceToken).toMatch(/^dev_/);
+    await expect(authentication.authenticateAccess(tenantA, session.accessToken)).resolves.toMatchObject({ accountId: session.principal.accountId });
+    await expect(authentication.identityLogin(tenantA, input, metadata())).rejects.toThrow('Identity challenge expired');
+    const next = await authentication.identityChallenge(tenantA, 'apple', metadata());
+    const again = await authentication.identityLogin(tenantA, { ...input, challengeId: next.challengeId, deviceToken: session.deviceToken }, metadata());
+    expect(again.principal.accountId).toBe(session.principal.accountId);
+    expect(again.principal.deviceId).toBe(session.principal.deviceId);
+    await expect(authentication.authenticateAccess(tenantA, session.accessToken)).rejects.toThrow();
+    const otherChallenge = await authentication.identityChallenge(tenantB, 'apple', metadata());
+    const other = await authentication.identityLogin(tenantB, { ...input, ...legalRegistration(tenantB), challengeId: otherChallenge.challengeId }, metadata());
+    expect(other.principal.accountId).not.toBe(session.principal.accountId);
+    const push = uuidV7();
+    await database.query(`insert into customer_push_tokens(id, tenant_id, account_id, device_id, platform,
+      token_ciphertext, token_digest, token_sha256, key_version)
+      values ($1, $2, $3, $4, 'ios', $5, $6, $7, 1)`,
+      [push, tenantA, again.principal.accountId, again.principal.deviceId, 'x'.repeat(64), 'hmac-sha256.1.' + 'h'.repeat(43), '2'.repeat(64)]);
+    await authentication.logout(tenantA, again.refreshToken);
+    await expect(authentication.authenticateAccess(tenantA, again.accessToken)).rejects.toThrow();
+    expect((await database.query('select status, revoke_reason from customer_push_tokens where id = $1', [push])).rows)
+      .toEqual([{ status: 'revoked', revoke_reason: 'customer_logout' }]);
   });
 });
 

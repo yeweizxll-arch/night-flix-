@@ -20,6 +20,7 @@ import {
   type CreateStorageUploadIntentInput,
   StorageUploadService,
   type StorageMutationMetadata,
+  type RegisterSourceObjectInput,
 } from './storage-upload.service';
 
 @Controller('tenant/content/media/uploads')
@@ -72,6 +73,13 @@ export class PlatformStorageUploadController {
     @Inject(StorageUploadService)
     private readonly uploads: StorageUploadService,
   ) {}
+
+  @Post('source-reference')
+  @RequirePermissions({ mode: 'write', permissions: ['platform.content.manage'], scope: 'platform' })
+  registerSource(@Body() input: RegisterSourceObjectInput, @CurrentPrincipal() principal: AccessPrincipal,
+    @Req() request: FastifyRequest) {
+    return this.uploads.registerPlatformSourceObject(input, platformMutationMetadata(principal, request));
+  }
 
   @Post()
   @RequirePermissions({

@@ -1,3 +1,4 @@
+import { SUPPORTED_APP_LOCALES } from '@drama/contracts';
 import {
   BadRequestException,
   ConflictException,
@@ -15,7 +16,7 @@ import type { ContentMutationMetadata } from './content.types';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const CODE = /^[a-z0-9][a-z0-9_-]{1,127}$/;
 const KEY = /^[A-Za-z0-9._:-]{8,200}$/;
-const LOCALES = new Set(['zh-CN', 'zh-TW', 'en-US', 'fr-FR', 'ja-JP', 'ko-KR']);
+const LOCALES = new Set<string>(SUPPORTED_APP_LOCALES);
 const MAX_BYTES = 1_048_576;
 const MAX_DRAMAS = 200;
 const MAX_EPISODES = 1_000;

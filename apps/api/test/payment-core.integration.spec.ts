@@ -876,6 +876,18 @@ async function insertOrder(
   const id = uuidV7();
   const productId = uuidV7();
   const itemId = uuidV7();
+  if (type === 'drama' || type === 'episode') {
+    const dramaId = type === 'drama' ? productId : uuidV7();
+    await database.query("insert into dramas(id, owner_type, owner_tenant_id, code) values ($1, 'tenant', $2, $3)",
+      [dramaId, tenantId, 'payment-' + dramaId]);
+    if (type === 'episode') {
+      const mediaId = uuidV7(); const providerId = uuidV7();
+      await database.query("insert into storage_providers(id, owner_type, owner_tenant_id, provider, account_label, bucket, credential_ciphertext, key_version) values ($1, 'tenant', $2, 's3', $3, 'fixture-bucket', 'fixture-only-ciphertext', 1)", [providerId, tenantId, 'Fixture ' + providerId]);
+      await database.query("insert into media_assets(id, owner_type, owner_tenant_id, kind, storage_provider_id, object_key, mime_type, checksum, status) values ($1, 'tenant', $2, 'video', $3, $4, 'video/mp4', $5, 'ready')", [mediaId, tenantId, providerId, 'fixtures/' + mediaId + '.mp4', 'a'.repeat(64)]);
+      await database.query("insert into episodes(id, drama_id, media_asset_id, episode_no) values ($1, $2, $3, 1)",
+        [productId, dramaId, mediaId]);
+    }
+  }
   const orderNo = `ORD${id.replaceAll('-', '').slice(0, 26).toUpperCase()}`;
   const created = expired ? "statement_timestamp() - interval '2 hours'" : 'statement_timestamp()';
   const expires = expired
