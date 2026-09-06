@@ -1,17 +1,21 @@
 // Usage: node deploy/test-server/smoke-ip.mjs /private/access.private.json
 // Real TLS verification is mandatory. Never prints credentials or session tokens.
 import https from 'node:https';
+import { checkServerIdentity } from 'node:tls';
 import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 const credentials=JSON.parse(readFileSync(process.argv[2]));
 const ip='47.110.245.29';
+// Server-local diagnostics retain verification against the public IP certificate.
+const loopback=process.argv.includes('--loopback');
+console.log(`Connection path: ${loopback?'server loopback (not public acceptance)':'public IP'}`);
 const ports={platform:9441,tenant:9442,web:443};
 let checks=0;
 async function request(scope,path,{body,token,host,cookie,method,origin}={}) {
   const port=ports[scope];
   return new Promise((resolve,reject)=>{
     const data=body === undefined ? undefined : JSON.stringify(body);
-    const req=https.request({hostname:ip,port,path,method:method ?? (data?'POST':'GET'),headers:{
+    const req=https.request({hostname:loopback?'127.0.0.1':ip,checkServerIdentity:(_host,cert)=>checkServerIdentity(ip,cert),port,path,method:method ?? (data?'POST':'GET'),headers:{
       host:host ?? `${ip}${port===443?'':`:${port}`}`,
       ...(data?{'content-type':'application/json','content-length':Buffer.byteLength(data)}:{}),
       ...(token?{authorization:`Bearer ${token}`} : {}),...(cookie?{cookie}:{}),

@@ -37,7 +37,8 @@ node deploy/test-server/build-artifact.mjs /absolute/new/artifact-directory
 
 API 当前监听所有网卡，**必须保持主机防火墙关闭 3200–3202 的公网访问**。
 网关独立反代到本机各 API，不允许总部路由落到代理商或用户服务。
-原始 Host 必须保留；总部 Host 不可同时登记为租户域名。
+正式域名网关保留原始 Host；总部 Host 不可同时登记为租户域名。
+本文末尾的单代理商 IP 测试网关仅在总部独立端口做受控虚拟 Host 转换。
 
 ## 数据库、缓存与初始化
 
@@ -75,14 +76,14 @@ Node 的额外 CA 需在进程启动前注入，不能仅依赖 CLI 的 `--env-f
 - 备份 `/var/backups/nightflix/nightflix-20260906-initial.dump`；SHA256：
   `a638d2948dcd064f2f3a6850ebcd332fbe9c8f237cec0e4abe1767744b37223f`。
 
-当前只开放 SSH。内部网关为 `127.0.0.1:8441/8442/8443`，测试 Host 为
+首次内部验收时只开放 SSH。内部网关为 `127.0.0.1:8441/8442/8443`，测试 Host 为
 `admin.nightflix.test` 和 `demo.nightflix.test`，使用私有测试 CA；这些不是公网可用地址。
 
 ### 尚未完成的外部体验条件
 
-1. 用户确认测试域名/公网入口方案，解析并配置可信 HTTPS 后才能开放网页和 App 联网体验。
+1. IP HTTPS 与联网测试 APK 已配置，见下方最新记录；管理后台公网端口仍待云端入站规则确认。
 2. 配置独立授权的视频对象存储并导入测试剧。目前没有向空库伪造可播放剧目或接入闪创数据。
-3. 域名和剧目就绪后重新构建联网 Android APK，完成真机播放/互动/解锁验收。
+3. 剧目就绪后完成 Android 真机播放/互动/解锁验收，目前仅完成构建和自动测试。
 4. Apple/Google/AdMob/邮件等真实集成仍需代理商对应配置；目前不宣称真实支付或广告验收通过。
 
 首次安装没有更早的健康版本；旧目录 `3571d70` 是初始化失败的候选，**不能用作回滚版本**。
@@ -113,7 +114,55 @@ Server: Beaver
 配置留存于 `/root/nightflix-incoming/nginx-acme.blocked.conf`，不在 Nginx 加载目录。
 未申请证书、未更改租户域名记录或运行环境、未更换应用制品、未开启 443。
 
-继续需用户确定其一：在本服务器使用已完成适用备案的自有域名；
-或提供中国香港/境外测试服务器后，按相同隔离架构重新部署并验证临时域名。
+当时提供的域名方案为：使用已完成适用备案的自有域名，或在境外测试服务器验证临时域名。
 中国内地以外地域的备案差异见[阿里云跨地域 FAQ](https://help.aliyun.com/zh/ecs/cross-region-usage-faqs)。
 不通过改变端口、伪造 Host 或关闭证书校验规避备案阻断。
+
+## 2026-09-06 更新：用户指定直接使用 IP
+
+此方案仅用于该独立测试服务器的一个代理商，不是正式多租户域名方案，也不代表备案豁免。
+直接 IP 的 HTTP ACME 校验路径经公网验证返回 200；未复用被阻断的 sslip 域名。
+
+| 入口 | 地址 | 实测状态 |
+| --- | --- | --- |
+| 用户 API / H5 | `https://47.110.245.29` | 公网 HTTPS、游客配置、测试用户登录及资料通过 |
+| 总部后台 | `https://47.110.245.29:9441` | 本机正常；公网 TLS 连接超时，待确认云安全组 |
+| 代理商后台 | `https://47.110.245.29:9442` | 本机正常；公网 TLS 连接超时，待确认云安全组 |
+| Android 测试包 | `https://47.110.245.29/downloads/nightflix-test-20260906.apk` | 公网 HEAD 200、Range 206 与 ZIP 文件头验证通过 |
+
+### 网关与数据变更
+
+- 安装 `nginx-ip.conf`，三个入口分别转发至原有 admin/agent/web 独立服务；worker 不暴露 HTTP。
+- 总部入口严格校验 Host 和浏览器 Origin 后，才映射到内部总部虚拟 Host；其他 Origin（包括 null）拒绝。
+  代理商与用户入口保留真实 IP Host，不更改生产 Host 策略，也不改变播放地址生成行为。
+- `bind-test-ip.cjs` 在事务中为 demo 租户新增已验证 IP 域名并记录租户审计，原主域名不变；拒绝覆盖其他租户绑定。
+- 变更前备份：`/var/backups/nightflix/nightflix-before-ip-20260906.dump`，权限 600。
+- 应用制品仍是 `7f192a1`，无服务器源码构建；总部/代理商/用户/worker 均保持隔离。
+- 主机 UFW 已允许 80、443、9441、9442（另保留 SSH 22）；3200–3202 未开放，数据库与 Redis 仍仅 loopback。
+  公网 9441/9442 超时，外部探测期间抓包未见对应流量抵达，尚未取得云控制台安全组证据；不能宣布公网后台验收完成。
+  不开放 3200–3202、5432 或 6379 来解决此问题。
+
+### 证书及自动续期
+
+- 使用官方预编译 Certbot Snap 5.8.0；先通过独立 staging 配置校验，再申请正式 IP 证书。
+- 证书 SAN 为 `IP Address:47.110.245.29`，路径 `/etc/letsencrypt/live/nightflix-ip/`。
+  本次证书到期时间 `2026-09-13 05:08:21 UTC`。
+- `snap.certbot.renew.timer` 已启用；`certbot renew --cert-name nightflix-ip --dry-run --run-deploy-hooks` 成功，
+  续期 hook 检查 Nginx 配置后 reload。
+- IP 证书寿命短，必须保留自动续期与 80 端口 ACME 路径；80 的其他路径返回 404。
+  相关要求见 [Let's Encrypt IP 证书指南](https://letsencrypt.org/2026/03/11/shorter-certs-certbot)。
+
+### 验证与未完成项
+
+- `smoke-ip.mjs <private-credentials.json> --loopback`：服务器本机 27 项通过，仍验证公网 IP 证书，不关闭 TLS 校验。
+  包括双后台登录、安全 Cookie 刷新、Host/Origin 拒绝、跨服务和跨身份隔离、中文与 15 语言、赠送余额。
+- 外部另完成 5 项检查：HTTPS readiness、游客与语言配置、用户登录、用户资料、APK 部分下载。
+- Flutter 本地 30 项测试通过，analyze 无问题。联网 debug APK 约 169 MiB，包名 `com.nightflix.template`，
+  版本 `1.0.0+2026090601`，API 为 `https://47.110.245.29`。仅用于内部体验，非商店发行包。
+- APK SHA256：`0e8e9e64b5a8b53a1234837d243447d785feb3e713fc3401140f8585722e4bcf`；上传后已在服务器再次核验。
+- 没有连接 Android 真机；本地 AVD 缺少系统镜像，无法进行运行时验收。尚无授权视频和对象存储配置，不能声称真机播放通过。
+- 双后台公网浏览器验收待 9441/9442 入站连通后执行；目前不是逐页 UI 验收。
+- 账号保存在仓库外受限目录的 `access.private.json`，未写入文档或 Git；真实支付、广告、第三方登录及邮件仍关闭。
+
+IP 网关回退时，先停止公网流量并撤下 `nightflix-ip.conf`、检查与 reload Nginx，再关闭对应新增公网端口；
+保留内部网关和应用制品。不要盲目恢复整库覆盖后续数据；IP 绑定已有审计，可在确认无使用后单独撤回。
