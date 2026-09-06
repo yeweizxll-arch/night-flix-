@@ -77,7 +77,7 @@ void main() {
       await tester.tap(find.byKey(const Key('paused-play-button')));
       await until(tester, () => player().value.isPlaying, 'resume');
       final before = player();
-      await tester.tap(find.textContaining('20 episodes').first);
+      await tester.tap(find.widgetWithText(TextButton, 'Episodes'));
       await until(
         tester,
         () =>
@@ -93,7 +93,7 @@ void main() {
             player().value.isPlaying,
         'episode 10',
       );
-      expect(find.textContaining('10 / 20'), findsWidgets);
+      expect(find.textContaining('EP 10'), findsWidgets);
       await tester.tap(find.text('Me'));
       await until(
         tester,
@@ -140,6 +140,7 @@ void main() {
       'nightflix-ocr-test-',
     );
     final file = File('${directory.path}/title.png');
+    debugPrint('OCR fixture directory: ${directory.path}');
     try {
       await file.writeAsBytes(data!.buffer.asUint8List());
       final result = await const MethodChannel('nightflix/text-recognition')
