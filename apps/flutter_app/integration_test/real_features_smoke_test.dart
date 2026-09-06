@@ -97,13 +97,16 @@ void main() {
       await tester.tap(find.byType(PopupMenuButton<double>));
       await until(
         tester,
-        () => find.text('2.0x').evaluate().isNotEmpty,
+        () => find.text('2.0x').hitTestable().evaluate().isNotEmpty,
         'speed menu',
       );
       await tester.tap(find.text('2.0x'));
       await until(
         tester,
-        () => player().value.playbackSpeed == 2,
+        () =>
+            find.byType(VideoPlayer).evaluate().isNotEmpty &&
+            player().value.playbackSpeed == 2 &&
+            player().value.isPlaying,
         'native speed',
       );
       expect(controller.playbackSpeed, 2);
