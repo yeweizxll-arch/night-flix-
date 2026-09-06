@@ -26,7 +26,6 @@ import type {
   CreateEpisodeInput,
   DeleteTenantDramaInput,
   ExpectedTenantContentVersionInput,
-  ReviewDecisionInput,
   UpdateDramaInput,
   UpdateEpisodeInput,
 } from './content.types';
@@ -149,20 +148,38 @@ export class TenantContentController {
     );
   }
 
-  @Post(':dramaId/submit-review')
+  @Post(':dramaId/publish')
   @RequirePermissions({
     mode: 'write',
-    permissions: ['content.drama.submit_review'],
+    permissions: ['content.drama.update'],
     scope: 'tenant',
   })
-  submit(
+  publish(
     @Param('dramaId') dramaId: string,
+    @Body() input: ExpectedTenantContentVersionInput,
     @CurrentPrincipal() principal: AccessPrincipal,
     @Req() request: FastifyRequest,
   ) {
-    return this.content.submitTenantDrama(
-      requireTenantId(principal),
-      dramaId,
+    return this.content.setTenantDramaPublication(
+      requireTenantId(principal), dramaId, 'publish', input,
+      mutationMetadata(principal, request),
+    );
+  }
+
+  @Post(':dramaId/unpublish')
+  @RequirePermissions({
+    mode: 'write',
+    permissions: ['content.drama.update'],
+    scope: 'tenant',
+  })
+  unpublish(
+    @Param('dramaId') dramaId: string,
+    @Body() input: ExpectedTenantContentVersionInput,
+    @CurrentPrincipal() principal: AccessPrincipal,
+    @Req() request: FastifyRequest,
+  ) {
+    return this.content.setTenantDramaPublication(
+      requireTenantId(principal), dramaId, 'unpublish', input,
       mutationMetadata(principal, request),
     );
   }
@@ -221,77 +238,6 @@ export class TenantContentController {
       requireTenantId(principal),
       dramaId,
       body,
-      mutationMetadata(principal, request),
-    );
-  }
-}
-
-@Controller('platform/content/reviews')
-export class PlatformContentReviewController {
-  constructor(
-    @Inject(ContentService)
-    private readonly content: ContentService,
-  ) {}
-
-  @Get()
-  @RequirePermissions({
-    mode: 'read',
-    permissions: ['content.review.read'],
-    scope: 'platform',
-  })
-  list(@Query() query: Record<string, unknown>) {
-    return this.content.listPlatformReviews(
-      Number(query.page ?? 1),
-      Number(query.pageSize ?? 20),
-    );
-  }
-
-  @Get(':reviewRequestId')
-  @RequirePermissions({
-    mode: 'read',
-    permissions: ['content.review.read'],
-    scope: 'platform',
-  })
-  detail(@Param('reviewRequestId') reviewRequestId: string) {
-    return this.content.getPlatformReview(reviewRequestId);
-  }
-
-  @Post(':reviewRequestId/approve')
-  @RequirePermissions({
-    mode: 'write',
-    permissions: ['content.review.approve'],
-    scope: 'platform',
-  })
-  approve(
-    @Param('reviewRequestId') reviewRequestId: string,
-    @Body() input: ReviewDecisionInput,
-    @CurrentPrincipal() principal: AccessPrincipal,
-    @Req() request: FastifyRequest,
-  ) {
-    return this.content.decidePlatformReview(
-      reviewRequestId,
-      'approve',
-      input,
-      mutationMetadata(principal, request),
-    );
-  }
-
-  @Post(':reviewRequestId/reject')
-  @RequirePermissions({
-    mode: 'write',
-    permissions: ['content.review.reject'],
-    scope: 'platform',
-  })
-  reject(
-    @Param('reviewRequestId') reviewRequestId: string,
-    @Body() input: ReviewDecisionInput,
-    @CurrentPrincipal() principal: AccessPrincipal,
-    @Req() request: FastifyRequest,
-  ) {
-    return this.content.decidePlatformReview(
-      reviewRequestId,
-      'reject',
-      input,
       mutationMetadata(principal, request),
     );
   }

@@ -132,23 +132,21 @@ describe('tenant content management, taxonomy, import, and export', () => {
 
     await database.exec(`update storage_providers set status = 'disabled', version = version + 1
       where id = '${providerId}'`);
-    await expect(content.submitTenantDrama(
+    await expect(content.setTenantDramaPublication(
       tenantId,
-      drama.id,
+      drama.id, 'publish', { expectedVersion: detail.version },
       metadata('tenant-drama-submit-disabled-preview-001'),
     )).rejects.toBeInstanceOf(BadRequestException);
     await database.exec(`update storage_providers set status = 'active', version = version + 1
       where id = '${providerId}'`);
-    const submitted = await content.submitTenantDrama(
+    await content.setTenantDramaPublication(
       tenantId,
-      drama.id,
+      drama.id, 'publish', { expectedVersion: detail.version },
       metadata('tenant-drama-submit-preview-001'),
     );
     const snapshot = await database.query<{ snapshot_json: {
       episodes: Array<{ previewMedia: { checksum: string; id: string } }>;
-    } }>(`select snapshot_json from content_versions where id = (
-      select content_version_id from review_requests where id = '${submitted.reviewRequestId}'
-    )`);
+    } }>(`select snapshot_json from content_versions where aggregate_id = '${drama.id}' order by created_at desc, id desc limit 1`);
     expect(snapshot.rows[0]?.snapshot_json.episodes[0]?.previewMedia).toMatchObject({
       checksum: `sha256:${'d'.repeat(64)}`,
       id: previewVideoId,
@@ -156,8 +154,7 @@ describe('tenant content management, taxonomy, import, and export', () => {
     await expect(database.exec(`update episodes set preview_media_asset_id = null
       where id = '${episode.id}'`)).rejects.toThrow(/cannot change after submission/i);
     await expect(database.exec(`update content_versions set snapshot_json = '{}'::jsonb
-      where id = (select content_version_id from review_requests
-        where id = '${submitted.reviewRequestId}')`)).rejects.toThrow(/append-only/i);
+      where aggregate_id = '${drama.id}'`)).rejects.toThrow(/append-only/i);
 
     await expect(taxonomy.remove(tenantId, 'tag', String(tagRecord.id), {
       expectedVersion: 0, reason: 'still referenced',

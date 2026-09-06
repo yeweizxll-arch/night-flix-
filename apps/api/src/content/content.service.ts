@@ -23,7 +23,6 @@ import type {
   DramaTranslationInput,
   EpisodeRecord,
   ExpectedTenantContentVersionInput,
-  ReviewDecisionInput,
   UpdateDramaInput,
   UpdateEpisodeInput,
 } from './content.types';
@@ -281,8 +280,8 @@ export class ContentService {
       `;
       const drama = dramas[0];
       if (!drama) throw new NotFoundException('Drama not found');
-      if (!['draft', 'rejected'].includes(drama.status)) {
-        throw new ConflictException('Episodes can only be changed in draft or rejected state');
+      if (!['draft', 'rejected', 'unpublished'].includes(drama.status)) {
+        throw new ConflictException('Episodes can only be changed in draft, rejected or unpublished state');
       }
       if (drama.version !== input.expectedDramaVersion) {
         throw new ConflictException('Drama has already changed');
@@ -404,8 +403,8 @@ export class ContentService {
       `;
       const drama = rows[0];
       if (!drama) throw new NotFoundException('Drama not found');
-      if (!['draft', 'rejected'].includes(drama.status)) {
-        throw new ConflictException('Only draft or rejected dramas can be edited');
+      if (!['draft', 'rejected', 'unpublished'].includes(drama.status)) {
+        throw new ConflictException('Only draft, rejected or unpublished dramas can be edited');
       }
       if (drama.version !== input.version) {
         throw new ConflictException('Drama has already changed');
@@ -540,8 +539,8 @@ export class ContentService {
       `;
       const parent = parents[0];
       if (!parent) throw new NotFoundException('Drama not found');
-      if (!['draft', 'rejected'].includes(parent.status)) {
-        throw new ConflictException('Episodes can only be changed in draft or rejected state');
+      if (!['draft', 'rejected', 'unpublished'].includes(parent.status)) {
+        throw new ConflictException('Episodes can only be changed in draft, rejected or unpublished state');
       }
       const current = await this.findTenantEpisode(
         transaction,
@@ -643,189 +642,220 @@ export class ContentService {
     });
   }
 
-  async submitTenantDrama(
+  async setTenantDramaPublication(
     tenantId: string,
     dramaId: string,
+    action: 'publish' | 'unpublish',
+    rawInput: ExpectedTenantContentVersionInput,
     metadata: ContentMutationMetadata,
-  ): Promise<{ reviewRequestId: string; status: 'pending_review' }> {
+  ): Promise<{ status: DramaRecord['status']; version: number }> {
     assertUuid(tenantId, 'tenantId');
     assertUuid(dramaId, 'dramaId');
-
+    const input = validateExpectedVersion(rawInput);
     return this.database.inTenantContext(tenantId, async (transaction) => {
-      const command = await this.beginCommand<{
-        reviewRequestId: string;
-        status: 'pending_review';
-      }>(transaction, {
-        actorId: metadata.actorId,
-        actorType: 'tenant_staff',
-        idempotencyKey: metadata.idempotencyKey,
-        request: { dramaId },
-        routeKey: 'tenant.content.drama.submit_review',
-        scope: 'tenant',
-        tenantId,
-      });
+      const command = await this.beginCommand<{ status: DramaRecord['status']; version: number }>(
+        transaction, {
+          actorId: metadata.actorId,
+          actorType: 'tenant_staff',
+          idempotencyKey: metadata.idempotencyKey,
+          request: { dramaId, action, input },
+          routeKey: `tenant.content.drama.${action}`,
+          scope: 'tenant',
+          tenantId,
+        },
+      );
       if (command.cached !== undefined) return command.cached;
-
-      const dramas = await transaction<
-        { cover_file_id: string | null; status: DramaRecord['status'] }[]
-      >`
-        select cover_file_id, status from dramas
-        where id = ${dramaId}
-          and owner_type = 'tenant'
-          and owner_tenant_id = ${tenantId}
-          and deleted_at is null
+      const rows = await transaction<Array<{
+        cover_file_id: string | null; status: DramaRecord['status']; version: number;
+        release_at: Date | null; unpublish_at: Date | null; expired: boolean;
+      }>>`
+        select cover_file_id, status, version, release_at, unpublish_at,
+          unpublish_at is not null and unpublish_at <= statement_timestamp() as expired
+        from dramas
+        where id = ${dramaId} and owner_type = 'tenant'
+          and owner_tenant_id = ${tenantId} and deleted_at is null
         for update
       `;
-      const drama = dramas[0];
+      const drama = rows[0];
       if (!drama) throw new NotFoundException('Drama not found');
-      if (!['draft', 'rejected'].includes(drama.status)) {
-        throw new ConflictException('Drama is not ready to submit');
+      if (drama.version !== input.expectedVersion) {
+        throw new ConflictException('Drama has already changed');
       }
-      if (!drama.cover_file_id) {
-        throw new BadRequestException('A separately uploaded cover is required');
+      const allowed = action === 'publish'
+        ? ['draft', 'rejected', 'unpublished']
+        : ['approved', 'published'];
+      if (!allowed.includes(drama.status)) {
+        throw new ConflictException('Drama is not in a valid publication state');
       }
+      if (action === 'publish') {
+        if (drama.expired) throw new BadRequestException('Update the expired unpublish time before publishing');
+        if (!drama.cover_file_id) {
+          throw new BadRequestException('A separately uploaded cover is required');
+        }
 
-      const readiness = await transaction<
-        { cover_ready: boolean; episode_count: number; invalid_episodes: number; translation_count: number }[]
-      >`
-        select
-          exists (
-            select 1 from media_assets as cover
-            inner join storage_providers as provider
-              on provider.id = cover.storage_provider_id
-            where cover.id = ${drama.cover_file_id}
-              and cover.owner_type = 'tenant'
-              and cover.owner_tenant_id = ${tenantId}
-              and cover.kind = 'image' and cover.status = 'ready'
-              and cover.deleted_at is null and cover.object_key is not null
-              and cover.source_url is null and provider.provider = 's3'
-              and provider.status = 'active'
-              and (provider.owner_type = 'platform'
-                or (provider.owner_type = 'tenant'
-                  and provider.owner_tenant_id = ${tenantId}))
-          ) as cover_ready,
-          (select count(*)::integer from episodes
-            where drama_id = ${dramaId} and deleted_at is null) as episode_count,
-          (select count(*)::integer
-            from episodes as episode
-            left join media_assets as asset on asset.id = episode.media_asset_id
-            left join media_assets as preview on preview.id = episode.preview_media_asset_id
-            where episode.drama_id = ${dramaId}
-              and episode.deleted_at is null
-              and (
-                asset.id is null
-                or asset.owner_type <> 'tenant'
-                or asset.owner_tenant_id <> ${tenantId}
-                or asset.kind <> 'video'
-                or asset.status <> 'ready'
-                or asset.transcode_status not in ('not_required', 'ready')
-                or asset.deleted_at is not null
-                or asset.object_key is null
-                or asset.source_url is not null
-                or not exists (
-                  select 1 from storage_providers as provider
-                  where provider.id = asset.storage_provider_id
-                    and provider.provider = 's3'
-                    and provider.status = 'active'
-                    and (provider.owner_type = 'platform'
-                      or (provider.owner_type = 'tenant'
-                        and provider.owner_tenant_id = ${tenantId}))
-                )
-                or (
-                  episode.preview_media_asset_id is not null
-                  and (
-                    preview.id is null
-                    or preview.id = episode.media_asset_id
-                    or preview.owner_type <> 'tenant'
-                    or preview.owner_tenant_id <> ${tenantId}
-                    or preview.kind <> 'video'
-                    or preview.status <> 'ready'
-                    or preview.transcode_status not in ('not_required', 'ready')
-                    or preview.deleted_at is not null
-                    or preview.object_key is null
-                    or preview.source_url is not null
-                    or not exists (
-                      select 1 from storage_providers as provider
-                      where provider.id = preview.storage_provider_id
-                        and provider.provider = 's3'
-                        and provider.status = 'active'
-                        and (provider.owner_type = 'platform'
-                          or (provider.owner_type = 'tenant'
-                            and provider.owner_tenant_id = ${tenantId}))
+        const readiness = await transaction<
+          { cover_ready: boolean; episode_count: number; invalid_episodes: number; translation_count: number }[]
+        >`
+          select
+            exists (
+              select 1 from media_assets as cover
+              inner join storage_providers as provider
+                on provider.id = cover.storage_provider_id
+              where cover.id = ${drama.cover_file_id}
+                and cover.owner_type = 'tenant'
+                and cover.owner_tenant_id = ${tenantId}
+                and cover.kind = 'image' and cover.status = 'ready'
+                and cover.deleted_at is null and cover.object_key is not null
+                and cover.source_url is null and provider.provider = 's3'
+                and provider.status = 'active'
+                and (provider.owner_type = 'platform'
+                  or (provider.owner_type = 'tenant'
+                    and provider.owner_tenant_id = ${tenantId}))
+            ) as cover_ready,
+            (select count(*)::integer from episodes
+              where drama_id = ${dramaId} and deleted_at is null) as episode_count,
+            (select count(*)::integer
+              from episodes as episode
+              left join media_assets as asset on asset.id = episode.media_asset_id
+              left join media_assets as preview on preview.id = episode.preview_media_asset_id
+              where episode.drama_id = ${dramaId}
+                and episode.deleted_at is null
+                and (
+                  asset.id is null
+                  or asset.owner_type <> 'tenant'
+                  or asset.owner_tenant_id <> ${tenantId}
+                  or asset.kind <> 'video'
+                  or asset.status <> 'ready'
+                  or asset.transcode_status not in ('not_required', 'ready')
+                  or asset.deleted_at is not null
+                  or asset.object_key is null
+                  or asset.source_url is not null
+                  or not exists (
+                    select 1 from storage_providers as provider
+                    where provider.id = asset.storage_provider_id
+                      and provider.provider = 's3'
+                      and provider.status = 'active'
+                      and (provider.owner_type = 'platform'
+                        or (provider.owner_type = 'tenant'
+                          and provider.owner_tenant_id = ${tenantId}))
+                  )
+                  or (
+                    episode.preview_media_asset_id is not null
+                    and (
+                      preview.id is null
+                      or preview.id = episode.media_asset_id
+                      or preview.owner_type <> 'tenant'
+                      or preview.owner_tenant_id <> ${tenantId}
+                      or preview.kind <> 'video'
+                      or preview.status <> 'ready'
+                      or preview.transcode_status not in ('not_required', 'ready')
+                      or preview.deleted_at is not null
+                      or preview.object_key is null
+                      or preview.source_url is not null
+                      or not exists (
+                        select 1 from storage_providers as provider
+                        where provider.id = preview.storage_provider_id
+                          and provider.provider = 's3'
+                          and provider.status = 'active'
+                          and (provider.owner_type = 'platform'
+                            or (provider.owner_type = 'tenant'
+                              and provider.owner_tenant_id = ${tenantId}))
+                      )
                     )
                   )
-                )
-              )) as invalid_episodes,
-          (select count(*)::integer from drama_translations
-            where drama_id = ${dramaId}) as translation_count
-      `;
-      const state = readiness[0];
-      if (!state?.cover_ready) throw new BadRequestException('Cover is not ready');
-      if (!state.episode_count) throw new BadRequestException('At least one episode is required');
-      if (state.episode_count > MAX_EPISODES_PER_DRAMA) {
-        throw new BadRequestException('Drama has too many episodes');
-      }
-      if (state.invalid_episodes > 0) {
-        throw new BadRequestException('All episode media must be ready');
-      }
-      if (!state.translation_count) throw new BadRequestException('A translation is required');
+                )) as invalid_episodes,
+            (select count(*)::integer from drama_translations
+              where drama_id = ${dramaId}) as translation_count
+        `;
+        const state = readiness[0];
+        if (!state?.cover_ready) throw new BadRequestException('Cover is not ready');
+        if (!state.episode_count) throw new BadRequestException('At least one episode is required');
+        if (state.episode_count > MAX_EPISODES_PER_DRAMA) {
+          throw new BadRequestException('Drama has too many episodes');
+        }
+        if (state.invalid_episodes > 0) {
+          throw new BadRequestException('All episode media must be ready');
+        }
+        if (!state.translation_count) throw new BadRequestException('A translation is required');
 
-      const existing = await transaction<{ exists: boolean }[]>`
-        select exists (
-          select 1 from review_requests
-          where tenant_id = ${tenantId}
-            and target_type = 'drama'
-            and target_id = ${dramaId}
-            and status = 'submitted'
-        ) as exists
+      }
+      // Cancel the previous generation before scheduling this publication.
+      await transaction`
+        update content_schedule_jobs
+        set status = 'cancelled', locked_by = null, locked_at = null
+        where scope_type = 'tenant' and tenant_id = ${tenantId}
+          and status in ('pending', 'retry', 'processing')
+          and ((target_type = 'drama' and target_id = ${dramaId})
+            or (target_type = 'episode' and target_id in (
+              select id from episodes where drama_id = ${dramaId}
+            )))
       `;
-      if (existing[0]?.exists) throw new ConflictException('Drama is already under review');
-
-      const snapshot = await this.loadDramaSnapshot(transaction, tenantId, dramaId);
-      const contentVersionId = await this.insertContentVersion(transaction, {
-        actorId: metadata.actorId,
-        aggregateId: dramaId,
-        aggregateType: 'drama',
-        snapshot,
-        tenantId,
+      const updated = await transaction<Array<{ status: DramaRecord['status']; version: number }>>`
+        update dramas set status = case
+          when ${action} = 'unpublish' then 'unpublished'
+          when release_at > statement_timestamp() then 'approved'
+          else 'published' end,
+          version = version + 1, updated_by = ${metadata.actorId}
+        where id = ${dramaId} and owner_type = 'tenant'
+          and owner_tenant_id = ${tenantId} and version = ${input.expectedVersion}
+        returning status, version
+      `;
+      const response = updated[0];
+      if (!response) throw new ConflictException('Drama has already changed');
+      await transaction`
+        update episodes set status = case
+          when ${action} = 'unpublish' then 'unpublished'
+          when unpublish_at <= statement_timestamp() then 'unpublished'
+          when ${response.status} = 'published'
+            and (release_at is null or release_at <= statement_timestamp()) then 'published'
+          else 'approved' end,
+          version = version + 1, updated_by = ${metadata.actorId}
+        where drama_id = ${dramaId} and deleted_at is null
+      `;
+      if (action === 'publish') {
+        if (response.status === 'approved' && drama.release_at) {
+          await this.insertScheduleJob(transaction, tenantId, 'drama', dramaId,
+            'publish', drama.release_at, metadata, response.version);
+        }
+        if (drama.unpublish_at) {
+          await this.insertScheduleJob(transaction, tenantId, 'drama', dramaId,
+            'unpublish', drama.unpublish_at, metadata, response.version);
+        }
+        const episodes = await transaction<Array<{
+          id: string; release_at: Date | null; unpublish_at: Date | null;
+          schedule_publish: boolean; schedule_unpublish: boolean;
+        }>>`
+          select id, release_at, unpublish_at,
+            release_at > statement_timestamp() as schedule_publish,
+            unpublish_at > statement_timestamp() as schedule_unpublish
+          from episodes where drama_id = ${dramaId} and deleted_at is null
+        `;
+        for (const episode of episodes) {
+          if (episode.schedule_publish && episode.release_at) {
+            await this.insertScheduleJob(transaction, tenantId, 'episode', episode.id,
+              'publish', episode.release_at, metadata, response.version);
+          }
+          if (episode.schedule_unpublish && episode.unpublish_at) {
+            await this.insertScheduleJob(transaction, tenantId, 'episode', episode.id,
+              'unpublish', episode.unpublish_at, metadata, response.version);
+          }
+        }
+      }
+      await this.insertContentVersion(transaction, {
+        actorId: metadata.actorId, aggregateId: dramaId, aggregateType: 'drama',
+        snapshot: await this.loadDramaSnapshot(transaction, tenantId, dramaId), tenantId,
       });
-      const reviewRequestId = uuidV7();
-      await transaction`
-        insert into review_requests (
-          id, tenant_id, target_type, target_id, content_version_id, submitted_by
-        ) values (
-          ${reviewRequestId}, ${tenantId}, 'drama', ${dramaId},
-          ${contentVersionId}, ${metadata.actorId}
-        )
-      `;
-      await transaction`
-        insert into review_request_actions (
-          id, tenant_id, review_request_id, action, actor_type, actor_id
-        ) values (
-          ${uuidV7()}, ${tenantId}, ${reviewRequestId},
-          'submit', 'tenant_staff', ${metadata.actorId}
-        )
-      `;
-      await transaction`
-        update dramas
-        set status = 'pending_review', version = version + 1, updated_by = ${metadata.actorId}
-        where id = ${dramaId}
-      `;
       await this.insertAudit(transaction, tenantId, metadata, {
-        action: 'content.drama.submit_review',
-        after: { reviewRequestId },
-        resourceId: dramaId,
-        resourceType: 'drama',
+        action: `content.drama.${action}`, after: response,
+        resourceId: dramaId, resourceType: 'drama',
       });
       await this.insertOutbox(transaction, tenantId, metadata.requestId, {
         aggregateId: dramaId,
-        eventType: 'ContentSubmitted',
-        payload: { dramaId, reviewRequestId, tenantId },
+        eventType: action === 'publish' ? 'TenantContentPublished' : 'TenantContentUnpublished',
+        payload: { dramaId, tenantId, ...response },
       });
-      const response = { reviewRequestId, status: 'pending_review' as const };
       await this.completeCommand(transaction, command.id, response, 200, {
-        resourceId: dramaId,
-        resourceType: 'drama',
+        resourceId: dramaId, resourceType: 'drama',
       });
       return response;
     });
@@ -888,422 +918,6 @@ export class ContentService {
         payload: { dramaId, reviewRequestId: review.id, tenantId },
       });
       return { status: 'draft', withdrawn: true };
-    });
-  }
-
-  async listPlatformReviews(pageValue: number, pageSizeValue: number) {
-    const page = boundedInteger(pageValue, 1, 1, 10_000);
-    const pageSize = boundedInteger(pageSizeValue, 20, 1, 100);
-    const offset = (page - 1) * pageSize;
-    return this.database.inPlatformContext(async (transaction) => {
-      const rows = await transaction<
-        Array<{
-          content_version_id: string;
-          drama_code: string;
-          id: string;
-          status: string;
-          submitted_at: Date;
-          tenant_id: string;
-          tenant_name: string;
-          total_count: number;
-          version: number;
-        }>
-      >`
-        select
-          request.id,
-          request.tenant_id,
-          tenant.name as tenant_name,
-          drama.code::text as drama_code,
-          request.content_version_id,
-          request.status,
-          request.submitted_at,
-          request.version,
-          count(*) over()::integer as total_count
-        from review_requests as request
-        inner join tenants as tenant on tenant.id = request.tenant_id
-        inner join dramas as drama
-          on drama.id = request.target_id
-          and drama.owner_type = 'tenant'
-          and drama.owner_tenant_id = request.tenant_id
-        where request.target_type = 'drama' and request.status = 'submitted'
-        order by request.submitted_at, request.id
-        limit ${pageSize} offset ${offset}
-      `;
-      return {
-        items: rows.map((row) => ({
-          contentVersionId: row.content_version_id,
-          dramaCode: row.drama_code,
-          id: row.id,
-          status: row.status,
-          submittedAt: row.submitted_at.toISOString(),
-          tenantId: row.tenant_id,
-          tenantName: row.tenant_name,
-          version: row.version,
-        })),
-        page,
-        pageSize,
-        total: rows[0]?.total_count ?? 0,
-      };
-    });
-  }
-
-  async getPlatformReview(reviewRequestId: string) {
-    assertUuid(reviewRequestId, 'reviewRequestId');
-    return this.database.inPlatformContext(async (transaction) => {
-      const rows = await transaction<
-        Array<{
-          drama_code: string;
-          drama_status: string;
-          episodes: unknown[];
-          id: string;
-          snapshot_json: object;
-          status: string;
-          submitted_at: Date;
-          submitted_by: string;
-          tenant_id: string;
-          tenant_name: string;
-          translations: unknown[];
-          version: number;
-        }>
-      >`
-        select
-          request.id,
-          request.tenant_id,
-          tenant.name as tenant_name,
-          request.status,
-          request.submitted_at,
-          request.submitted_by,
-          request.version,
-          drama.code::text as drama_code,
-          drama.status as drama_status,
-          content_version.snapshot_json,
-          coalesce((
-            select jsonb_agg(
-              jsonb_build_object(
-                'locale', translation.locale,
-                'title', translation.title,
-                'summary', translation.summary,
-                'searchKeywords', translation.search_keywords
-              ) order by translation.locale
-            )
-            from drama_translations as translation
-            where translation.drama_id = drama.id
-          ), '[]'::jsonb) as translations,
-          coalesce((
-            select jsonb_agg(
-              jsonb_build_object(
-                'id', episode.id,
-                'episodeNo', episode.episode_no,
-                'durationSeconds', episode.duration_seconds,
-                'previewSeconds', episode.preview_seconds,
-                'mediaAssetId', asset.id,
-                'mediaStatus', asset.status,
-                'transcodeStatus', asset.transcode_status,
-                'sourceUrl', asset.source_url,
-                'previewMediaAssetId', preview.id,
-                'previewMediaStatus', preview.status,
-                'previewTranscodeStatus', preview.transcode_status,
-                'titles', coalesce((
-                  select jsonb_agg(
-                    jsonb_build_object('locale', title.locale, 'title', title.title)
-                    order by title.locale
-                  )
-                  from episode_translations as title
-                  where title.episode_id = episode.id
-                ), '[]'::jsonb)
-              ) order by episode.episode_no
-            )
-            from episodes as episode
-            left join media_assets as asset
-              on asset.id = episode.media_asset_id
-              and asset.owner_type = 'tenant'
-              and asset.owner_tenant_id = request.tenant_id
-              and asset.kind = 'video'
-            left join media_assets as preview
-              on preview.id = episode.preview_media_asset_id
-              and preview.owner_type = 'tenant'
-              and preview.owner_tenant_id = request.tenant_id
-              and preview.kind = 'video'
-            where episode.drama_id = drama.id and episode.deleted_at is null
-          ), '[]'::jsonb) as episodes
-        from review_requests as request
-        inner join tenants as tenant on tenant.id = request.tenant_id
-        inner join dramas as drama
-          on drama.id = request.target_id
-          and drama.owner_type = 'tenant'
-          and drama.owner_tenant_id = request.tenant_id
-        inner join content_versions as content_version
-          on content_version.id = request.content_version_id
-          and content_version.scope_type = 'tenant'
-          and content_version.tenant_id = request.tenant_id
-          and content_version.aggregate_type = request.target_type
-          and content_version.aggregate_id = request.target_id
-        where request.id = ${reviewRequestId} and request.target_type = 'drama'
-      `;
-      const row = rows[0];
-      if (!row) throw new NotFoundException('Review request not found');
-      return {
-        drama: {
-          code: row.drama_code,
-          episodes: row.episodes,
-          status: row.drama_status,
-          translations: row.translations,
-        },
-        id: row.id,
-        snapshot: row.snapshot_json,
-        status: row.status,
-        submittedAt: row.submitted_at.toISOString(),
-        submittedBy: row.submitted_by,
-        tenantId: row.tenant_id,
-        tenantName: row.tenant_name,
-        version: row.version,
-      };
-    });
-  }
-
-  async decidePlatformReview(
-    reviewRequestId: string,
-    decision: 'approve' | 'reject',
-    rawInput: ReviewDecisionInput,
-    metadata: ContentMutationMetadata,
-  ): Promise<{ dramaStatus: DramaRecord['status']; status: 'approved' | 'rejected' }> {
-    assertUuid(reviewRequestId, 'reviewRequestId');
-    const input = validateReviewDecision(decision, rawInput);
-
-    return this.database.inPlatformContext(async (transaction) => {
-      const command = await this.beginCommand<{
-        dramaStatus: DramaRecord['status'];
-        status: 'approved' | 'rejected';
-      }>(transaction, {
-        actorId: metadata.actorId,
-        actorType: 'platform_staff',
-        idempotencyKey: metadata.idempotencyKey,
-        request: { decision, input, reviewRequestId },
-        routeKey: `platform.content.review.${decision}`,
-        scope: 'platform',
-      });
-      if (command.cached !== undefined) return command.cached;
-
-      const rows = await transaction<
-        Array<{
-          drama_id: string;
-          drama_status: DramaRecord['status'];
-          release_at: Date | null;
-          status: string;
-          tenant_id: string;
-          unpublish_at: Date | null;
-          version: number;
-        }>
-      >`
-        select
-          request.tenant_id,
-          request.target_id as drama_id,
-          request.status,
-          request.version,
-          drama.status as drama_status,
-          drama.release_at,
-          drama.unpublish_at
-        from review_requests as request
-        inner join dramas as drama
-          on drama.id = request.target_id
-          and drama.owner_type = 'tenant'
-          and drama.owner_tenant_id = request.tenant_id
-        where request.id = ${reviewRequestId} and request.target_type = 'drama'
-        for update of request, drama
-      `;
-      const review = rows[0];
-      if (!review) throw new NotFoundException('Review request not found');
-      if (review.status !== 'submitted' || review.version !== input.version) {
-        throw new ConflictException('Review request has already changed');
-      }
-      if (review.drama_status !== 'pending_review') {
-        throw new ConflictException('Drama is no longer pending review');
-      }
-      if (decision === 'approve') {
-        await this.assertTenantPublicationMedia(
-          transaction,
-          review.tenant_id,
-          review.drama_id,
-        );
-      }
-
-      const resultStatus: 'approved' | 'rejected' =
-        decision === 'approve' ? 'approved' : 'rejected';
-      const updated = await transaction<{ id: string }[]>`
-        update review_requests
-        set
-          status = ${resultStatus},
-          reviewed_at = statement_timestamp(),
-          reviewer_id = ${metadata.actorId},
-          reason = ${input.reason ?? null},
-          version = version + 1
-        where id = ${reviewRequestId} and version = ${input.version} and status = 'submitted'
-        returning id
-      `;
-      if (!updated[0]) throw new ConflictException('Review request has already changed');
-
-      const updatedDramas = await transaction<
-        Array<{ id: string; status: DramaRecord['status'] }>
-      >`
-        update dramas
-        set
-          status = case
-            when ${decision} = 'reject' then 'rejected'
-            when unpublish_at is not null
-              and unpublish_at <= statement_timestamp() then 'unpublished'
-            when release_at is not null and release_at > statement_timestamp() then 'approved'
-            else 'published'
-          end,
-          version = version + 1,
-          updated_by = ${metadata.actorId}
-        where id = ${review.drama_id}
-          and owner_type = 'tenant'
-          and owner_tenant_id = ${review.tenant_id}
-          and status = 'pending_review'
-          and deleted_at is null
-        returning id, status
-      `;
-      const updatedDrama = updatedDramas[0];
-      if (!updatedDrama) {
-        throw new ConflictException('Drama is no longer pending review');
-      }
-      const dramaStatus = updatedDrama.status;
-      const episodeSchedules = decision === 'approve'
-        ? await transaction<
-            Array<{
-              id: string;
-              release_at: Date | null;
-              schedule_publish: boolean;
-              schedule_unpublish: boolean;
-              unpublish_at: Date | null;
-            }>
-          >`
-            select
-              id,
-              release_at,
-              unpublish_at,
-              release_at is not null
-                and release_at > statement_timestamp() as schedule_publish,
-              unpublish_at is not null
-                and unpublish_at > statement_timestamp() as schedule_unpublish
-            from episodes
-            where drama_id = ${review.drama_id} and deleted_at is null
-            order by episode_no, id
-          `
-        : [];
-      if (decision === 'approve') {
-        await transaction`
-          update episodes
-          set
-            status = case
-              when ${dramaStatus} = 'unpublished' then 'unpublished'
-              when unpublish_at is not null
-                and unpublish_at <= statement_timestamp() then 'unpublished'
-              when ${dramaStatus} = 'published'
-                and (release_at is null or release_at <= statement_timestamp())
-                then 'published'
-              else 'approved'
-            end,
-            version = version + 1,
-            updated_by = ${metadata.actorId}
-          where drama_id = ${review.drama_id} and deleted_at is null
-        `;
-      }
-      await transaction`
-        insert into review_request_actions (
-          id, tenant_id, review_request_id, action, actor_type, actor_id, reason
-        ) values (
-          ${uuidV7()}, ${review.tenant_id}, ${reviewRequestId}, ${decision},
-          'platform_staff', ${metadata.actorId}, ${input.reason ?? null}
-        )
-      `;
-
-      if (
-        decision === 'approve'
-        && review.release_at
-        && dramaStatus === 'approved'
-      ) {
-        await this.insertScheduleJob(
-          transaction,
-          review.tenant_id,
-          'drama',
-          review.drama_id,
-          'publish',
-          review.release_at,
-          metadata,
-        );
-      }
-      if (
-        decision === 'approve'
-        && review.unpublish_at
-        && dramaStatus !== 'unpublished'
-      ) {
-        await this.insertScheduleJob(
-          transaction,
-          review.tenant_id,
-          'drama',
-          review.drama_id,
-          'unpublish',
-          review.unpublish_at,
-          metadata,
-        );
-      }
-      for (const episode of dramaStatus === 'unpublished' ? [] : episodeSchedules) {
-        if (episode.schedule_publish && episode.release_at) {
-          await this.insertScheduleJob(
-            transaction,
-            review.tenant_id,
-            'episode',
-            episode.id,
-            'publish',
-            episode.release_at,
-            metadata,
-          );
-        }
-        if (episode.schedule_unpublish && episode.unpublish_at) {
-          await this.insertScheduleJob(
-            transaction,
-            review.tenant_id,
-            'episode',
-            episode.id,
-            'unpublish',
-            episode.unpublish_at,
-            metadata,
-          );
-        }
-      }
-      await this.insertAudit(transaction, review.tenant_id, metadata, {
-        action: `content.review.${decision}`,
-        after: {
-          dramaId: review.drama_id,
-          reason: input.reason,
-          status: dramaStatus,
-          tenantId: review.tenant_id,
-        },
-        resourceId: reviewRequestId,
-        resourceType: 'review_request',
-        scope: 'platform',
-      });
-      await this.insertOutbox(
-        transaction,
-        review.tenant_id,
-        `${metadata.requestId}:${decision}`,
-        {
-          aggregateId: review.drama_id,
-          eventType: decision === 'approve' ? 'ContentApproved' : 'ContentRejected',
-          payload: {
-            dramaId: review.drama_id,
-            reviewRequestId,
-            tenantId: review.tenant_id,
-          },
-        },
-      );
-      const response = { dramaStatus, status: resultStatus };
-      await this.completeCommand(transaction, command.id, response, 200, {
-        resourceId: reviewRequestId,
-        resourceType: 'review_request',
-      });
-      return response;
     });
   }
 
@@ -1602,74 +1216,6 @@ export class ContentService {
     if (!rows[0]) throw new BadRequestException('Episode media must be a ready tenant S3 video');
   }
 
-  private async assertTenantPublicationMedia(
-    transaction: DatabaseTransaction,
-    tenantId: string,
-    dramaId: string,
-  ): Promise<void> {
-    const rows = await transaction<{ media_ready: boolean }[]>`
-      select
-        exists (
-          select 1 from dramas as target
-          inner join media_assets as cover on cover.id = target.cover_file_id
-            and cover.owner_type = 'tenant' and cover.owner_tenant_id = ${tenantId}
-            and cover.kind = 'image' and cover.status = 'ready'
-            and cover.deleted_at is null and cover.object_key is not null
-            and cover.source_url is null
-          inner join storage_providers as cover_provider
-            on cover_provider.id = cover.storage_provider_id
-            and cover_provider.provider = 's3' and cover_provider.status = 'active'
-            and (cover_provider.owner_type = 'platform'
-              or (cover_provider.owner_type = 'tenant'
-                and cover_provider.owner_tenant_id = ${tenantId}))
-          where target.id = ${dramaId}
-            and target.owner_type = 'tenant'
-            and target.owner_tenant_id = ${tenantId}
-            and target.deleted_at is null
-        )
-        and not exists (
-          select 1 from episodes as episode
-          left join media_assets as media on media.id = episode.media_asset_id
-            and media.owner_type = 'tenant' and media.owner_tenant_id = ${tenantId}
-            and media.kind = 'video' and media.status = 'ready'
-            and media.transcode_status in ('not_required', 'ready')
-            and media.deleted_at is null and media.object_key is not null
-            and media.source_url is null
-            and exists (
-              select 1 from storage_providers as provider
-              where provider.id = media.storage_provider_id
-                and provider.provider = 's3' and provider.status = 'active'
-                and (provider.owner_type = 'platform'
-                  or (provider.owner_type = 'tenant'
-                    and provider.owner_tenant_id = ${tenantId}))
-            )
-          left join media_assets as preview on preview.id = episode.preview_media_asset_id
-            and preview.id <> episode.media_asset_id
-            and preview.owner_type = 'tenant' and preview.owner_tenant_id = ${tenantId}
-            and preview.kind = 'video' and preview.status = 'ready'
-            and preview.transcode_status in ('not_required', 'ready')
-            and preview.deleted_at is null and preview.object_key is not null
-            and preview.source_url is null
-            and exists (
-              select 1 from storage_providers as preview_provider
-              where preview_provider.id = preview.storage_provider_id
-                and preview_provider.provider = 's3'
-                and preview_provider.status = 'active'
-                and (preview_provider.owner_type = 'platform'
-                  or (preview_provider.owner_type = 'tenant'
-                    and preview_provider.owner_tenant_id = ${tenantId}))
-            )
-          where episode.drama_id = ${dramaId}
-            and episode.deleted_at is null
-            and (media.id is null
-              or (episode.preview_media_asset_id is not null and preview.id is null))
-        ) as media_ready
-    `;
-    if (!rows[0]?.media_ready) {
-      throw new ConflictException('Content media is no longer available for publication');
-    }
-  }
-
   private async assertTenantCategory(
     transaction: DatabaseTransaction,
     tenantId: string,
@@ -1868,6 +1414,7 @@ export class ContentService {
     action: 'publish' | 'unpublish',
     scheduledAt: Date,
     metadata: ContentMutationMetadata,
+    publicationVersion: number,
   ): Promise<void> {
     await transaction`
       insert into content_schedule_jobs (
@@ -1876,7 +1423,7 @@ export class ContentService {
       ) values (
         ${uuidV7()}, 'tenant', ${tenantId}, ${targetType}, ${targetId}, ${action},
         ${scheduledAt},
-        ${`review:${targetType}:${targetId}:${action}:${scheduledAt.toISOString()}`},
+        ${`tenant-publish:${targetType}:${targetId}:v${publicationVersion}:${action}:${scheduledAt.toISOString()}`},
         ${metadata.actorId}
       )
       on conflict do nothing
@@ -2253,16 +1800,6 @@ function validateUpdateEpisode(value: UpdateEpisodeInput) {
       ? optionalNullableDate(value.unpublishAt, 'unpublishAt')
       : undefined,
   };
-}
-
-function validateReviewDecision(decision: 'approve' | 'reject', value: ReviewDecisionInput) {
-  if (!value || typeof value !== 'object') throw new BadRequestException('Body is required');
-  const version = boundedInteger(value.version, Number.NaN, 0, 1_000_000_000);
-  const reason = optionalString(value.reason, 'reason', 4_000);
-  if (decision === 'reject' && !reason?.trim()) {
-    throw new BadRequestException('A rejection reason is required');
-  }
-  return { reason: reason?.trim(), version };
 }
 
 function validateDeleteDrama(value: DeleteTenantDramaInput) {

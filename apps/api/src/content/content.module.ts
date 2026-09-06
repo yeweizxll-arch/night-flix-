@@ -1,9 +1,6 @@
 import { Module } from '@nestjs/common';
 
-import {
-  PlatformContentReviewController,
-  TenantContentController,
-} from './content.controller';
+import { TenantContentController } from './content.controller';
 import { ContentService } from './content.service';
 import { TenantMediaController } from './media.controller';
 import { MediaService } from './media.service';
@@ -18,7 +15,6 @@ import {
 @Module({
   controllers: [
     TenantContentController,
-    PlatformContentReviewController,
     TenantMediaController,
     TenantContentTaxonomyController,
     TenantContentPortabilityController,

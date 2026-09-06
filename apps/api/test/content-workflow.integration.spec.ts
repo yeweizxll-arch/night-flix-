@@ -41,7 +41,7 @@ function transactionTag(transaction: Transaction): DatabaseTransaction {
   return tag as unknown as DatabaseTransaction;
 }
 
-describe('content review workflow with PostgreSQL constraints', () => {
+describe('tenant publication workflow with PostgreSQL constraints', () => {
   beforeAll(async () => {
     database = new PGlite();
     const directory = resolve(process.cwd(), '../../database/migrations');
@@ -83,16 +83,27 @@ describe('content review workflow with PostgreSQL constraints', () => {
       );
     `);
 
+    await database.exec(`
+      create role content_tenant_probe nosuperuser nobypassrls;
+      grant usage on schema app, public to content_tenant_probe;
+      grant select, insert, update, delete on all tables in schema public to content_tenant_probe;
+      grant execute on function app.scope_can_reference(text, uuid, text, uuid),
+        app.content_target_matches_scope(text, uuid, text, uuid) to content_tenant_probe;
+    `);
     const databaseService = {
       inPlatformContext: <T>(
         callback: (transaction: DatabaseTransaction) => Promise<T>,
       ): Promise<T> =>
         database.transaction((transaction) => callback(transactionTag(transaction))),
       inTenantContext: <T>(
-        _tenantId: string,
+        contextTenantId: string,
         callback: (transaction: DatabaseTransaction) => Promise<T>,
       ): Promise<T> =>
-        database.transaction((transaction) => callback(transactionTag(transaction))),
+        database.transaction(async (transaction) => {
+          await transaction.exec('set local role content_tenant_probe');
+          await transaction.query("select set_config('app.access_scope', 'tenant', true), set_config('app.tenant_id', $1, true)", [contextTenantId]);
+          return callback(transactionTag(transaction));
+        }),
     } as unknown as DatabaseService;
     content = new ContentService(databaseService);
     media = new MediaService(databaseService);
@@ -102,232 +113,132 @@ describe('content review workflow with PostgreSQL constraints', () => {
     await database?.close();
   });
 
-  it('creates a drama and episode, submits it, and publishes only after review', async () => {
-    const createRequestId = uuidV7();
-    const drama = await content.createTenantDrama(
-      tenantId,
-      {
-        code: 'workflow-drama',
-        coverFileId: coverId,
-        translations: [
-          { locale: 'en-US', summary: 'A test drama', title: 'Workflow Drama' },
-          { locale: 'ja-JP', title: 'ワークフロードラマ' },
-        ],
-      },
-      { actorId: tenantStaffId, requestId: createRequestId },
-    );
-    expect(drama.status).toBe('draft');
-    expect(drama.translations).toHaveLength(2);
+  const metadata = () => ({ actorId: tenantStaffId, requestId: uuidV7(), idempotencyKey: uuidV7() });
+  async function readyDrama(code: string, schedule = false) {
+    const drama = await content.createTenantDrama(tenantId, {
+      code, coverFileId: coverId,
+      ...(schedule ? {
+        releaseAt: new Date(Date.now() + 86_400_000).toISOString(),
+        unpublishAt: new Date(Date.now() + 172_800_000).toISOString(),
+      } : {}),
+      translations: [{ locale: 'zh-CN', title: code }],
+    }, metadata());
+    const episode = await content.addTenantEpisode(tenantId, drama.id, {
+      expectedDramaVersion: drama.version, durationSeconds: 60, episodeNo: 1,
+      mediaAssetId: videoId, translations: [{ locale: 'zh-CN', title: '第一集' }],
+    }, metadata());
+    return { ...drama, episode, version: episode.dramaVersion };
+  }
 
-    await content.addTenantEpisode(
-      tenantId,
-      drama.id,
-      {
-        durationSeconds: 120,
-        episodeNo: 1,
-        expectedDramaVersion: drama.version,
-        mediaAssetId: videoId,
-        previewSeconds: 15,
-        translations: [{ locale: 'en-US', title: 'Episode 1' }],
-      },
-      { actorId: tenantStaffId, requestId: uuidV7() },
-    );
-    const submitted = await content.submitTenantDrama(
-      tenantId,
-      drama.id,
-      { actorId: tenantStaffId, requestId: uuidV7() },
-    );
-
-    const pending = await database.query<{ status: string }>(`
-      select status from dramas where id = '${drama.id}'
-    `);
-    expect(submitted.status).toBe('pending_review');
-    expect(pending.rows[0]?.status).toBe('pending_review');
-    const submittedSnapshot = await database.query<{
-      snapshot_json: {
-        episodes: Array<{
-          media: { checksum: string; id: string };
-          translations: unknown[];
-        }>;
-      };
-    }>(`
-      select version.snapshot_json
-      from review_requests as request
-      inner join content_versions as version on version.id = request.content_version_id
-      where request.id = '${submitted.reviewRequestId}'
-    `);
-    expect(submittedSnapshot.rows[0]?.snapshot_json.episodes[0]?.translations).toEqual([
-      expect.objectContaining({ locale: 'en-US', title: 'Episode 1' }),
-    ]);
-    expect(submittedSnapshot.rows[0]?.snapshot_json.episodes[0]).toMatchObject({
-      media: { checksum: `sha256:${'b'.repeat(64)}`, id: videoId },
-    });
-    const reviewDetail = await content.getPlatformReview(submitted.reviewRequestId);
-    expect(reviewDetail).toEqual(expect.objectContaining({
-      id: submitted.reviewRequestId,
-      status: 'submitted',
-      tenantId,
-    }));
-    expect(reviewDetail.drama.episodes).toEqual([
-      expect.objectContaining({ episodeNo: 1, mediaAssetId: videoId }),
-    ]);
-
-    await database.exec(`update dramas set status = 'draft' where id = '${drama.id}'`);
-    await expect(content.decidePlatformReview(
-      submitted.reviewRequestId,
-      'approve',
-      { version: 0 },
-      { actorId: platformStaffId, requestId: uuidV7() },
-    )).rejects.toBeInstanceOf(ConflictException);
-    const unchangedReview = await database.query<{ status: string }>(`
-      select status from review_requests where id = '${submitted.reviewRequestId}'
-    `);
-    expect(unchangedReview.rows[0]?.status).toBe('submitted');
-    await database.exec(`update dramas set status = 'pending_review' where id = '${drama.id}'`);
-
-    const decision = await content.decidePlatformReview(
-      submitted.reviewRequestId,
-      'approve',
-      { version: 0 },
-      { actorId: platformStaffId, requestId: uuidV7() },
-    );
-    expect(decision).toEqual({ dramaStatus: 'published', status: 'approved' });
-
-    await expect(content.decidePlatformReview(
-      submitted.reviewRequestId,
-      'approve',
-      { version: 0 },
-      { actorId: platformStaffId, requestId: uuidV7() },
-    )).rejects.toBeInstanceOf(ConflictException);
-
-    const facts = await database.query<{
-      audits: string;
-      episode_status: string;
-      events: string;
-      platform_audits: string;
-      versions: string;
-    }>(`
-      select
-        (select count(*)::text from audit_logs where resource_id = '${drama.id}') as audits,
-        (select status from episodes where drama_id = '${drama.id}' and episode_no = 1)
-          as episode_status,
-        (select count(*)::text from outbox_events where aggregate_id = '${drama.id}') as events,
-        (select count(*)::text from audit_logs
-          where resource_id = '${submitted.reviewRequestId}'
-            and scope_type = 'platform' and tenant_id is null) as platform_audits,
-        (select count(*)::text from content_versions where aggregate_id = '${drama.id}') as versions
-    `);
-    expect(Number(facts.rows[0]?.audits)).toBeGreaterThanOrEqual(2);
-    expect(facts.rows[0]?.episode_status).toBe('published');
-    expect(Number(facts.rows[0]?.events)).toBe(3);
-    expect(Number(facts.rows[0]?.platform_audits)).toBe(1);
-    expect(Number(facts.rows[0]?.versions)).toBeGreaterThanOrEqual(2);
+  it('publishes directly with tenant audit and no headquarters review, then unpublishes and edits', async () => {
+    const drama = await readyDrama('tenant-publish-direct');
+    const command = metadata();
+    const published = await content.setTenantDramaPublication(tenantId, drama.id, 'publish',
+      { expectedVersion: drama.version }, command);
+    expect(published).toEqual({ status: 'published', version: 2 });
+    expect(await content.setTenantDramaPublication(tenantId, drama.id, 'publish',
+      { expectedVersion: drama.version }, command)).toEqual(published);
+    await expect(content.setTenantDramaPublication(tenantId, drama.id, 'publish',
+      { expectedVersion: drama.version }, metadata())).rejects.toBeInstanceOf(ConflictException);
+    let detail = await content.getTenantDrama(tenantId, drama.id);
+    expect(detail.episodes[0]?.status).toBe('published');
+    await expect(content.updateTenantDrama(tenantId, drama.id,
+      { version: detail.version, translations: [{ locale: 'zh-CN', title: '不能原地修改' }] },
+      metadata())).rejects.toBeInstanceOf(ConflictException);
+    const down = await content.setTenantDramaPublication(tenantId, drama.id, 'unpublish',
+      { expectedVersion: published.version }, metadata());
+    expect(down).toEqual({ status: 'unpublished', version: 3 });
+    detail = await content.getTenantDrama(tenantId, drama.id);
+    expect(detail.episodes[0]?.status).toBe('unpublished');
+    const edited = await content.updateTenantDrama(tenantId, drama.id,
+      { version: down.version, translations: [{ locale: 'zh-CN', title: '下架后编辑' }] },
+      metadata());
+    expect(edited.status).toBe('unpublished');
+    const extra = await content.addTenantEpisode(tenantId, drama.id, {
+      expectedDramaVersion: edited.version, durationSeconds: 61, episodeNo: 2,
+      mediaAssetId: videoId, translations: [{ locale: 'zh-CN', title: '第二集' }],
+    }, metadata());
+    expect(extra.episodeNo).toBe(2);
+    const republished = await content.setTenantDramaPublication(tenantId, drama.id, 'publish',
+      { expectedVersion: extra.dramaVersion }, metadata());
+    expect(republished.status).toBe('published');
+    const reviews = await database.query('select id from review_requests where target_id = $1', [drama.id]);
+    expect(reviews.rows).toHaveLength(0);
+    const audit = await database.query<{ scope_type: string }>(
+      "select scope_type from audit_logs where resource_id = $1 and action = 'content.drama.publish'", [drama.id]);
+    expect(audit.rows).toHaveLength(2);
+    expect(audit.rows.every(row => row.scope_type === 'tenant')).toBe(true);
   });
 
-  it('approves future episodes without publishing them and creates both schedules', async () => {
-    const releaseAt = new Date(Date.now() + 60 * 60 * 1_000).toISOString();
-    const unpublishAt = new Date(Date.now() + 2 * 60 * 60 * 1_000).toISOString();
-    const drama = await content.createTenantDrama(
-      tenantId,
-      {
-        code: 'future-episode-workflow-drama',
-        coverFileId: coverId,
-        translations: [{ locale: 'en-US', title: 'Future Episode Workflow' }],
-      },
-      { actorId: tenantStaffId, requestId: uuidV7() },
-    );
-    const episode = await content.addTenantEpisode(
-      tenantId,
-      drama.id,
-      {
-        durationSeconds: 120,
-        episodeNo: 1,
-        expectedDramaVersion: drama.version,
-        mediaAssetId: videoId,
-        releaseAt,
-        translations: [{ locale: 'en-US', title: 'Future Episode' }],
-        unpublishAt,
-      },
-      { actorId: tenantStaffId, requestId: uuidV7() },
-    );
-    const submitted = await content.submitTenantDrama(
-      tenantId,
-      drama.id,
-      { actorId: tenantStaffId, requestId: uuidV7() },
-    );
-
-    await expect(content.decidePlatformReview(
-      submitted.reviewRequestId,
-      'approve',
-      { version: 0 },
-      { actorId: platformStaffId, requestId: uuidV7() },
-    )).resolves.toEqual({ dramaStatus: 'published', status: 'approved' });
-
-    const episodeState = await database.query<{ status: string }>(`
-      select status from episodes where id = '${episode.id}'
-    `);
-    expect(episodeState.rows[0]?.status).toBe('approved');
-    const schedules = await database.query<{
-      action: string;
-      scheduled_at: Date;
-      target_type: string;
-    }>(`
-      select target_type, action, scheduled_at
-      from content_schedule_jobs
-      where target_id = '${episode.id}'
-      order by action
-    `);
-    expect(schedules.rows).toEqual([
-      { action: 'publish', scheduled_at: new Date(releaseAt), target_type: 'episode' },
-      { action: 'unpublish', scheduled_at: new Date(unpublishAt), target_type: 'episode' },
-    ]);
+  it('cancels every old schedule and allows re-scheduling the same timestamps', async () => {
+    const drama = await readyDrama('tenant-publish-scheduled', true);
+    const published = await content.setTenantDramaPublication(tenantId, drama.id, 'publish',
+      { expectedVersion: drama.version }, metadata());
+    expect(published.status).toBe('approved');
+    let jobs = await database.query<{ status: string }>(
+      'select status from content_schedule_jobs where target_id = $1', [drama.id]);
+    expect(jobs.rows).toHaveLength(2);
+    const down = await content.setTenantDramaPublication(tenantId, drama.id, 'unpublish',
+      { expectedVersion: published.version }, metadata());
+    jobs = await database.query('select status from content_schedule_jobs where target_id = $1', [drama.id]);
+    expect(jobs.rows.every(row => row.status === 'cancelled')).toBe(true);
+    await content.setTenantDramaPublication(tenantId, drama.id, 'publish',
+      { expectedVersion: down.version }, metadata());
+    jobs = await database.query('select status from content_schedule_jobs where target_id = $1', [drama.id]);
+    expect(jobs.rows.filter(row => row.status === 'pending')).toHaveLength(2);
+    expect(jobs.rows.filter(row => row.status === 'cancelled')).toHaveLength(2);
   });
 
-  it('keeps episodes unpublished when a review is rejected', async () => {
-    const drama = await content.createTenantDrama(
-      tenantId,
-      {
-        code: 'rejected-episode-workflow-drama',
-        coverFileId: coverId,
-        translations: [{ locale: 'en-US', title: 'Rejected Episode Workflow' }],
-      },
-      { actorId: tenantStaffId, requestId: uuidV7() },
-    );
-    const episode = await content.addTenantEpisode(
-      tenantId,
-      drama.id,
-      {
-        durationSeconds: 120,
-        episodeNo: 1,
-        expectedDramaVersion: drama.version,
-        mediaAssetId: videoId,
-        translations: [{ locale: 'en-US', title: 'Rejected Episode' }],
-      },
-      { actorId: tenantStaffId, requestId: uuidV7() },
-    );
-    const submitted = await content.submitTenantDrama(
-      tenantId,
-      drama.id,
-      { actorId: tenantStaffId, requestId: uuidV7() },
-    );
+  it('rejects incomplete or unavailable media and expired schedules without changing state', async () => {
+    const empty = await content.createTenantDrama(tenantId, {
+      code: 'no-episode', coverFileId: coverId, translations: [{ locale: 'zh-CN', title: '空剧' }],
+    }, metadata());
+    await expect(content.setTenantDramaPublication(tenantId, empty.id, 'publish',
+      { expectedVersion: empty.version }, metadata())).rejects.toThrow('At least one episode');
+    const drama = await readyDrama('tenant-publish-unready');
+    await database.exec(`update storage_providers set status = 'disabled' where id = '${providerId}'`);
+    try {
+      await expect(content.setTenantDramaPublication(tenantId, drama.id, 'publish',
+        { expectedVersion: drama.version }, metadata())).rejects.toThrow('Cover is not ready');
+    } finally {
+      await database.exec(`update storage_providers set status = 'active' where id = '${providerId}'`);
+    }
+    await database.exec(`update dramas set release_at = statement_timestamp() - interval '2 days',
+      unpublish_at = statement_timestamp() - interval '1 day' where id = '${drama.id}'`);
+    await expect(content.setTenantDramaPublication(tenantId, drama.id, 'publish',
+      { expectedVersion: drama.version }, metadata())).rejects.toThrow('expired unpublish');
+    expect((await content.getTenantDrama(tenantId, drama.id)).status).toBe('draft');
+  });
 
-    await expect(content.decidePlatformReview(
-      submitted.reviewRequestId,
-      'reject',
-      { reason: 'Episode metadata needs revision', version: 0 },
-      { actorId: platformStaffId, requestId: uuidV7() },
-    )).resolves.toEqual({ dramaStatus: 'rejected', status: 'rejected' });
+  it('cannot publish or unpublish another tenant content or headquarters public content', async () => {
+    const drama = await readyDrama('tenant-scope-probe');
+    const otherTenant = uuidV7();
+    await database.exec(`insert into tenants (id, code, name, expires_at)
+      values ('${otherTenant}', 'other-publisher', 'Other Publisher', statement_timestamp() + interval '1 year')`);
+    await expect(content.setTenantDramaPublication(otherTenant, drama.id, 'publish',
+      { expectedVersion: drama.version }, metadata())).rejects.toBeInstanceOf(NotFoundException);
+    await expect(content.setTenantDramaPublication(otherTenant, drama.id, 'unpublish',
+      { expectedVersion: drama.version }, metadata())).rejects.toBeInstanceOf(NotFoundException);
+    const publicId = uuidV7();
+    await database.exec(`insert into dramas (id, owner_type, code, source_type)
+      values ('${publicId}', 'platform', 'headquarters-public-probe', 'upload')`);
+    await expect(content.setTenantDramaPublication(tenantId, publicId, 'publish',
+      { expectedVersion: 0 }, metadata())).rejects.toBeInstanceOf(NotFoundException);
+  });
 
-    const facts = await database.query<{
-      episode_status: string;
-      schedules: string;
-    }>(`
-      select
-        (select status from episodes where id = '${episode.id}') as episode_status,
-        (select count(*)::text from content_schedule_jobs
-          where target_type = 'episode' and target_id = '${episode.id}') as schedules
+  it('lets a tenant withdraw legacy pending review without headquarters involvement', async () => {
+    const drama = await readyDrama('legacy-pending-withdraw');
+    await database.exec(`
+      insert into review_requests (id, tenant_id, target_type, target_id, content_version_id, submitted_by)
+      select '${uuidV7()}', '${tenantId}', 'drama', '${drama.id}', id, '${tenantStaffId}'
+      from content_versions where aggregate_id = '${drama.id}' order by created_at desc, id desc limit 1;
+      update dramas set status = 'pending_review', version = version + 1 where id = '${drama.id}';
     `);
-    expect(facts.rows[0]).toEqual({ episode_status: 'draft', schedules: '0' });
+    expect(await content.withdrawTenantReview(tenantId, drama.id, metadata()))
+      .toMatchObject({ status: 'draft', withdrawn: true });
+    const current = await content.getTenantDrama(tenantId, drama.id);
+    expect((await content.setTenantDramaPublication(tenantId, drama.id, 'publish',
+      { expectedVersion: current.version }, metadata())).status).toBe('published');
   });
 
   it('restores a soft-deleted drama only once and keeps linked history', async () => {
@@ -377,58 +288,6 @@ describe('content review workflow with PostgreSQL constraints', () => {
     expect(facts.rows[0]).toEqual({ deletes: '1', restores: '1', unlinked_restores: '0' });
   });
 
-  it('edits a rejected/draft version and lets the merchant withdraw a pending review', async () => {
-    const drama = await content.createTenantDrama(
-      tenantId,
-      {
-        code: 'withdraw-workflow-drama',
-        coverFileId: coverId,
-        translations: [{ locale: 'en-US', title: 'Before Edit' }],
-      },
-      { actorId: tenantStaffId, requestId: uuidV7() },
-    );
-    await content.addTenantEpisode(
-      tenantId,
-      drama.id,
-      {
-        durationSeconds: 90,
-        episodeNo: 1,
-        expectedDramaVersion: drama.version,
-        mediaAssetId: videoId,
-        translations: [{ locale: 'en-US', title: 'Episode 1' }],
-      },
-      { actorId: tenantStaffId, requestId: uuidV7() },
-    );
-    const edited = await content.updateTenantDrama(
-      tenantId,
-      drama.id,
-      {
-        translations: [{ locale: 'en-US', title: 'After Edit' }],
-        version: 1,
-      },
-      { actorId: tenantStaffId, requestId: uuidV7() },
-    );
-    expect(edited.version).toBe(2);
-    expect(edited.translations[0]?.title).toBe('After Edit');
-
-    const submitted = await content.submitTenantDrama(
-      tenantId,
-      drama.id,
-      { actorId: tenantStaffId, requestId: uuidV7() },
-    );
-    await expect(content.withdrawTenantReview(
-      tenantId,
-      drama.id,
-      { actorId: tenantStaffId, requestId: uuidV7() },
-    )).resolves.toEqual({ status: 'draft', withdrawn: true });
-
-    const states = await database.query<{ drama_status: string; review_status: string }>(`
-      select
-        (select status from dramas where id = '${drama.id}') as drama_status,
-        (select status from review_requests where id = '${submitted.reviewRequestId}') as review_status
-    `);
-    expect(states.rows[0]).toEqual({ drama_status: 'draft', review_status: 'withdrawn' });
-  });
 
   it('returns the original command result for a matching idempotency key', async () => {
     const idempotencyKey = 'content-create-integration-001';

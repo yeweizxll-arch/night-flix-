@@ -11,9 +11,9 @@ import type { CustomerAuthenticationService } from '../customer-auth/customer-au
 import type { TenantContextService } from '../tenancy/tenant-context.service';
 import {
   CustomerInteractionController,
-  PlatformInteractionController,
   TenantInteractionController,
 } from './interaction.controller';
+import { InteractionModule } from './interaction.module';
 import type { InteractionService } from './interaction.service';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
@@ -70,17 +70,16 @@ describe('CustomerInteractionController', () => {
 });
 
 describe('staff interaction controllers', () => {
+  it('does not register headquarters community endpoints', () => {
+    const controllers = Reflect.getMetadata('controllers', InteractionModule) as Function[];
+    expect(controllers.some(controller => Reflect.getMetadata('path', controller) === 'platform/interactions')).toBe(false);
+  });
   it.each([
     [TenantInteractionController, 'listModeration', 'read', 'tenant.interaction.read', 'tenant'],
     [TenantInteractionController, 'moderate', 'write', 'tenant.interaction.manage', 'tenant'],
     [TenantInteractionController, 'listSensitiveWords', 'read', 'tenant.interaction.read', 'tenant'],
     [TenantInteractionController, 'createSensitiveWord', 'write', 'tenant.sensitive_word.manage', 'tenant'],
     [TenantInteractionController, 'disableSensitiveWord', 'write', 'tenant.sensitive_word.manage', 'tenant'],
-    [PlatformInteractionController, 'listModeration', 'read', 'platform.interaction.read', 'platform'],
-    [PlatformInteractionController, 'moderate', 'write', 'platform.interaction.manage', 'platform'],
-    [PlatformInteractionController, 'listSensitiveWords', 'read', 'platform.interaction.read', 'platform'],
-    [PlatformInteractionController, 'createSensitiveWord', 'write', 'platform.sensitive_word.manage', 'platform'],
-    [PlatformInteractionController, 'disableSensitiveWord', 'write', 'platform.sensitive_word.manage', 'platform'],
   ] as const)(
     '%s.%s has an explicit scoped permission',
     (controller, method, mode, permission, scope) => {

@@ -170,14 +170,27 @@ describe('customer interactions and moderation security', () => {
     await database?.close();
   });
 
+  it('ignores legacy headquarters words and rejects headquarters word management', async () => {
+    await database.exec(`insert into interaction_sensitive_words
+      (id, scope_type, term, normalized_term, created_by)
+      values ('${uuidV7()}', 'platform', 'legacyhqterm', 'legacyhqterm', '${platformStaff}')`);
+    const item = await interactions.createComment(principalA,
+      { body: 'legacyhqterm', dramaId: dramaA, episodeId: episodeA },
+      customerCommand('legacy-hq-word-ignored'));
+    expect(item.status).toBe('visible');
+    await expect(interactions.createSensitiveWord('platform', undefined, { term: 'blocked' },
+      staffCommand('platform', platformStaff, 'hq-word-disabled')))
+      .rejects.toBeInstanceOf(ForbiddenException);
+  });
+
   it('normalizes NFKC words and sends matched text to bounded pending review', async () => {
     const word = await interactions.createSensitiveWord(
-      'platform',
-      undefined,
+      'tenant',
+      tenantA,
       { term: 'ＡＢＣ' },
-      staffCommand('platform', platformStaff, 'platform-word-0001'),
+      staffCommand('tenant', tenantStaff, 'tenant-word-0001'),
     );
-    expect(word).toMatchObject({ scope: 'platform', status: 'active', term: 'ABC' });
+    expect(word).toMatchObject({ scope: 'tenant', status: 'active', term: 'ABC' });
     const pending = await interactions.createComment(
       principalA,
       { body: 'contains ａｂｃ text', dramaId: dramaA, episodeId: episodeA },
@@ -306,7 +319,7 @@ describe('customer interactions and moderation security', () => {
     expect(bullet).toMatchObject({ positionMs: 12_000, status: 'visible' });
   });
 
-  it('records tenant and platform moderation actions with delete/restore state transitions', async () => {
+  it('records tenant-only moderation actions with delete/restore state transitions', async () => {
     const target = await interactions.createComment(
       principalA,
       { body: 'moderation target', dramaId: dramaA, episodeId: episodeA },
@@ -322,29 +335,29 @@ describe('customer interactions and moderation security', () => {
     );
     expect(hidden.status).toBe('hidden');
     const approved = await interactions.moderate(
-      'platform',
-      undefined,
+      'tenant',
+      tenantA,
       'comment',
       target.id,
-      { action: 'approve', reason: 'platform review', tenantId: tenantA },
-      staffCommand('platform', platformStaff, 'moderation-approve-0001'),
+      { action: 'approve', reason: 'platform review' },
+      staffCommand('tenant', tenantStaff, 'moderation-approve-0001'),
     );
     expect(approved.status).toBe('visible');
     await interactions.moderate(
-      'platform',
-      undefined,
+      'tenant',
+      tenantA,
       'comment',
       target.id,
-      { action: 'delete', reason: 'policy removal', tenantId: tenantA },
-      staffCommand('platform', platformStaff, 'moderation-delete-0001'),
+      { action: 'delete', reason: 'policy removal' },
+      staffCommand('tenant', tenantStaff, 'moderation-delete-0001'),
     );
     const restored = await interactions.moderate(
-      'platform',
-      undefined,
+      'tenant',
+      tenantA,
       'comment',
       target.id,
-      { action: 'restore', reason: 'appeal accepted', tenantId: tenantA },
-      staffCommand('platform', platformStaff, 'moderation-restore-0001'),
+      { action: 'restore', reason: 'appeal accepted' },
+      staffCommand('tenant', tenantStaff, 'moderation-restore-0001'),
     );
     expect(restored.status).toBe('hidden');
     const tenantQueue = await interactions.listModerationQueue('tenant', tenantA, {
@@ -356,12 +369,12 @@ describe('customer interactions and moderation security', () => {
       id: target.id,
       tenantId: tenantA,
     }));
-    const platformQueue = await interactions.listModerationQueue('platform', undefined, {
-      status: 'hidden',
-      targetType: 'comment',
-      tenantId: tenantA,
-    });
-    expect(platformQueue.items.map((item) => item.id)).toContain(target.id);
+    await expect(interactions.listModerationQueue('platform', undefined, {}))
+      .rejects.toBeInstanceOf(ForbiddenException);
+    await expect(interactions.moderate('platform', undefined, 'comment', target.id,
+      { action: 'delete', reason: 'not authorized', tenantId: tenantA },
+      staffCommand('platform', platformStaff, 'forbidden-hq-moderation')))
+      .rejects.toBeInstanceOf(ForbiddenException);
     const crossTarget = uuidV7();
     await database.exec(`
       insert into interaction_comments (
@@ -524,7 +537,7 @@ describe('customer interactions and moderation security', () => {
       const words = await database.query<{ scope_type: string; tenant_id: string | null }>(`
         select scope_type, tenant_id from interaction_sensitive_words order by scope_type, tenant_id
       `);
-      expect(words.rows).toContainEqual({ scope_type: 'platform', tenant_id: null });
+      expect(words.rows).toContainEqual({ scope_type: 'tenant', tenant_id: tenantA });
       expect(words.rows).not.toContainEqual({ scope_type: 'tenant', tenant_id: tenantB });
       await expect(database.exec(`
         insert into interaction_comments (

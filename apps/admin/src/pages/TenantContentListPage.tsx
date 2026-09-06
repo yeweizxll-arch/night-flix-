@@ -604,16 +604,18 @@ export function TenantContentListPage() {
     }
   }
 
-  async function dramaAction(record: DramaRecord, action: 'restore' | 'submit' | 'withdraw') {
+  async function dramaAction(record: DramaRecord, action: 'restore' | 'publish' | 'unpublish' | 'withdraw') {
     setSubmitting(`${action}:${record.id}`);
-    const actionPath = action === 'submit'
-      ? 'submit-review'
-      : action === 'withdraw' ? 'withdraw-review' : 'restore';
+    const actionPath = action === 'withdraw' ? 'withdraw-review' : action;
     try {
-      await request(`${API_BASE}/dramas/${encodeURIComponent(record.id)}/${actionPath}`, { method: 'POST' });
-      messageApi.success(action === 'submit'
-        ? '短剧已提交平台审核'
-        : action === 'withdraw' ? '审核已撤回，短剧恢复草稿' : '短剧已恢复');
+      await request(`${API_BASE}/dramas/${encodeURIComponent(record.id)}/${actionPath}`, {
+        method: 'POST',
+        ...(action !== 'withdraw' ? { body: JSON.stringify({ expectedVersion: record.version }) } : {}),
+      });
+      messageApi.success(action === 'publish'
+        ? '已确认上架（如有未来发布时间，将定时上架）'
+        : action === 'unpublish' ? '短剧已下架，已取消旧定时任务'
+        : action === 'withdraw' ? '旧审核已撤回，短剧恢复草稿' : '短剧已恢复');
       await loadDramas(dramas.page, dramas.pageSize);
       if (selected?.id === record.id) await openDetail(record);
     } catch (reason) {
@@ -702,9 +704,7 @@ export function TenantContentListPage() {
     const path = kind === 'drama'
       ? `${API_BASE}/dramas/${encodeURIComponent(record.id)}`
       : `${API_BASE}/${kind}/${encodeURIComponent(record.id)}`;
-    const body = kind === 'drama'
-      ? { reason: values.reason.trim() }
-      : { expectedVersion: record.version, reason: values.reason.trim() };
+    const body = { expectedVersion: record.version, reason: values.reason.trim() };
     setSubmitting(`delete:${kind}:${record.id}`);
     try {
       await request(path, { body: JSON.stringify(body), method: 'DELETE' });
@@ -1193,7 +1193,7 @@ function DramaList({
   error?: string;
   includeDeleted: boolean;
   loading: boolean;
-  onAction(record: DramaRecord, action: 'restore' | 'submit' | 'withdraw'): void;
+  onAction(record: DramaRecord, action: 'restore' | 'publish' | 'unpublish' | 'withdraw'): void;
   onCreate(): void;
   onDelete(record: DramaRecord): void;
   onDetail(record: DramaRecord): void;
@@ -1251,14 +1251,19 @@ function DramaList({
               <Space wrap>
                 <Button size="small" onClick={() => onDetail(record)}>详情</Button>
                 {canUpdate && editable ? <Button size="small" onClick={() => onEdit(record)}>编辑</Button> : null}
-                {canSubmitReview && editable ? (
-                  <Popconfirm description="封面、至少一集及全部媒体必须已就绪。" onConfirm={() => onAction(record, 'submit')} title="提交平台审核？">
-                    <Button loading={submitting === `submit:${record.id}`} size="small" type="primary">提交审核</Button>
+                {canUpdate && editable ? (
+                  <Popconfirm description="由本代理商自行确认内容可发布，无需总部审核。封面及剧集须已就绪。" onConfirm={() => onAction(record, 'publish')} title="确认上架？">
+                    <Button loading={submitting === `publish:${record.id}`} size="small" type="primary">确认上架</Button>
+                  </Popconfirm>
+                ) : null}
+                {canUpdate && !record.deletedAt && ['published', 'approved'].includes(record.status) ? (
+                  <Popconfirm description="下架后保留已购权益，并取消未执行的定时任务。" onConfirm={() => onAction(record, 'unpublish')} title="确认下架？">
+                    <Button loading={submitting === `unpublish:${record.id}`} size="small">下架</Button>
                   </Popconfirm>
                 ) : null}
                 {canSubmitReview && !record.deletedAt && record.status === 'pending_review' ? (
                   <Popconfirm onConfirm={() => onAction(record, 'withdraw')} title="确认撤回审核并恢复草稿？">
-                    <Button loading={submitting === `withdraw:${record.id}`} size="small">撤回审核</Button>
+                    <Button loading={submitting === `withdraw:${record.id}`} size="small">撤回旧审核</Button>
                   </Popconfirm>
                 ) : null}
                 {canUpdate && !record.deletedAt && ['draft', 'rejected', 'unpublished'].includes(record.status)
@@ -1867,9 +1872,9 @@ function RetryAlert({ message: text, onRetry }: { message: string; onRetry(): vo
 
 function DramaStatusTag({ status }: { status: DramaStatus }) {
   const option: Record<DramaStatus, { color?: string; text: string }> = {
-    approved: { color: 'cyan', text: '审核通过' },
+    approved: { color: 'cyan', text: '待定时上架' },
     draft: { text: '草稿' },
-    pending_review: { color: 'processing', text: '审核中' },
+    pending_review: { color: 'processing', text: '旧审核待撤回' },
     published: { color: 'green', text: '已发布' },
     rejected: { color: 'red', text: '已驳回' },
     unpublished: { color: 'orange', text: '已下架' },

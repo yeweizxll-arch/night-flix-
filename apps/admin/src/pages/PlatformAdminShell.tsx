@@ -1,13 +1,11 @@
 import {
   AppstoreOutlined,
-  AuditOutlined,
   BankOutlined,
   CloudServerOutlined,
   CreditCardOutlined,
   KeyOutlined,
   SafetyOutlined,
   WalletOutlined,
-  CommentOutlined,
   UsergroupAddOutlined,
   BookOutlined,
   PercentageOutlined,
@@ -30,7 +28,6 @@ import { useEffect, useMemo, useState } from 'react';
 
 import type { AuthPrincipal } from '../auth/AuthProvider';
 import { useAuth } from '../auth/AuthProvider';
-import { ContentReviewPage } from './ContentReviewPage';
 import { ContentLicensingPage } from './ContentLicensingPage';
 import { MerchantListPage } from './MerchantListPage';
 import { RoleManagementPage } from './RoleManagementPage';
@@ -38,7 +35,6 @@ import { StorageProviderPage } from './StorageProviderPage';
 import { AuditLogPage } from './AuditLogPage';
 import { PaymentSettingsPage } from './PaymentSettingsPage';
 import { PlatformFinancePage } from './PlatformFinancePage';
-import { InteractionModerationPage } from './InteractionModerationPage';
 import { StaffManagementPage } from './StaffManagementPage';
 import { AnalyticsDashboardPage } from './AnalyticsDashboardPage';
 import { CustomerManagementPage } from './CustomerManagementPage';
@@ -51,14 +47,12 @@ const pageTitles: Record<string, string> = {
   'audit-logs': '审计日志',
   'content-library': '公共内容管理',
   'content-revenue': '内容分成',
-  community: '社区治理',
   customers: '用户监管',
   dashboard: '经营概览',
   finance: '财务与提现',
   licensing: '公共内容授权',
   merchants: '代理商管理',
   payments: '支付配置',
-  review: '内容审核',
   roles: '角色管理',
   staff: '员工账号',
   storage: '公共对象存储',
@@ -67,13 +61,11 @@ const pageTitles: Record<string, string> = {
 const navigation = [
   { key: 'dashboard', icon: <AppstoreOutlined />, label: '经营概览', permission: 'platform.analytics.read' },
   { key: 'merchants', icon: <BankOutlined />, label: '代理商管理', permission: 'platform.merchant.read' },
-  { key: 'review', icon: <AuditOutlined />, label: '内容审核', permission: 'content.review.read' },
   { key: 'content-library', icon: <BookOutlined />, label: '公共内容管理', permission: 'platform.content.read' },
   { key: 'licensing', icon: <KeyOutlined />, label: '公共内容授权', permission: 'content.license.read' },
   { key: 'storage', icon: <CloudServerOutlined />, label: '公共对象存储', permission: 'platform.storage.read' },
   { key: 'payments', icon: <CreditCardOutlined />, label: '支付配置', permission: 'platform.payment.read' },
   { key: 'customers', icon: <UsergroupAddOutlined />, label: '用户监管', permission: 'platform.customer.read' },
-  { key: 'community', icon: <CommentOutlined />, label: '社区治理', permission: 'platform.interaction.read' },
 ];
 
 export function ScopedAdminShell({ principal }: { principal: AuthPrincipal }) {
@@ -241,9 +233,7 @@ export function ScopedAdminShell({ principal }: { principal: AuthPrincipal }) {
               readPermission="platform.analytics.read"
               scope="platform"
             />
-          ) : effectivePage === 'merchants' ? <MerchantListPage /> : effectivePage === 'review' ? (
-            <ContentReviewPage />
-          ) : effectivePage === 'content-library' ? (
+          ) : effectivePage === 'merchants' ? <MerchantListPage /> : effectivePage === 'content-library' ? (
             <PlatformContentLibraryPage />
           ) : effectivePage === 'staff' ? (
             <StaffManagementPage
@@ -299,15 +289,6 @@ export function ScopedAdminShell({ principal }: { principal: AuthPrincipal }) {
               scope="platform"
               sessionRevokePermission="platform.customer.session_revoke"
               title="平台用户监管"
-            />
-          ) : effectivePage === 'community' ? (
-            <InteractionModerationPage
-              apiBase="/api/v1/platform/interactions"
-              managePermission="platform.interaction.manage"
-              platformScope
-              readPermission="platform.interaction.read"
-              sensitiveWordPermission="platform.sensitive_word.manage"
-              title="平台社区治理"
             />
           ) : <Result status="403" title="当前账号没有可用的后台功能" />}
         </Content>

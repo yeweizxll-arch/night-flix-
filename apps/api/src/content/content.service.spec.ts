@@ -57,16 +57,16 @@ describe('ContentService input boundary', () => {
     expect(database.inTenantContext).not.toHaveBeenCalled();
   });
 
-  it('requires a reason when a platform reviewer rejects content', async () => {
+  it('requires an expected version before tenant publication', async () => {
     const { content, database } = service();
 
-    await expect(content.decidePlatformReview(
-      DRAMA_ID,
-      'reject',
-      { version: 0 },
+    await expect(content.setTenantDramaPublication(
+      TENANT_ID, DRAMA_ID,
+      'publish',
+      { expectedVersion: Number.NaN },
       metadata,
     )).rejects.toBeInstanceOf(BadRequestException);
-    expect(database.inPlatformContext).not.toHaveBeenCalled();
+    expect(database.inTenantContext).not.toHaveBeenCalled();
   });
 
   it('rejects an empty soft-delete reason', async () => {

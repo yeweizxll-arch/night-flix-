@@ -935,9 +935,8 @@ export class InteractionService {
     tenantId: string | undefined,
     callback: (transaction: DatabaseTransaction) => Promise<T>,
   ): Promise<T> {
-    return scope === 'platform'
-      ? this.database.inPlatformContext(callback)
-      : this.database.inTenantContext(requiredString(tenantId, 'tenantId'), callback);
+    if (scope !== 'tenant') throw new ForbiddenException('Content moderation belongs to the tenant');
+    return this.database.inTenantContext(requiredString(tenantId, 'tenantId'), callback);
   }
 
   private assertPrincipal(principal: CustomerPrincipal): void {
@@ -1060,7 +1059,7 @@ export class InteractionService {
       select id, scope_type, tenant_id, term, normalized_term, status, created_at
       from interaction_sensitive_words
       where status = 'active'
-        and (scope_type = 'platform' or tenant_id = ${tenantId})
+        and (scope_type = 'tenant' and tenant_id = ${tenantId})
       order by char_length(normalized_term) desc, id
       limit ${MAX_SENSITIVE_WORDS + 1}
     `;

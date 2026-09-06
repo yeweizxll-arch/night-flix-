@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AccessPrincipal, AccessRequirement } from '../access-control';
 import { ACCESS_REQUIREMENT_METADATA } from '../access-control/require-permissions.decorator';
 import { PUBLIC_ENDPOINT_METADATA } from '../auth/public-endpoint.decorator';
+import { ContentModule } from './content.module';
 import { TenantContentController } from './content.controller';
 import type { ContentService } from './content.service';
 import { TenantContentPortabilityController } from './tenant-content-portability.controller';
@@ -20,11 +21,19 @@ const principal: AccessPrincipal = {
 };
 
 describe('tenant content management controller policy', () => {
+  it('does not register headquarters review or legacy submit routes', () => {
+    const controllers = Reflect.getMetadata('controllers', ContentModule) as Function[];
+    expect(controllers.some(controller => Reflect.getMetadata('path', controller) === 'platform/content/reviews')).toBe(false);
+    expect(Reflect.get(TenantContentController.prototype, 'submit')).toBeUndefined();
+  });
+
   it.each([
     [TenantContentController, 'list', 'read', 'content.drama.read'],
     [TenantContentController, 'detail', 'read', 'content.drama.read'],
     [TenantContentController, 'create', 'write', 'content.drama.create'],
     [TenantContentController, 'update', 'write', 'content.drama.update'],
+    [TenantContentController, 'publish', 'write', 'content.drama.update'],
+    [TenantContentController, 'unpublish', 'write', 'content.drama.update'],
     [TenantContentController, 'addEpisode', 'write', 'content.drama.update'],
     [TenantContentController, 'updateEpisode', 'write', 'content.drama.update'],
     [TenantContentTaxonomyController, 'categories', 'read', 'content.drama.read'],
