@@ -11,6 +11,8 @@ coverage/
 .idea/
 .vscode/
 deploy/production.env
+apps/admin/dist-platform/
+apps/admin/dist-tenant/
 apps/mobile/**/*.jks
 apps/mobile/**/*.keystore
 apps/mobile/**/*.p12

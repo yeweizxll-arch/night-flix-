@@ -5,3 +5,9 @@ packages:
 # Keep Nest's adapter and cookie module on the same patched Fastify instance.
 overrides:
   fastify: 5.12.3
+
+# Package Linux runtime binaries locally when preparing a server artifact on macOS.
+supportedArchitectures:
+  os: [current, linux]
+  cpu: [current, x64]
+  libc: [glibc]

@@ -1,0 +1,31 @@
+[Unit]
+Description=Night Flix isolated %i service
+After=network-online.target postgresql.service redis-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nightflix
+Group=nightflix
+WorkingDirectory=/opt/nightflix/current/apps/api
+EnvironmentFile=/etc/nightflix/runtime.env
+EnvironmentFile=/etc/nightflix/%i.env
+ExecStart=/opt/nightflix/runtime/node-v24.20.0-linux-x64/bin/node ${ENTRY_POINT}
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+UMask=0077
+MemoryMax=1200M
+TasksMax=128
+
+[Install]
+WantedBy=multi-user.target
