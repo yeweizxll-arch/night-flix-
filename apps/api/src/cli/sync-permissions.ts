@@ -42,14 +42,14 @@ async function main(): Promise<void> {
 
         if (permission.scope === 'platform') {
           const removed = await transaction<{ role_id: string }[]>`
-            delete from role_permissions as grant
+            delete from role_permissions as assignment
             using roles as role
-            where grant.role_id = role.id
-              and grant.permission_id = ${permissionId}
+            where assignment.role_id = role.id
+              and assignment.permission_id = ${permissionId}
               and role.scope_type = 'tenant'
               and role.is_system = true
               and role.name = 'tenant_owner'
-            returning grant.role_id
+            returning assignment.role_id
           `;
           removedInvalidGrants += removed.length;
           const assignments = await transaction<{ role_id: string }[]>`
@@ -70,14 +70,14 @@ async function main(): Promise<void> {
         }
 
         const removed = await transaction<{ role_id: string }[]>`
-          delete from role_permissions as grant
+          delete from role_permissions as assignment
           using roles as role
-          where grant.role_id = role.id
-            and grant.permission_id = ${permissionId}
+          where assignment.role_id = role.id
+            and assignment.permission_id = ${permissionId}
             and role.scope_type = 'platform'
             and role.is_system = true
             and role.name = 'platform_super_admin'
-          returning grant.role_id
+          returning assignment.role_id
         `;
         removedInvalidGrants += removed.length;
         const assignments = await transaction<{ role_id: string }[]>`
