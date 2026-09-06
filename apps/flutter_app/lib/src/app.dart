@@ -20,6 +20,36 @@ const _purple = Color(0xff7558ff);
 const _pink = Color(0xffff4d8d);
 final _playerRouteObserver = RouteObserver<ModalRoute<void>>();
 
+ThemeData _lightPageTheme(BuildContext context) {
+  final colors = Theme.of(context).colorScheme;
+  return ThemeData(
+    brightness: Brightness.light,
+    scaffoldBackgroundColor: const Color(0xfff6f7f8),
+    colorScheme: ColorScheme.light(
+      primary: colors.primary,
+      secondary: colors.secondary,
+      surface: Colors.white,
+    ),
+    fontFamily: 'SF Pro Display',
+    cardTheme: CardThemeData(
+      color: Colors.white,
+      elevation: 0,
+      margin: const EdgeInsets.only(bottom: 8),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+    ),
+    inputDecorationTheme: InputDecorationTheme(
+      filled: true,
+      fillColor: const Color(0xfff1f2f4),
+      labelStyle: const TextStyle(color: Colors.black54),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide.none,
+      ),
+    ),
+    useMaterial3: true,
+  );
+}
+
 Color _themeColor(dynamic value, Color fallback) {
   if (value is! String || !RegExp(r'^#[0-9a-fA-F]{6}$').hasMatch(value)) {
     return fallback;
@@ -154,13 +184,38 @@ class _AppShellState extends State<AppShell> {
 
   @override
   Widget build(BuildContext context) {
-    final theaterActive = index == 1;
+    final lightChrome = index != 0;
+    final lightTheme = _lightPageTheme(context);
     final pages = [
       FeedScreen(controller: widget.controller, active: index == 0),
-      TheaterScreen(controller: widget.controller),
-      RewardsScreen(controller: widget.controller),
-      LibraryScreen(controller: widget.controller),
-      ProfileScreen(controller: widget.controller),
+      Theme(
+        data: lightTheme,
+        child: Material(
+          color: const Color(0xfff6f7f8),
+          child: TheaterScreen(controller: widget.controller),
+        ),
+      ),
+      Theme(
+        data: lightTheme,
+        child: Material(
+          color: const Color(0xfff6f7f8),
+          child: RewardsScreen(controller: widget.controller),
+        ),
+      ),
+      Theme(
+        data: lightTheme,
+        child: Material(
+          color: const Color(0xfff6f7f8),
+          child: LibraryScreen(controller: widget.controller),
+        ),
+      ),
+      Theme(
+        data: lightTheme,
+        child: Material(
+          color: const Color(0xfff6f7f8),
+          child: ProfileScreen(controller: widget.controller),
+        ),
+      ),
     ];
     final destinations = [
       NavigationDestination(
@@ -197,10 +252,10 @@ class _AppShellState extends State<AppShell> {
     return NativePurchaseScope(
       purchases: purchases,
       child: Scaffold(
-        backgroundColor: theaterActive ? const Color(0xfff6f7f8) : _ink,
+        backgroundColor: lightChrome ? const Color(0xfff6f7f8) : _ink,
         extendBody: false,
         body: IndexedStack(index: index, children: pages),
-        bottomNavigationBar: theaterActive
+        bottomNavigationBar: lightChrome
             ? Theme(
                 data: Theme.of(context).copyWith(
                   navigationBarTheme: NavigationBarThemeData(
@@ -2219,6 +2274,7 @@ class _RewardsScreenState extends State<RewardsScreen> {
                       ? context.tr('unavailable', 'Unavailable')
                       : snapshot.data?.balancePoints ?? '…',
                   style: const TextStyle(
+                    color: Colors.white,
                     fontSize: 28,
                     fontWeight: FontWeight.w800,
                   ),
@@ -2323,7 +2379,7 @@ class ProfileScreen extends StatelessWidget {
             const CircleAvatar(
               radius: 34,
               backgroundColor: _purple,
-              child: Icon(Icons.person, size: 36),
+              child: Icon(Icons.person, size: 36, color: Colors.white),
             ),
             const SizedBox(width: 16),
             Expanded(
@@ -2348,7 +2404,7 @@ class ProfileScreen extends StatelessWidget {
                             'Sign in to sync purchases and history',
                           )
                         : context.tr('accountConnected', 'Account connected'),
-                    style: const TextStyle(color: Colors.white60),
+                    style: const TextStyle(color: Colors.black54),
                   ),
                 ],
               ),
@@ -2548,7 +2604,7 @@ class _DramaList extends StatelessWidget {
       ? Center(
           child: Text(
             context.tr('nothingHere', 'Nothing here yet'),
-            style: const TextStyle(color: Colors.white54),
+            style: const TextStyle(color: Colors.black45),
           ),
         )
       : ListView.separated(
@@ -2584,7 +2640,7 @@ class _DramaList extends StatelessWidget {
                         const SizedBox(height: 6),
                         Text(
                           '${drama.totalEpisodes} ${context.tr('episodeCount', 'episodes')}',
-                          style: const TextStyle(color: Colors.white54),
+                          style: const TextStyle(color: Colors.black54),
                         ),
                         const SizedBox(height: 8),
                         Text(

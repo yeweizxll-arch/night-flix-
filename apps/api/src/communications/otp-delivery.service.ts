@@ -27,10 +27,11 @@ export class OtpDeliveryService {
     },
   ): Promise<boolean> {
     const channel: CommunicationChannel = input.challengeChannel === 'phone' ? 'sms' : 'email';
+    // This platform-owned configuration is read-only to the tenant role. A row-locking
+    // SELECT is filtered by RLS; the pinned config version already protects the job.
     const configs = await transaction<Array<{ id: string; version: number }>>`
       select id, version from tenant_communication_configs
       where tenant_id = ${input.tenantId} and channel = ${channel} and status = 'active'
-      for share
     `;
     const config = configs[0];
     if (!config) {

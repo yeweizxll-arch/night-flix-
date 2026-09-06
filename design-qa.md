@@ -34,3 +34,11 @@
 ## Final result
 
 Passed — the side-by-side comparison has no open P0, P1, or P2 mismatch within the short-drama-only scope.
+
+## Global light-style follow-up
+
+- Before: `/Users/yewei/Documents/Codex/2026-08-31/zhe/outputs/nightflix-current-light-redesign-source.png`
+- After: `/Users/yewei/Documents/Codex/2026-08-31/zhe/outputs/nightflix-light-redesign-pass2.png`
+- Account sheet: `/Users/yewei/Documents/Codex/2026-08-31/zhe/outputs/nightflix-light-account-login-pass1.png`
+
+Theater, Rewards, Library, Profile, search, and account flows now share a warm light background, white rounded surfaces, dark readable type, tenant-colored actions, and a white navigation bar. The immersive playback/feed surface intentionally remains dark because video is the primary content there.

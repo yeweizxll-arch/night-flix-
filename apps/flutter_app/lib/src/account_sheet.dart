@@ -16,9 +16,39 @@ Future<bool> showAccountSheet(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      builder: (_) => AccountSheet(controller: controller, reason: reason),
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (_) => Theme(
+        data: _accountTheme(context),
+        child: AccountSheet(controller: controller, reason: reason),
+      ),
     ) ==
     true;
+
+ThemeData _accountTheme(BuildContext context) {
+  final parent = Theme.of(context).colorScheme;
+  return ThemeData(
+    brightness: Brightness.light,
+    colorScheme: ColorScheme.light(
+      primary: parent.primary,
+      secondary: parent.secondary,
+      surface: Colors.white,
+    ),
+    fontFamily: 'SF Pro Display',
+    inputDecorationTheme: InputDecorationTheme(
+      filled: true,
+      fillColor: const Color(0xfff1f2f4),
+      labelStyle: const TextStyle(color: Colors.black54),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide.none,
+      ),
+    ),
+    useMaterial3: true,
+  );
+}
 
 class AccountSheet extends StatefulWidget {
   const AccountSheet({super.key, required this.controller, this.reason});
@@ -254,7 +284,7 @@ class _AccountSheetState extends State<AccountSheet> {
               'accountHint',
               'Your purchases, favorites and history stay with you.',
             ),
-            style: const TextStyle(color: Colors.white60),
+            style: const TextStyle(color: Colors.black54),
           ),
           const SizedBox(height: 18),
           TextField(
