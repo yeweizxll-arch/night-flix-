@@ -1,3 +1,7 @@
+export function isTenantDramaEditable(record: { status: string; deletedAt?: string }): boolean {
+  return !record.deletedAt && ['draft', 'rejected', 'unpublished'].includes(record.status);
+}
+
 export const MAX_IMPORT_BYTES = 1024 * 1024;
 
 export async function readContentImportFile(file: File): Promise<string> {

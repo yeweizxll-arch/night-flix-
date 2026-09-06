@@ -52,6 +52,7 @@ import {
   optionalCanonicalIso,
 } from './platform-content-library-ui';
 import {
+  isTenantDramaEditable,
   readContentImportFile,
   safeExportFilename,
   safeImportErrors,
@@ -1919,10 +1920,6 @@ function sourceTypeLabel(value: string): string {
   if (value === 'upload') return 'S3 上传';
   if (value === 'import') return '历史批量导入';
   return '历史外链（只读）';
-}
-
-function isTenantDramaEditable(record: DramaRecord): boolean {
-  return !record.deletedAt && ['draft', 'rejected'].includes(record.status);
 }
 
 function isDramaRestorable(record: DramaRecord, now = Date.now()): boolean {

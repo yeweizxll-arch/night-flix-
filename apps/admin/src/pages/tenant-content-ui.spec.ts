@@ -6,6 +6,7 @@ import {
 } from './content-upload-ui';
 import {
   MAX_IMPORT_BYTES,
+  isTenantDramaEditable,
   readContentImportFile,
   safeExportFilename,
   safeImportErrors,
@@ -15,6 +16,15 @@ const uuid = '018f6f18-6d29-7d85-8f39-91a713913f4b';
 const isUuid = (value: string) => value === uuid;
 
 describe('tenant content browser safety helpers', () => {
+  it('allows editing and republishing unpublished private dramas, never published or deleted ones', () => {
+    for (const status of ['draft', 'rejected', 'unpublished']) {
+      expect(isTenantDramaEditable({ status })).toBe(true);
+      expect(isTenantDramaEditable({ status, deletedAt: '2026-09-07T00:00:00Z' })).toBe(false);
+    }
+    for (const status of ['pending_review', 'approved', 'published']) {
+      expect(isTenantDramaEditable({ status })).toBe(false);
+    }
+  });
   it('enforces the 1 MiB import boundary and rejects NUL text', async () => {
     await expect(readContentImportFile(new File(['[]'], 'content.json'))).resolves.toBe('[]');
     await expect(readContentImportFile(
