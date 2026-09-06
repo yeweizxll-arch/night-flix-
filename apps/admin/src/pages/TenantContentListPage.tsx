@@ -1675,7 +1675,7 @@ function TenantMediaUploadModal({
     void request<PageResponse<TenantStorageProvider>>(`${STORAGE_API}?page=1&pageSize=100`)
       .then((result) => {
         if (!active) return;
-        const available = result.items.filter((provider) => provider.status === 'active');
+        const available = result.items.filter((provider) => provider.status === 'active' && provider.ownerType === 'tenant');
         setProviders(available);
         setProviderId(available[0]?.id ?? '');
       })

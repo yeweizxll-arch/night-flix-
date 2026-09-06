@@ -50,6 +50,12 @@ function parseAllowlist(value: string | undefined): string[] {
 
 function isValidAllowlistEntry(value: string): boolean {
   const hostname = value.startsWith('*.') ? value.slice(2) : value;
+  // IP-only test sites can use their own HTTPS S3 gateway. Keep exact matching
+  // and the same public-address restrictions as the endpoint itself.
+  if (isIP(hostname) === 4) {
+    if (value.startsWith('*.')) return false;
+    try { assertPublicHostname(hostname); return true; } catch { return false; }
+  }
   return hostname.length >= 3
     && hostname.length <= 253
     && /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])$/.test(hostname)

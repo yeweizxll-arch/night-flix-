@@ -60,10 +60,17 @@ describe('validateStorageEndpoint', () => {
     );
   });
 
-  it('rejects malformed or IP-based allowlist entries', () => {
+  it('accepts only the explicitly allowlisted public IPv4 gateway', () => {
+    const environment = { NODE_ENV: 'production', STORAGE_ENDPOINT_HOST_ALLOWLIST: '47.110.245.29' };
+    expect(validateStorageEndpoint('https://47.110.245.29', environment).origin).toBe('https://47.110.245.29');
+    expect(() => validateStorageEndpoint('https://47.110.245.30', environment)).toThrow(/not allowlisted/);
+    expect(() => validateStorageEndpoint('http://47.110.245.29', environment)).toThrow(/HTTPS origin/);
+  });
+
+  it.each(['127.0.0.1', '10.0.0.1', '169.254.169.254', '192.168.1.1', '*.47.110.245.29', '*', 'https://47.110.245.29'])('rejects unsafe allowlist entry %s', (entry) => {
     expect(() => validateStorageEndpoint('https://storage.example.com', {
       NODE_ENV: 'production',
-      STORAGE_ENDPOINT_HOST_ALLOWLIST: '127.0.0.1',
+      STORAGE_ENDPOINT_HOST_ALLOWLIST: entry,
     })).toThrow(/HOST_ALLOWLIST is invalid/);
   });
 });
