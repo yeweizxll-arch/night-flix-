@@ -25,7 +25,7 @@ try {
     let token;
     async function api(path, { method = 'GET', body, key } = {}) {
       const response = await fetch(base + '/api/v1/' + path, { method,
-        headers: { origin: base, 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}),
+        headers: { origin: base, ...(body ? { 'content-type': 'application/json' } : {}), ...(token ? { authorization: `Bearer ${token}` } : {}),
           ...(key ? { 'idempotency-key': key } : {}) },
         ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(30000) });
       if (!response.ok) throw new Error(`${scope} ${path.split('?')[0]} returned ${response.status}; stopped`);

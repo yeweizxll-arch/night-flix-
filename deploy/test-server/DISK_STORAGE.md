@@ -52,3 +52,31 @@ MP4 可走已有短时授权播放；本次存储验收不等于 Android 真机�
 再撤回 Nginx 的两个 bucket 路由并停止存储服务；保留原文件、数据库和加密密钥。
 旧应用不支持公网 IP allowlist，因此要一起恢复之前运行配置并禁用新 Provider。
 禁止为了“回滚”覆盖整个现有数据库，或删除用户已上传数据。
+
+## 2026-09-06 实际部署记录
+
+- 应用制品 commit：`c0e2ca1ee61e936e5244e6951a8fff4706c85e2e`，当前链接 `/opt/nightflix/releases/c0e2ca1`。
+  SHA256：`b8566d2d6bb1a962b7edb587ac70e6ea3e94e276261af3df788f8c31155369cf`。
+  本地构建 API、两套后台、H5；服务器核对制品、Linux sharp 和隔离候选健康后切换。
+- 数据库权限修复 commit：`dbeff1c`，SQL SHA256：
+  `1f7aac32712b4a16115b2a7373c884f3061f92356271450c04b68e777d097066`。
+  以离线 `nf_owner` 只执行两个 EXECUTE 授权；应用代码没有进一步变更，不需再次构建。
+- 本地后端 829 项通过、1 项跳过；新增真实受限角色权限回归 5 项通过；后台 48 项通过。
+  API/后台类型检查通过，公网 HTTPS 27 项冒烟通过。
+- 官方存储兼容测试：两个 bucket 均通过真实签名 PUT、SHA256/metadata HEAD、Range GET、
+  重复覆盖 412、坏校验 400 且不落盘、匿名/跨 bucket 403、两个后台 Origin 的完整 CORS。
+- 总部 Provider `01a07755-f061-7d43-a55d-10193e72d26f`、代理商 Provider
+  `01a07759-cdd4-7dfb-ae51-9d3ae59af1c8` 均 active。两者密钥不同，不外显凭证。
+- 经真实后台 API 分别上传 PNG（1676 字节）、有效 MP4（70610 字节）、VTT（56 字节），
+  六个媒体均 ready，重复完成返回同一媒体 ID，读取字节与原文件 SHA256 一致。
+  主动重启存储服务后，重新读取这六个文件，字节数/SHA256 全部一致。
+  另保留一个排查时生成的未上架 PNG；没有发布真实剧目或修改用户已有素材。
+- 五个独立服务 active；存储已开机启动且重启计数 0；所有存储端口仍仅监听 loopback。
+  切换时磁盘约 52 GiB 可用。无需新增公网端口、域名、外部对象存储账户或重新安装 APK。
+- 部署前数据库备份：`/var/backups/nightflix/nightflix-before-disk-storage-20260906.dump`，
+  SHA256 `19aa02e20d4f4596c74be7b767a72ba7d43b1a82d44b07685f882fc2157f8021`。
+  `/etc/nightflix` 和 Nginx 备份 SHA256：
+  `11a4ea4d2157b4fa52709eb60c621459b7ca1cb4b7568cb03a7ec6d2731c9e63`；本地私密副本已保留。
+  授权前另备份 `nightflix-before-storage-grants-20260906.dump`，SHA256
+  `1f97f89490c17ee49d3d03d09697e891728b1f181d935a36709151b3031bd8f0`。
+- 验收界限：真实 API/对象字节/持久化已验证；没有宣称完成手机端播放或浏览器逐页面验收。
