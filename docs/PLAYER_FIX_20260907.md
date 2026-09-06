@@ -32,3 +32,13 @@ New tests cover 102-item pagination for all three catalog consumers, repeated-pa
 - This is a targeted repair, not a claim that every Hongguo player feature or every undocumented bug is reproduced/fixed. Automatic landscape rotation/fullscreen mode and a frame-by-frame reference-App visual comparison are not included.
 - Catalog consumers currently need the complete list; very large catalogs should migrate to incremental UI pagination rather than fetching all pages at startup.
 - Native APK/device verification is recorded separately after building the committed source. No server deployment is implied by local tests.
+
+## Native test artifact
+
+- Built from clean source commit `a1a3ce5`, Flutter 3.47.2, `--debug --dart-define=API_BASE_URL=https://47.110.245.29 --build-number=2026090701`.
+- APK: `outputs/nightflix-test-20260907-a1a3ce5.apk` in the outer workspace, SHA256 `ef05ede3722af585633db68b699afb146ca1f843eb9232de28aa3220a0b6d628`.
+- All 35 Flutter tests and static analysis passed. Installed using `adb install -r` into the existing Android 15/API 35 emulator without clearing its data; version code verified as 2026090701.
+- Real server access log records Dart-client catalog requests for pages 1, 2 and 3, all HTTP 200 (01:53:47–01:53:50 Asia/Shanghai).
+- Observed real landscape playback with letterboxing, automatic next episode, current-episode grid marker and unwrapped 10–24 labels. Selected episode 10, paused it, and captured the central play icon and bottom transport in the paused state.
+- Search results display both landscape and portrait titles. No backend code/configuration or publication state was changed; no APK download URL was replaced on the server.
+- Device screenshots are saved outside Git under outer-workspace `outputs/player-20260907-*.png`.
