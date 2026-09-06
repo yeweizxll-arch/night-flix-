@@ -32,6 +32,9 @@
 6. 本地测试、干净提交和构建应用制品。上传后校验 SHA256、commit 和隔离候选健康状态。
    在测试服务器运行 `allow-disk-storage-endpoint.mjs`，仅增加精确公网 IP allowlist。
 7. 切换已核验制品、重启四个应用服务，执行 `smoke-ip.mjs`。
+   已有部署还需以离线迁移所有者执行 `storage-runtime-grants.sql`：原部署遗漏了媒体/内容触发器
+   调用的两个 SECURITY INVOKER 帮助函数权限，会使真实上传入库返回 500。
+   修复仅授予两个业务角色这两个函数的 EXECUTE，不授予全部函数、不更改 RLS 或数据库所有权。
 8. 本地生成一个自有 3 秒 MP4，运行 `enable-disk-storage.mjs /private/access.private.json
    /private/providers.private.json /private/test.mp4`，通过后台 API 建立/启用存储并上传 PNG、MP4、VTT。
    完成校验和重复完成必须返回 ready，读取服务器文件 SHA256 必须与原文件一致。
