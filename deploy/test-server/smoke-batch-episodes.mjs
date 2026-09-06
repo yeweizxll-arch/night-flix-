@@ -9,16 +9,19 @@ import assert from 'node:assert/strict';
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
 const [artifact, credentialPath, fixtureDirectory] = process.argv.slice(2);
 const credentials = JSON.parse(readFileSync(credentialPath, 'utf8'));
-const browser = await chromium.launch({ executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true });
+const browser = await chromium.launch({ executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true,
+  args: ['--disable-renderer-accessibility'] });
+let activePage;
 try {
   for (const scope of ['tenant', 'platform']) {
     const base = `https://47.110.245.29:${scope === 'platform' ? 9441 : 9442}`;
     const api = scope === 'platform' ? '/api/v1/platform/content-management' : '/api/v1/tenant/content';
-    const context = await browser.newContext({ viewport: { width: 1440, height: 1100 } });
+    const context = await browser.newContext({ viewport: { width: 1440, height: 1100 }, reducedMotion: 'reduce' });
     const page = await context.newPage();
-    page.setDefaultTimeout(30000);
+    activePage = page;
+    page.setDefaultTimeout(60000);
     const pageErrors = [];
-    page.on('pageerror', error => pageErrors.push(error.message));
+    page.on('pageerror', error => { pageErrors.push(error.message); console.error(`Browser error: ${error.message}`); });
     if (!process.argv.includes('--live')) await page.route(base + '/**', async route => {
       const path = new URL(route.request().url()).pathname;
       if (path.startsWith('/api/')) return route.continue();
@@ -34,17 +37,27 @@ try {
     assert.equal(login.status(), 200);
     const auth = await login.json();
     const headers = { origin: base, authorization: `Bearer ${auth.accessToken}`, 'idempotency-key': randomUUID() };
-    const code = `batch-test-${scope}-${randomUUID().slice(0, 8)}`;
-    const created = await context.request.post(`${base}${api}/dramas`, { headers, data: {
-      code, translations: [{ locale: 'zh-CN', title: `批量上传测试 ${code}`, summary: '合成测试视频，未上架' }],
-    } });
-    assert.equal(created.status(), 201, `create ${scope} fixture draft`);
+    const fixtureCode = `batch-test-${scope}-${randomUUID().slice(0, 8)}`;
+    const reuseId = scope === 'tenant' ? process.env.BATCH_REUSE_TENANT : undefined;
+    const created = reuseId
+      ? await context.request.get(`${base}${api}/dramas/${reuseId}`, { headers })
+      : await context.request.post(`${base}${api}/dramas`, { headers, data: {
+        code: fixtureCode, translations: [{ locale: 'zh-CN', title: `批量上传测试 ${fixtureCode}`, summary: '合成测试视频，未上架' }],
+      } });
+    assert.equal(created.status(), reuseId ? 200 : 201, `prepare ${scope} fixture draft`);
     const drama = await created.json();
-    await page.goto(base, { waitUntil: 'networkidle' });
-    await page.getByRole('menuitem', { name: scope === 'tenant' ? '内容管理' : '公共内容管理', exact: true }).click();
+    const code = drama.code;
+    assert.ok(code.startsWith(`batch-test-${scope}-`) && drama.status === 'draft' && !(drama.episodes?.length));
+    console.log(`Testing ${scope} candidate with dedicated draft ${drama.id}`);
+    await page.goto(`${base}/?page=${scope === 'tenant' ? 'content' : 'content-library'}`, { waitUntil: 'networkidle' });
+    await page.getByRole('menuitem').filter({ hasText: scope === 'tenant' ? '内容管理' : '公共内容管理' }).waitFor();
+    console.log(`Opened ${scope} content page`);
     const row = page.getByRole('row').filter({ hasText: code });
-    await row.getByRole('button', { name: '详情', exact: true }).click();
+    // Ant Design inserts a visual space in two-character Chinese button names.
+    await row.getByRole('button', { name: /^详\s*情$/ }).click();
+    console.log(`Opened ${scope} fixture detail`);
     await page.getByRole('button', { name: '批量添加剧集', exact: true }).click();
+    console.log(`Opened ${scope} batch modal`);
     const modal = page.getByRole('dialog', { name: '批量添加剧集', exact: true });
     await modal.getByLabel('选择多个剧集视频').setInputFiles(['EP_10.mp4', 'EP_02.mp4', 'EP_01.mp4'].map(name => resolve(fixtureDirectory, name)));
     await modal.getByText('11 秒', { exact: true }).waitFor();
@@ -98,5 +111,12 @@ try {
       retryOnlyFailedFile: scope === 'tenant', published: false }));
     await context.close();
   }
-} catch (error) { console.error(`${error.name}: ${error.message}`); process.exitCode = 1; }
+} catch (error) {
+  console.error(`${error.name}: ${error.message}`);
+  if (activePage && !activePage.isClosed()) {
+    await activePage.screenshot({ path: resolve(fixtureDirectory, 'browser-failure.png'), fullPage: true });
+    console.error((await activePage.locator('body').innerText()).slice(0, 12000));
+  }
+  process.exitCode = 1;
+}
 finally { await browser.close(); }

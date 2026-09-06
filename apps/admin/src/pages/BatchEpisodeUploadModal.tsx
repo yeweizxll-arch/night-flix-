@@ -80,7 +80,8 @@ export function BatchEpisodeUploadModal({ scope, dramaId, onClose }: {
         <label>起始集数 <InputNumber aria-label="起始集数" min={1} max={1000} precision={0} value={start} disabled={busy || locked}
           onChange={value => { if (!value) return; setStart(value); rowsRef.current.forEach((row, index) => { row.episodeNo = value + index; }); changed(); }} /></label>
       </Space>
-      <Input type="file" multiple aria-label="选择多个剧集视频" accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm" disabled={busy || (locked && completed !== rows.length)}
+      {/* Native file input: resetting a selection must not replay AntD's cached fake path. */}
+      <input className="ant-input" type="file" multiple aria-label="选择多个剧集视频" accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm" disabled={busy || (locked && completed !== rows.length)}
         onChange={event => { const files = Array.from(event.target.files ?? []); event.target.value = ''; void selectFiles(files); }} />
       <Typography.Text type="secondary">MP4 / MOV / WebM，每集最大 2 GiB，单部短剧最多 1000 集。时长自动向上取整到秒。</Typography.Text>
       {error && <Alert showIcon type="error" message={error} />}
