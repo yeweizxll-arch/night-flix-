@@ -10,7 +10,8 @@ const appBase = 'https://47.110.245.29';
 const tenantId = '01a076ee-40c2-7cfe-8fc9-ce03682a286e';
 const route = '/api/v1/tenant/legal/documents';
 const documents = ['zh-CN', 'en-US'].flatMap(locale => ['terms', 'privacy'].map(documentType => {
-  const bodyMarkdown = readFileSync(new URL(`./legal/${documentType}.${locale}.md`, import.meta.url), 'utf8');
+  // Match the API's trim normalization before idempotency and equality checks.
+  const bodyMarkdown = readFileSync(new URL(`./legal/${documentType}.${locale}.md`, import.meta.url), 'utf8').trim();
   const title = bodyMarkdown.split('\n')[0].replace(/^# /, '');
   assert.match(title, /Night Flix/);
   assert.match(title, /封闭测试版|Closed Test/);
