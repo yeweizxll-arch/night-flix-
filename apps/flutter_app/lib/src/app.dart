@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:video_player/video_player.dart';
 
@@ -249,40 +250,53 @@ class _AppShellState extends State<AppShell> {
       onDestinationSelected: (value) => setState(() => index = value),
       destinations: destinations,
     );
-    return NativePurchaseScope(
-      purchases: purchases,
-      child: Scaffold(
-        backgroundColor: lightChrome ? const Color(0xfff6f7f8) : _ink,
-        extendBody: false,
-        body: IndexedStack(index: index, children: pages),
-        bottomNavigationBar: lightChrome
-            ? Theme(
-                data: Theme.of(context).copyWith(
-                  navigationBarTheme: NavigationBarThemeData(
-                    backgroundColor: Colors.white,
-                    indicatorColor: Colors.transparent,
-                    height: 68,
-                    iconTheme: WidgetStateProperty.resolveWith((states) {
-                      final selected = states.contains(WidgetState.selected);
-                      return IconThemeData(
-                        color: selected ? Colors.black87 : Colors.black38,
-                      );
-                    }),
-                    labelTextStyle: WidgetStateProperty.resolveWith((states) {
-                      final selected = states.contains(WidgetState.selected);
-                      return TextStyle(
-                        color: selected ? Colors.black87 : Colors.black38,
-                        fontSize: 11,
-                        fontWeight: selected
-                            ? FontWeight.w800
-                            : FontWeight.w600,
-                      );
-                    }),
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: lightChrome
+          ? SystemUiOverlayStyle.dark.copyWith(
+              statusBarColor: Colors.transparent,
+              systemNavigationBarColor: Colors.white,
+              systemNavigationBarIconBrightness: Brightness.dark,
+            )
+          : SystemUiOverlayStyle.light.copyWith(
+              statusBarColor: Colors.transparent,
+              systemNavigationBarColor: _ink,
+              systemNavigationBarIconBrightness: Brightness.light,
+            ),
+      child: NativePurchaseScope(
+        purchases: purchases,
+        child: Scaffold(
+          backgroundColor: lightChrome ? const Color(0xfff6f7f8) : _ink,
+          extendBody: false,
+          body: IndexedStack(index: index, children: pages),
+          bottomNavigationBar: lightChrome
+              ? Theme(
+                  data: Theme.of(context).copyWith(
+                    navigationBarTheme: NavigationBarThemeData(
+                      backgroundColor: Colors.white,
+                      indicatorColor: Colors.transparent,
+                      height: 68,
+                      iconTheme: WidgetStateProperty.resolveWith((states) {
+                        final selected = states.contains(WidgetState.selected);
+                        return IconThemeData(
+                          color: selected ? Colors.black87 : Colors.black38,
+                        );
+                      }),
+                      labelTextStyle: WidgetStateProperty.resolveWith((states) {
+                        final selected = states.contains(WidgetState.selected);
+                        return TextStyle(
+                          color: selected ? Colors.black87 : Colors.black38,
+                          fontSize: 11,
+                          fontWeight: selected
+                              ? FontWeight.w800
+                              : FontWeight.w600,
+                        );
+                      }),
+                    ),
                   ),
-                ),
-                child: navigationBar,
-              )
-            : navigationBar,
+                  child: navigationBar,
+                )
+              : navigationBar,
+        ),
       ),
     );
   }
