@@ -209,6 +209,16 @@ function validateCredentials(
   value: unknown,
 ): CommunicationCredentials {
   if (!record(value)) throw new TypeError('Communication credentials are invalid');
+  if (value.type !== provider) throw new TypeError('Communication provider does not match credentials');
+  if (provider === 'qq_smtp') {
+    rejectUnknown(value, ['authCode', 'fromEmail', 'type']);
+    if (typeof value.authCode !== 'string' || !/^[A-Za-z]{16}$/.test(value.authCode)
+      || typeof value.fromEmail !== 'string'
+      || !/^[A-Za-z0-9._-]{1,64}@qq\.com$/i.test(value.fromEmail)) {
+      throw new TypeError('QQ SMTP credentials are invalid');
+    }
+    return { authCode: value.authCode, fromEmail: value.fromEmail.toLowerCase(), type: 'qq_smtp' };
+  }
   if (provider === 'resend') {
     rejectUnknown(value, ['apiKey', 'fromEmail', 'type']);
     if (typeof value.apiKey !== 'string' || !/^re_[A-Za-z0-9_-]{16,200}$/.test(value.apiKey)

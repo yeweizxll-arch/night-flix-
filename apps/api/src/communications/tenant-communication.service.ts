@@ -62,8 +62,8 @@ export class TenantCommunicationService {
   ) {
     const tenantId = uuid(tenantIdValue, 'tenantId');
     const channel = communicationChannel(channelValue);
-    const provider = providerFor(channel);
     const input = upsertInput(rawInput);
+    const provider = providerFor(channel, input.credentials);
     const provisionalId = uuidV7();
     if (!this.cipher.configured) throw new ServiceUnavailableException('Communication encryption is unavailable');
     return this.database.inPlatformContext(async (transaction) => {
@@ -103,6 +103,7 @@ export class TenantCommunicationService {
           ${configId}, ${tenantId}, ${channel}, ${provider}, 'disabled', 0,
           ${metadata.actorId}, ${metadata.actorId}
         ) on conflict (tenant_id, channel) do update set
+          provider = excluded.provider,
           status = 'disabled', last_test_status = null, last_tested_at = null,
           last_test_error = null, version = tenant_communication_configs.version + 1,
           updated_by = excluded.updated_by
@@ -116,6 +117,7 @@ export class TenantCommunicationService {
           ${configId}, ${tenantId}, ${channel}, ${provider},
           ${encrypted.ciphertext}, ${encrypted.keyVersion}
         ) on conflict (config_id) do update set
+          provider = excluded.provider,
           credentials_ciphertext = excluded.credentials_ciphertext,
           key_version = excluded.key_version
       `;
@@ -137,7 +139,6 @@ export class TenantCommunicationService {
   ) {
     const tenantId = uuid(tenantIdValue, 'tenantId');
     const channel = communicationChannel(channelValue);
-    const provider = providerFor(channel);
     const input = testInput(rawInput, channel);
     await this.testRateLimiter.consume({ actorId: metadata.actorId,
       destination: input.destination, ip: metadata.ip, tenantId });
@@ -151,16 +152,17 @@ export class TenantCommunicationService {
         routeKey: `communication.config.${channel}.test`, tenantId,
       });
       if (command.cached) return command.cached;
-      const configs = await transaction<{ id: string; version: number }[]>`
+      const configs = await transaction<{ id: string; version: number; provider: CommunicationProvider }[]>`
         update tenant_communication_configs set status = 'disabled',
           last_test_status = null, last_tested_at = null, last_test_error = null,
           version = version + 1, updated_by = ${metadata.actorId}
         where tenant_id = ${tenantId} and channel = ${channel}
           and version = ${input.expectedVersion}
-        returning id, version
+        returning id, version, provider
       `;
       const config = configs[0];
       if (!config) throw new ConflictException('Communication configuration version changed or does not exist');
+      const provider = config.provider;
       const jobId = uuidV7();
       const encrypted = this.cipher.encryptTestPayload({
         code: randomInt(0, 1_000_000).toString().padStart(6, '0'),
@@ -256,8 +258,11 @@ function communicationChannel(value: unknown): CommunicationChannel {
   if (value !== 'email' && value !== 'sms') throw new BadRequestException('channel is invalid');
   return value;
 }
-function providerFor(channel: CommunicationChannel): CommunicationProvider {
-  return channel === 'email' ? 'resend' : 'twilio';
+function providerFor(channel: CommunicationChannel, credentials: unknown): CommunicationProvider {
+  const type = record(credentials) ? credentials.type : undefined;
+  if (channel === 'email' && (type === 'resend' || type === 'qq_smtp')) return type;
+  if (channel === 'sms' && type === 'twilio') return type;
+  throw new BadRequestException('Provider is not supported for this channel');
 }
 function uuid(value: unknown, field: string): string {
   if (typeof value !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {

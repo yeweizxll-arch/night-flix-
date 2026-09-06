@@ -28,6 +28,7 @@ let communications: TenantCommunicationService;
 let otp: CustomerOtpService;
 let worker: CommunicationWorkerService;
 let emailAdapter: FakeCommunicationProviderAdapter;
+let qqAdapter: FakeCommunicationProviderAdapter;
 let emailVersion = 0;
 
 const originalEnvironment = {
@@ -69,7 +70,8 @@ describe('tenant communication and OTP delivery security', () => {
       keys: new Map([[9, Buffer.alloc(32, 9)]]),
     });
     emailAdapter = new FakeCommunicationProviderAdapter('resend', 'email');
-    const registry = new CommunicationAdapterRegistry([emailAdapter]);
+    qqAdapter = new FakeCommunicationProviderAdapter('qq_smtp', 'email');
+    const registry = new CommunicationAdapterRegistry([emailAdapter, qqAdapter]);
     worker = new CommunicationWorkerService(databaseService, cipher, registry);
     communications = new TenantCommunicationService(databaseService, cipher, {
       consume: async () => undefined,
@@ -294,6 +296,44 @@ describe('tenant communication and OTP delivery security', () => {
       from customer_otp_delivery_jobs where id = '${test.jobId}'
     `)).rows[0]).toEqual({ attempt_count: 5, last_error: 'provider_timeout',
       payload_ciphertext: null, status: 'dead_letter' });
+  });
+
+  it('rotates Resend to QQ with re-testing, drops old jobs and preserves encryption and provider identity', async () => {
+    const staleTest = await communications.testConfig(tenantA, 'email', {
+      destination: 'stale@example.com', expectedVersion: emailVersion,
+    }, metadata('before-qq-switch'));
+    const changed = await communications.upsertConfig(tenantA, 'email', {
+      credentials: { type: 'qq_smtp', authCode: 'q'.repeat(16), fromEmail: 'nightflix-test@qq.com' },
+      expectedVersion: staleTest.version,
+    }, metadata('switch-to-qq'));
+    expect(changed).toMatchObject({ provider: 'qq_smtp', status: 'disabled' });
+    await expect(communications.setConfigStatus(tenantA, 'email', true, changed.version, metadata('enable-qq-too-early'))).rejects.toThrow();
+    await worker.processAvailable(1);
+    expect(qqAdapter.calls).toHaveLength(0);
+    expect((await database.query<{ last_error: string }>(`select last_error from customer_otp_delivery_jobs where id = '${staleTest.jobId}'`)).rows[0]?.last_error).toBe('config_changed');
+    const test = await communications.testConfig(tenantA, 'email', {
+      destination: 'test@example.com', expectedVersion: changed.version,
+    }, metadata('test-qq-config'));
+    await worker.processAvailable(1);
+    expect(qqAdapter.calls).toHaveLength(1);
+    const enabled = await communications.setConfigStatus(tenantA, 'email', true, test.version, metadata('enable-qq-config'));
+    emailVersion = enabled.version;
+    await expect(database.exec(`update tenant_communication_configs set provider = 'resend' where id = '${changed.id}'`)).rejects.toThrow(/provider change/);
+    const challenge = await otp.createChallenge(tenantA, {
+      channel: 'email', destination: 'new-user@example.com', purpose: 'verify_email',
+    }, request('qq-signup'));
+    await worker.processAvailable(1);
+    expect(qqAdapter.calls).toHaveLength(2);
+    expect(qqAdapter.calls[1]?.code).toBe(challenge.developmentCode);
+    const facts = await database.query(`select status, payload_ciphertext from customer_otp_delivery_jobs where challenge_id = '${challenge.challengeId}'`);
+    expect(facts.rows[0]).toEqual({ status: 'sent', payload_ciphertext: null });
+    // Switching back also invalidates testing; Resend remains available.
+    const restored = await communications.upsertConfig(tenantA, 'email', {
+      credentials: { type: 'resend', apiKey: `re_${'b'.repeat(32)}`, fromEmail: 'security@example.com' },
+      expectedVersion: emailVersion,
+    }, metadata('switch-back-resend'));
+    emailVersion = restored.version;
+    expect(restored).toMatchObject({ provider: 'resend', status: 'disabled', lastTestStatus: undefined });
   });
 
   it('exposes config and delivery facts read-only while secrets have no tenant policy', async () => {

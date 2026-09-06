@@ -11,6 +11,7 @@ import { CommunicationTestRateLimiterService } from './communication-test-rate-l
 import { CommunicationWorkerService } from './communication-worker.service';
 import { OtpDeliveryService } from './otp-delivery.service';
 import { TenantCommunicationService } from './tenant-communication.service';
+import { QqSmtpCommunicationAdapter } from './qq-smtp.adapter';
 
 @Module({
   controllers: [TenantCommunicationController],
@@ -26,7 +27,7 @@ import { TenantCommunicationService } from './tenant-communication.service';
     {
       provide: CommunicationAdapterRegistry,
       useFactory: () => new CommunicationAdapterRegistry([
-        new ResendCommunicationAdapter(), new TwilioCommunicationAdapter(),
+        new ResendCommunicationAdapter(), new QqSmtpCommunicationAdapter(), new TwilioCommunicationAdapter(),
       ]),
     },
   ],

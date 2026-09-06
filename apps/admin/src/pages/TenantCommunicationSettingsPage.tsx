@@ -9,6 +9,7 @@ import {
   message,
   Modal,
   Popconfirm,
+  Select,
   Space,
   Tag,
   Typography,
@@ -28,10 +29,12 @@ import {
 
 interface CommunicationConfig extends CommunicationConfigSummary {
   id: string;
-  provider: 'resend' | 'twilio';
+  provider: 'resend' | 'qq_smtp' | 'twilio';
 }
 
 interface CredentialForm {
+  emailProvider?: 'resend' | 'qq_smtp';
+  authCode?: string;
   accountSid?: string;
   apiKey?: string;
   authToken?: string;
@@ -56,6 +59,7 @@ const channels: CommunicationChannel[] = ['email', 'sms'];
 export function TenantCommunicationSettingsPage() {
   const { principal, request } = useAuth();
   const [credentialForm] = Form.useForm<CredentialForm>();
+  const emailProvider = Form.useWatch('emailProvider', credentialForm);
   const [testForm] = Form.useForm<TestForm>();
   const [messageApi, messageContext] = message.useMessage();
   const [configs, setConfigs] = useState<CommunicationConfig[]>([]);
@@ -103,6 +107,8 @@ export function TenantCommunicationSettingsPage() {
 
   function openEditor(channel: CommunicationChannel): void {
     credentialForm.resetFields();
+    credentialForm.setFieldsValue({ emailProvider:
+      configs.find(item => item.channel === channel)?.provider === 'qq_smtp' ? 'qq_smtp' : 'resend' });
     setEditor(channel);
   }
 
@@ -126,7 +132,11 @@ export function TenantCommunicationSettingsPage() {
     if (!editor) return;
     const config = configs.find((item) => item.channel === editor);
     const credentials = editor === 'email'
-      ? {
+      ? values.emailProvider === 'qq_smtp' ? {
+          authCode: values.authCode,
+          fromEmail: values.fromEmail?.trim().toLowerCase(),
+          type: 'qq_smtp',
+        } : {
           apiKey: values.apiKey,
           fromEmail: values.fromEmail?.trim().toLowerCase(),
           type: 'resend',
@@ -230,7 +240,7 @@ export function TenantCommunicationSettingsPage() {
         <div>
           <Typography.Title level={2}>邮箱与短信验证码</Typography.Title>
           <Typography.Text type="secondary">
-            配置 Resend 邮件和 Twilio 短信渠道；未配置或未启用时不会发送外部验证码。
+            配置 Resend / QQ SMTP 邮件和 Twilio 短信渠道；未启用时不会发送外部验证码。QQ 邮箱适用于小范围测试，可能受发信限制。
           </Typography.Text>
         </div>
         <Button disabled={Boolean(submitting)} loading={loading} onClick={() => void load()}>刷新状态</Button>
@@ -263,7 +273,7 @@ export function TenantCommunicationSettingsPage() {
             <Card
               key={channel}
               loading={loading}
-              title={channel === 'email' ? 'Email · Resend' : 'SMS · Twilio'}
+              title={channel === 'email' ? `Email · ${config?.provider === 'qq_smtp' ? 'QQ SMTP' : 'Resend'}` : 'SMS · Twilio'}
               extra={config?.status === 'active'
                 ? <Tag color="green">已启用</Tag>
                 : <Tag>已停用</Tag>}
@@ -318,7 +328,7 @@ export function TenantCommunicationSettingsPage() {
         footer={null}
         onCancel={closeEditor}
         open={Boolean(editor)}
-        title={editor === 'email' ? '录入 Resend 凭据' : '录入 Twilio 凭据'}
+        title={editor === 'email' ? '录入邮件凭据' : '录入 Twilio 凭据'}
       >
         <Alert className="page-alert" message="已有密钥不会回显。本次提交必须填写完整的新凭据，关闭窗口即清空输入。" showIcon type="warning" />
         <Form
@@ -329,14 +339,27 @@ export function TenantCommunicationSettingsPage() {
         >
           {editor === 'email' ? (
             <>
-              <Form.Item label="Resend API Key" name="apiKey" rules={[
+              <Form.Item label="邮件服务" name="emailProvider" rules={[{ required: true }]}>
+                <Select onChange={() => credentialForm.setFieldsValue({ apiKey: undefined, authCode: undefined })}
+                  options={[{ value: 'resend', label: 'Resend · 已验证域名' }, { value: 'qq_smtp', label: 'QQ SMTP · 测试邮箱' }]} />
+              </Form.Item>
+              {emailProvider === 'qq_smtp' ? (
+                <Form.Item label="QQ 邮箱 SMTP 授权码（不是登录密码）" name="authCode" rules={[
+                  { required: true, pattern: /^[A-Za-z]{16}$/, message: '请输入 16 位 SMTP 授权码' },
+                ]}>
+                  <Input.Password autoComplete="new-password" maxLength={16} visibilityToggle={false} />
+                </Form.Item>
+              ) : <Form.Item label="Resend API Key" name="apiKey" rules={[
                 { required: true },
                 { pattern: /^re_[A-Za-z0-9_-]{16,200}$/, message: '请输入有效的 Resend API Key' },
               ]}>
                 <Input.Password autoComplete="new-password" maxLength={203} visibilityToggle={false} />
-              </Form.Item>
-              <Form.Item label="From Email" name="fromEmail" rules={[{ required: true, type: 'email' }]}>
-                <Input autoComplete="off" maxLength={320} placeholder="noreply@example.com" />
+              </Form.Item>}
+              <Form.Item label="发件邮箱" name="fromEmail" rules={[
+                { required: true, type: 'email' },
+                ...(emailProvider === 'qq_smtp' ? [{ pattern: /^[A-Za-z0-9._-]{1,64}@qq\.com$/i, message: '请输入已开启 SMTP 的 QQ 邮箱' }] : []),
+              ]}>
+                <Input autoComplete="off" maxLength={320} placeholder={emailProvider === 'qq_smtp' ? 'your-account@qq.com' : 'noreply@example.com'} />
               </Form.Item>
             </>
           ) : (
