@@ -88,3 +88,32 @@ Node 的额外 CA 需在进程启动前注入，不能仅依赖 CLI 的 `--env-f
 首次安装没有更早的健康版本；旧目录 `3571d70` 是初始化失败的候选，**不能用作回滚版本**。
 遇到故障先停止四个 Night Flix 服务并保持公网入口关闭，保留数据库及制品，再从已核验的备份恢复到隔离库。
 后续发布必须先备份、上传校验、新目录启动与验证，再切换；不得在服务器改源码或安装项目依赖。
+
+## 临时公网域名预检：被云厂商备案策略阻断
+
+2026-09-06，用户同意临时域名后，预检以下三个独立 Host：
+`admin.47-110-245-29.sslip.io`、`demo.47-110-245-29.sslip.io`、
+`app.47-110-245-29.sslip.io`。服务器侧 DNS 均正确返回 `47.110.245.29`。
+
+临时安装 `nginx-acme.conf` 并仅开放 HTTP 验证端口；本机请求
+`/.well-known/acme-challenge/nightflix-connectivity` 返回预期的
+`nightflix-challenge-ready`。外部按域名访问及显式指定目标 IP 访问，均返回：
+
+```text
+HTTP/1.1 403 Forbidden
+Server: Beaver
+<title>Non-compliance ICP Filing</title>
+```
+
+响应指向阿里云备案阻断页面，不能当成应用错误或 HTTPS 已可用。
+根据[阿里云备案域名说明](https://help.aliyun.com/zh/icp-filing/basic-icp-service/support/for-the-record-domain-faq/)，
+未完成适用备案/接入备案的域名解析至中国内地服务器，可能被阻断访问。
+
+已撤回临时公网监听、删除本次新增的 UFW 80 入站规则，并确认四服务仍 active。
+配置留存于 `/root/nightflix-incoming/nginx-acme.blocked.conf`，不在 Nginx 加载目录。
+未申请证书、未更改租户域名记录或运行环境、未更换应用制品、未开启 443。
+
+继续需用户确定其一：在本服务器使用已完成适用备案的自有域名；
+或提供中国香港/境外测试服务器后，按相同隔离架构重新部署并验证临时域名。
+中国内地以外地域的备案差异见[阿里云跨地域 FAQ](https://help.aliyun.com/zh/ecs/cross-region-usage-faqs)。
+不通过改变端口、伪造 Host 或关闭证书校验规避备案阻断。
