@@ -168,7 +168,7 @@ void main() {
   testWidgets(
     'notifications real GET/PUT, failure rollback, retry and reload',
     (tester) async {
-      final controller = await open(tester, account: 'viewer');
+      final controller = await open(tester, account: 'notifications');
       await qa('fail-next', {
         'path': '/api/v1/customer/notifications/preferences',
       });
@@ -189,10 +189,12 @@ void main() {
       await tap(tester, 'Push promotions');
       expect(
         (await qa('state'))['preferences'],
-        contains({
-          'marketing_in_app_enabled': false,
-          'marketing_push_enabled': false,
-        }),
+        contains(
+          equals({
+            'marketing_in_app_enabled': false,
+            'marketing_push_enabled': false,
+          }),
+        ),
       );
       await capture(tester, '04-notifications');
       await back(tester);
@@ -214,12 +216,12 @@ void main() {
   testWidgets(
     'devices cancel/revoke, password validation, wrong password and actual new login',
     (tester) async {
-      final controller = await open(tester, account: 'viewer');
+      final controller = await open(tester, account: 'password');
       final otherLogin = await http.post(
         Uri.parse('$base/api/v1/customer/auth/login'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
-          'identifier': 'viewer@example.test',
+          'identifier': 'password@example.test',
           'password': initialPassword,
           'devicePlatform': 'web',
           'deviceLabel': 'Other phone',
@@ -230,26 +232,18 @@ void main() {
       expect(find.text('This device'), findsOneWidget);
       expect(find.text('Sign out'), findsNWidgets(2));
       await capture(tester, '05-devices');
-      final currentCard = find.ancestor(
-        of: find.text('This device'),
-        matching: find.byType(Card),
+      final otherButton = find.descendant(
+        of: find.ancestor(
+          of: find.text('Other phone'),
+          matching: find.byType(Card),
+        ),
+        matching: find.byType(OutlinedButton),
       );
-      final otherButton = find
-          .byWidgetPredicate((w) => w is OutlinedButton)
-          .evaluate()
-          .where(
-            (e) => !find
-                .descendant(of: currentCard, matching: find.byWidget(e.widget))
-                .evaluate()
-                .isNotEmpty,
-          )
-          .first
-          .widget;
-      await tester.tap(find.byWidget(otherButton));
+      await tester.tap(otherButton);
       await ready(tester);
       await tap(tester, 'Cancel');
       expect(find.text('Sign out'), findsNWidgets(2));
-      await tester.tap(find.byWidget(otherButton));
+      await tester.tap(otherButton);
       await ready(tester);
       await tap(tester, 'Confirm');
       expect(find.text('Sign out'), findsOneWidget);
@@ -276,10 +270,10 @@ void main() {
       await capture(tester, '06-password-success');
       final other = DramaRepository(apiBaseUrl: base);
       await expectLater(
-        other.login('viewer@example.test', initialPassword),
+        other.login('password@example.test', initialPassword),
         throwsA(isA<ApiException>()),
       );
-      await other.login('viewer@example.test', 'Local-new-password-456');
+      await other.login('password@example.test', 'Local-new-password-456');
       await other.logout();
       expect(controller.session, isNotNull);
     },
@@ -288,17 +282,13 @@ void main() {
   testWidgets(
     'reset password uses real OTP verification and returns to signed-in settings',
     (tester) async {
-      final controller = await open(
-        tester,
-        account: 'viewer',
-        password: 'Local-new-password-456',
-      );
+      final controller = await open(tester, account: 'reset');
       await setting(tester, 'Change password');
       await tap(tester, 'Forgot password / Set a password by email');
-      expect(find.text('viewer@example.test'), findsOneWidget);
+      expect(find.text('reset@example.test'), findsOneWidget);
       await tap(tester, 'Send code');
       final code = (await qa(
-        'code?email=viewer%40example.test&purpose=password_reset',
+        'code?email=reset%40example.test&purpose=password_reset',
       ))['code'];
       expect(code, matches(RegExp(r'^\d{6}$')));
       final fields = find.byType(TextField).hitTestable();
@@ -307,7 +297,7 @@ void main() {
       await tester.enterText(fields.at(2), '$code');
       await tap(tester, 'Reset password');
       expect(find.text('Send code'), findsNothing);
-      expect(controller.session?.email, 'viewer@example.test');
+      expect(controller.session?.email, 'reset@example.test');
       await capture(tester, '07-reset-return');
     },
   );
@@ -315,11 +305,11 @@ void main() {
   testWidgets(
     'export, all data categories, legal retry, help feedback and cache preservation',
     (tester) async {
-      final controller = await open(tester, account: 'viewer');
+      final controller = await open(tester, account: 'export');
       await setting(tester, 'Export personal data');
       await tester.enterText(find.byType(TextFormField).last, initialPassword);
       await tap(tester, 'Export personal data');
-      expect(find.textContaining('viewer@example.test'), findsOneWidget);
+      expect(find.textContaining('export@example.test'), findsOneWidget);
       await capture(tester, '08-export');
       for (final section in [
         'Consent records',
@@ -370,7 +360,9 @@ void main() {
       await tap(tester, 'Send');
       expect(
         (await qa('state'))['feedback'],
-        contains({'body': 'Emulator feedback: settings end-to-end verified.'}),
+        contains(
+          equals({'body': 'Emulator feedback: settings end-to-end verified.'}),
+        ),
       );
       await capture(tester, '10-feedback');
       await back(tester);
@@ -420,7 +412,7 @@ void main() {
       final state = await qa('state');
       expect(
         state['accounts'],
-        contains({'username': 'erase', 'status': 'disabled'}),
+        contains(equals({'username': 'erase', 'status': 'disabled'})),
       );
       expect(state['erasures'], hasLength(1));
       await expectLater(

@@ -48,7 +48,7 @@ describe.skipIf(!enabled)('local Android settings with real API and PostgreSQL',
       (${staff}, 'settings-fixture', ${await hashPassword('Local-fixture-only-123')})`;
     await owner`insert into tenant_domains (id, tenant_id, host, type, verification_token, verified_at, tls_status, is_primary, created_by)
       values (${uuidV7()}, ${tenant}, '127.0.0.1', 'custom', 'local-fixture-verified-domain', statement_timestamp(), 'active', true, ${staff})`;
-    for (const name of ['viewer', 'erase']) {
+    for (const name of ['viewer', 'notifications', 'password', 'reset', 'export', 'erase']) {
       await owner`insert into customer_accounts (id, tenant_id, username, email, email_verified_at, password_hash)
         values (${uuidV7()}, ${tenant}, ${name}, ${`${name}@example.test`}, statement_timestamp(), ${await hashPassword('Local-password-123')})`;
     }
