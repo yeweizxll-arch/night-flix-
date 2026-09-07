@@ -1,6 +1,6 @@
 // Opt-in real HTTP/PostgreSQL companion for Flutter's settings emulator suite.
 // No production endpoints or mail transports are changed. Each run owns its DB.
-import { readdir, readFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import postgres, { type Sql } from 'postgres';
 import { Test } from '@nestjs/testing';
@@ -102,6 +102,15 @@ describe.skipIf(!enabled)('local Android settings with real API and PostgreSQL',
     });
     server.get<{ Querystring: { email: string; purpose: string } }>('/__qa/code', async request =>
       ({ code: codes.get(`${request.query.email}:${request.query.purpose}`) }));
+    server.post<{ Params: { name: string }; Body: { png: string } }>('/__qa/screenshots/:name', async request => {
+      if (!/^[a-z0-9-]+$/.test(request.params.name)) throw new Error('Invalid screenshot name');
+      const directory = resolve(process.cwd(), '../flutter_app/build/settings-emulator');
+      const bytes = Buffer.from(request.body.png, 'base64');
+      if (bytes.subarray(0, 8).toString('hex') !== '89504e470d0a1a0a') throw new Error('PNG required');
+      await mkdir(directory, { recursive: true });
+      await writeFile(resolve(directory, `${request.params.name}.png`), bytes);
+      return { ok: true };
+    });
     server.get('/__qa/state', async () => ({
       accounts: await owner`select username, status from customer_accounts where tenant_id = ${tenant} order by username`,
       preferences: await owner`select marketing_in_app_enabled, marketing_push_enabled from customer_notification_preferences where tenant_id = ${tenant}`,

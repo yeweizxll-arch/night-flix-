@@ -1,8 +1,10 @@
 // Real Android UI, native preferences/keystore and local Nest/PostgreSQL APIs.
 // Run with the opt-in settings-emulator.integration.spec.ts server (port 4326).
 import 'dart:convert';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
@@ -14,6 +16,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 const base = 'http://127.0.0.1:4326';
 const initialPassword = 'Local-password-123';
 late final IntegrationTestWidgetsFlutterBinding binding;
+final captureKey = GlobalKey();
 
 Future<Map<String, dynamic>> qa(
   String path, [
@@ -64,7 +67,17 @@ Future<void> back(WidgetTester tester) async {
 
 Future<void> capture(WidgetTester tester, String name) async {
   await ready(tester);
-  await binding.takeScreenshot(name);
+  final boundary =
+      captureKey.currentContext!.findRenderObject() as RenderRepaintBoundary;
+  final image = await boundary.toImage(pixelRatio: 1);
+  try {
+    final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+    await qa('screenshots/$name', {
+      'png': base64Encode(bytes!.buffer.asUint8List()),
+    });
+  } finally {
+    image.dispose();
+  }
 }
 
 Future<AppController> open(
@@ -85,7 +98,12 @@ Future<AppController> open(
   if (account != null) {
     await controller.login('$account@example.test', password);
   }
-  await tester.pumpWidget(DramaApp(controller: controller));
+  await tester.pumpWidget(
+    RepaintBoundary(
+      key: captureKey,
+      child: DramaApp(controller: controller),
+    ),
+  );
   await ready(tester);
   await tap(tester, 'Me');
   await setting(tester, 'Settings');
@@ -100,7 +118,6 @@ void main() {
     for (final key in preferences.getKeys().where((k) => k.startsWith(base))) {
       await preferences.remove(key);
     }
-    await binding.convertFlutterSurfaceToImage();
   });
 
   testWidgets(
