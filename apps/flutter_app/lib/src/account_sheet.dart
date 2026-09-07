@@ -122,7 +122,23 @@ class _AccountSheetState extends State<AccountSheet> {
     try {
       await operation();
     } catch (cause) {
-      if (mounted) setState(() => error = friendlyError(context, cause));
+      if (mounted) {
+        setState(() {
+          if (cause is ApiException &&
+              cause.statusCode == 401 &&
+              mode != 'login') {
+            error = context.isChinese ? '验证码不正确或已过期，请核对或重新发送。' : 'Verification code is incorrect or expired. Check it or request a new code.';
+          } else if (cause is ApiException &&
+              cause.statusCode == 401 &&
+              !identityTerms) {
+            error = context.isChinese
+                ? '邮箱或密码不正确，请重试。'
+                : 'Email or password is incorrect. Please try again.';
+          } else {
+            error = friendlyError(context, cause);
+          }
+        });
+      }
     } finally {
       if (mounted) setState(() => busy = false);
     }

@@ -36,6 +36,8 @@ class SettingsFixture extends DramaRepository {
   final revoked = <String>[];
   final cursors = <String?>[];
   final resetPasswords = <String>[];
+  bool failOtpVerify = false;
+  bool largeExport = false;
   @override
   Future<String> requestEmailCode(String email, String purpose) async =>
       'test-challenge';
@@ -45,7 +47,11 @@ class SettingsFixture extends DramaRepository {
     String purpose,
     String challengeId,
     String code,
-  ) async => 'test-grant';
+  ) async {
+    if (failOtpVerify) throw const ApiException('Invalid code', 401);
+    return 'test-grant';
+  }
+
   @override
   Future<void> resetPassword(
     String email,
@@ -114,6 +120,8 @@ class SettingsFixture extends DramaRepository {
       'section': section,
       'items': [
         {'id': cursor == null ? 'record-one' : 'record-two'},
+        if (largeExport)
+          for (var n = 0; n < 100; n++) {'body': 'Fixture item $n'},
       ],
       if (cursor == null) 'nextCursor': 'page-two',
     };
@@ -440,7 +448,7 @@ void main() {
   testWidgets(
     'email reset accepts the same UTF-8 password range as password change and API',
     (tester) async {
-      final repo = SettingsFixture();
+      final repo = SettingsFixture()..failOtpVerify = true;
       await openSettings(tester, repo);
       await tapSetting(tester, 'Change password');
       await tester.tap(find.text('Forgot password / Set a password by email'));
@@ -456,6 +464,15 @@ void main() {
       await tester.tap(find.text('Send code'));
       await tester.pumpAndSettle();
       await tester.enterText(fields.at(2), '123456');
+      await tester.tap(find.widgetWithText(FilledButton, 'Reset password'));
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('Verification code is incorrect or expired.'),
+        findsOneWidget,
+      );
+      expect(find.text('Please sign in again.'), findsNothing);
+      repo.failOtpVerify = false;
+      await tester.enterText(fields.at(2), '654321');
       await tester.tap(find.widgetWithText(FilledButton, 'Reset password'));
       await tester.pumpAndSettle();
       expect(repo.resetPasswords, ['新密码']);
@@ -518,7 +535,7 @@ void main() {
   testWidgets(
     'export paginates actual records and account switch removes sensitive page',
     (tester) async {
-      final repo = SettingsFixture();
+      final repo = SettingsFixture()..largeExport = true;
       final controller = await openSettings(tester, repo);
       await tapSetting(tester, 'Export personal data');
       await tester.enterText(
@@ -530,6 +547,12 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.textContaining('record-one'), findsOneWidget);
+      expect(
+        tester
+            .getSize(find.byKey(const ValueKey('settings-export-preview')))
+            .height,
+        lessThanOrEqualTo(280),
+      );
       await tapSetting(tester, 'Read next page');
       expect(repo.cursors, [null, 'page-two']);
       expect(find.textContaining('record-two'), findsOneWidget);

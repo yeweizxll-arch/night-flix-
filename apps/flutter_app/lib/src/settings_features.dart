@@ -864,8 +864,15 @@ class _AccountSettingsFormState extends State<_AccountSettingsForm> {
             ),
             if (exported != null) ...[
               const SizedBox(height: 16),
-              SelectableText(
-                const JsonEncoder.withIndent('  ').convert(exported),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 280),
+                child: SingleChildScrollView(
+                  key: const ValueKey('settings-export-preview'),
+                  primary: false,
+                  child: SelectableText(
+                    const JsonEncoder.withIndent('  ').convert(exported),
+                  ),
+                ),
               ),
               if (exported!['nextCursor'] != null)
                 OutlinedButton(

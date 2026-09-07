@@ -46,12 +46,17 @@ Future<void> ready(WidgetTester tester) async {
   // rendered. Waiting only for animation frames creates false pass/fail races.
   for (var attempt = 0; attempt < 250; attempt++) {
     if (find.text('Processing…').evaluate().isEmpty &&
-        find.text('处理中…').evaluate().isEmpty)
+        find.text('处理中…').evaluate().isEmpty &&
+        find.byType(CircularProgressIndicator).evaluate().isEmpty &&
+        find.byType(LinearProgressIndicator).evaluate().isEmpty) {
       break;
+    }
     await tester.pump(const Duration(milliseconds: 100));
   }
   expect(find.text('Processing…'), findsNothing);
   expect(find.text('处理中…'), findsNothing);
+  expect(find.byType(CircularProgressIndicator), findsNothing);
+  expect(find.byType(LinearProgressIndicator), findsNothing);
   expect(tester.takeException(), isNull);
 }
 
@@ -60,7 +65,6 @@ Future<void> tap(WidgetTester tester, String label) async {
   // not its identically named submit button.
   final submit = find.widgetWithText(FilledButton, label);
   if (submit.evaluate().isNotEmpty) {
-    FocusManager.instance.primaryFocus?.unfocus();
     await tester.pump(const Duration(milliseconds: 400));
     await ready(tester);
   }
@@ -219,7 +223,7 @@ void main() {
         );
         await setting(tester, title);
         await tester.scrollUntilVisible(
-          find.text(localeNames[locale]!).last,
+          find.text(localeNames[locale]!),
           200,
           scrollable: find.byType(Scrollable).last,
         );
@@ -270,6 +274,8 @@ void main() {
       await tap(tester, 'Create account');
       expect(controller.session, isNull);
       await tester.enterText(fields.at(3), code);
+      await ready(tester);
+      expect(tester.widget<TextField>(fields.at(3)).controller!.text, code);
       await tap(tester, 'Create account');
       await capture(tester, 'registration-submit');
       expect(controller.session?.email, 'signup@example.test');
