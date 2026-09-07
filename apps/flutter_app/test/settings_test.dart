@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:night_flix/src/app.dart';
+import 'package:night_flix/src/account_sheet.dart';
 import 'package:night_flix/src/drama_repository.dart';
 import 'package:night_flix/src/models.dart';
 import 'package:night_flix/src/tenant_ads.dart';
@@ -34,6 +35,27 @@ class SettingsFixture extends DramaRepository {
   int legalReads = 0;
   final revoked = <String>[];
   final cursors = <String?>[];
+  final resetPasswords = <String>[];
+  @override
+  Future<String> requestEmailCode(String email, String purpose) async =>
+      'test-challenge';
+  @override
+  Future<String> verifyEmailCode(
+    String email,
+    String purpose,
+    String challengeId,
+    String code,
+  ) async => 'test-grant';
+  @override
+  Future<void> resetPassword(
+    String email,
+    String password,
+    String verificationToken,
+  ) async {
+    resetPasswords.add(password);
+    await logout();
+  }
+
   @override
   Future<Map<String, dynamic>> notificationPreferences({
     Map<String, dynamic>? update,
@@ -416,10 +438,36 @@ void main() {
   );
 
   testWidgets(
+    'email reset accepts the same UTF-8 password range as password change and API',
+    (tester) async {
+      final repo = SettingsFixture();
+      await openSettings(tester, repo);
+      await tapSetting(tester, 'Change password');
+      await tester.tap(find.text('Forgot password / Set a password by email'));
+      await tester.pumpAndSettle();
+      final fields = find.descendant(
+        of: find.byType(AccountSheet),
+        matching: find.byType(TextField),
+      );
+      await tester.enterText(
+        fields.at(1),
+        '新密码',
+      ); // 9 UTF-8 bytes, like the real API.
+      await tester.tap(find.text('Send code'));
+      await tester.pumpAndSettle();
+      await tester.enterText(fields.at(2), '123456');
+      await tester.tap(find.widgetWithText(FilledButton, 'Reset password'));
+      await tester.pumpAndSettle();
+      expect(repo.resetPasswords, ['新密码']);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
     'password form validates confirmation, blocks repeat submit, surfaces errors and retries',
     (tester) async {
       final repo = SettingsFixture()..failPassword = true;
-      await openSettings(tester, repo);
+      await openSettings(tester, repo, darkRoot: true);
       await tapSetting(tester, 'Change password');
       final fields = find.byType(TextFormField);
       await tester.enterText(fields.at(0), 'current password');
@@ -435,6 +483,11 @@ void main() {
       expect(
         find.textContaining('Current password is incorrect'),
         findsOneWidget,
+      );
+      final errorText = find.textContaining('Current password is incorrect');
+      expect(
+        tester.widget<Text>(errorText).style?.color,
+        Theme.of(tester.element(errorText)).colorScheme.error,
       );
       repo.failPassword = false;
       repo.passwordGate = Completer<void>();

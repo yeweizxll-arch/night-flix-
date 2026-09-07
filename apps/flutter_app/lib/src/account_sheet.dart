@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -172,9 +173,12 @@ class _AccountSheetState extends State<AccountSheet> {
 
   Future<void> _submit() => _run(() async {
     if (mode != 'login') {
-      if (password.text.length < 8) {
+      final passwordBytes = utf8.encode(password.text).length;
+      if (passwordBytes < 8 || passwordBytes > 4096) {
         throw ApiException(
-          context.tr('passwordLength', 'Use at least 8 characters'),
+          context.isChinese
+              ? '密码需为 8–4096 个 UTF-8 字节'
+              : 'Use 8–4096 UTF-8 bytes',
           400,
         );
       }

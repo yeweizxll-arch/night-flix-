@@ -97,6 +97,9 @@ describe.skipIf(!enabled)('local Android settings with real API and PostgreSQL',
     await app.register(cookie);
     app.setGlobalPrefix('api/v1');
     const server = app.getHttpAdapter().getInstance();
+    server.addHook('onResponse', async (request, reply) => {
+      if (reply.statusCode >= 400) console.log('QA_HTTP', request.method, request.url.split('?')[0], reply.statusCode);
+    });
     server.addHook('onRequest', async (request, reply) => {
       if (failNext && request.url.startsWith(failNext)) {
         failNext = ''; await reply.code(503).send({ message: 'Local injected failure' });

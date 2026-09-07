@@ -42,6 +42,16 @@ Future<void> ready(WidgetTester tester) async {
     EnginePhase.sendSemanticsUpdate,
     const Duration(seconds: 25),
   );
+  // Native HTTP can still be in flight after a static "Processing" button has
+  // rendered. Waiting only for animation frames creates false pass/fail races.
+  for (var attempt = 0; attempt < 250; attempt++) {
+    if (find.text('Processing…').evaluate().isEmpty &&
+        find.text('处理中…').evaluate().isEmpty)
+      break;
+    await tester.pump(const Duration(milliseconds: 100));
+  }
+  expect(find.text('Processing…'), findsNothing);
+  expect(find.text('处理中…'), findsNothing);
   expect(tester.takeException(), isNull);
 }
 
@@ -49,6 +59,11 @@ Future<void> tap(WidgetTester tester, String label) async {
   // Scaffold traversal can place the AppBar after the body. A page title is
   // not its identically named submit button.
   final submit = find.widgetWithText(FilledButton, label);
+  if (submit.evaluate().isNotEmpty) {
+    FocusManager.instance.primaryFocus?.unfocus();
+    await tester.pump(const Duration(milliseconds: 400));
+    await ready(tester);
+  }
   final target = submit.evaluate().isNotEmpty
       ? submit.last
       : find.text(label).last;
@@ -203,6 +218,11 @@ void main() {
           'Language',
         );
         await setting(tester, title);
+        await tester.scrollUntilVisible(
+          find.text(localeNames[locale]!).last,
+          200,
+          scrollable: find.byType(Scrollable).last,
+        );
         await tap(tester, localeNames[locale]!);
         expect(controller.locale, locale);
         if (['ar-SA', 'hi-IN', 'zh-TW'].contains(locale)) {
@@ -251,6 +271,7 @@ void main() {
       expect(controller.session, isNull);
       await tester.enterText(fields.at(3), code);
       await tap(tester, 'Create account');
+      await capture(tester, 'registration-submit');
       expect(controller.session?.email, 'signup@example.test');
       expect(find.text('Current password'), findsOneWidget);
       expect(
@@ -360,11 +381,11 @@ void main() {
       );
       await tester.enterText(fields.at(0), initialPassword);
       await tap(tester, 'Change password');
+      await capture(tester, '06-password-success');
       expect(
         find.text('Password changed. Other sessions have been signed out.'),
         findsOneWidget,
       );
-      await capture(tester, '06-password-success');
       final other = DramaRepository(apiBaseUrl: base);
       await expectLater(
         other.login('password@example.test', initialPassword),
@@ -390,11 +411,23 @@ void main() {
       expect(code, matches(RegExp(r'^\d{6}$')));
       final fields = find.byType(TextField).hitTestable();
       // Hidden password-change page fields are not part of this bottom sheet.
-      await tester.enterText(fields.at(1), initialPassword);
+      await tester.enterText(fields.at(1), '新密码');
       await tester.enterText(fields.at(2), '$code');
       await tap(tester, 'Reset password');
       expect(find.text('Send code'), findsNothing);
       expect(controller.session?.email, 'reset@example.test');
+      // The automatic sign-in after OTP reset must accept the exact new password.
+      final check = await http.post(
+        Uri.parse('$base/api/v1/customer/auth/login'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'identifier': 'reset@example.test',
+          'password': '新密码',
+          'devicePlatform': 'web',
+          'deviceLabel': 'Reset verification',
+        }),
+      );
+      expect(check.statusCode, 200);
       await capture(tester, '07-reset-return');
     },
   );

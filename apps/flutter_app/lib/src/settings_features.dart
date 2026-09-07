@@ -848,7 +848,9 @@ class _AccountSettingsFormState extends State<_AccountSettingsForm> {
             if (error != null)
               Text(
                 error!,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
+                style: TextStyle(
+                  color: _lightPageTheme(context).colorScheme.error,
+                ),
               ),
             if (success != null) Text(success!),
             const SizedBox(height: 16),
