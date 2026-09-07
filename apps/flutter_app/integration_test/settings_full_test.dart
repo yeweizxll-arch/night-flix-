@@ -70,6 +70,26 @@ Future<void> back(WidgetTester tester) async {
   await ready(tester);
 }
 
+Future<void> nativeCheckpoint(
+  WidgetTester tester,
+  String action,
+  String button,
+) async {
+  await qa('native', {'action': action});
+  await tester.ensureVisible(find.text(button));
+  await tester.tap(find.text(button));
+  for (var attempt = 0; attempt < 100; attempt++) {
+    final state = await qa('native');
+    if (state['done'] == true) {
+      expect(state['error'], isNull);
+      await ready(tester);
+      return;
+    }
+    await tester.pump(const Duration(milliseconds: 200));
+  }
+  fail('Native $action checkpoint timed out');
+}
+
 Future<void> capture(WidgetTester tester, String name) async {
   await ready(tester);
   final boundary =
@@ -246,6 +266,7 @@ void main() {
       );
       await tester.tap(otherButton);
       await ready(tester);
+      await capture(tester, '05-device-confirmation');
       await tap(tester, 'Cancel');
       expect(find.text('Sign out'), findsNWidgets(2));
       await tester.tap(otherButton);
@@ -382,12 +403,36 @@ void main() {
       expect(controller.assetUrls, isEmpty);
       expect(controller.session!.accountId, account);
       expect((await controller.repository.feedback())['items'], isNotEmpty);
+      // Allow the cache-cleared snackbar to leave before tapping the bottom row.
+      await tester.pump(const Duration(seconds: 5));
+      await ready(tester);
       await setting(tester, 'Sign out');
       await tap(tester, 'Cancel');
       expect(controller.session, isNotNull);
       await setting(tester, 'Sign out');
       await tap(tester, 'Confirm');
       expect(controller.session, isNull);
+    },
+  );
+
+  testWidgets(
+    'native system settings and JSON export share open and return safely',
+    (tester) async {
+      final controller = await open(tester, account: 'viewer');
+      await setting(tester, 'Notification preferences');
+      await nativeCheckpoint(tester, 'system-settings', 'Open system settings');
+      expect(find.text('System notification permission'), findsOneWidget);
+      await back(tester);
+      await setting(tester, 'Export personal data');
+      await tester.enterText(find.byType(TextFormField), initialPassword);
+      await tap(tester, 'Export personal data');
+      await nativeCheckpoint(
+        tester,
+        'share-export',
+        'Save / share current page',
+      );
+      expect(find.textContaining('viewer@example.test'), findsOneWidget);
+      expect(controller.session, isNotNull);
     },
   );
 
@@ -417,7 +462,7 @@ void main() {
       final state = await qa('state');
       expect(
         state['accounts'],
-        contains(equals({'username': 'erase', 'status': 'disabled'})),
+        contains(equals({'username': 'erase', 'status': 'erasure_pending'})),
       );
       expect(state['erasures'], hasLength(1));
       await expectLater(

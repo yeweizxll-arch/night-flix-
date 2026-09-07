@@ -22,6 +22,7 @@ let created = false;
 const createdRoles: string[] = [];
 const codes = new Map<string, string>();
 let failNext = '';
+let native: { action?: string; done?: boolean; error?: string } = {};
 let finish: () => void;
 const finished = new Promise<void>(resolve => { finish = resolve; });
 
@@ -102,6 +103,13 @@ describe.skipIf(!enabled)('local Android settings with real API and PostgreSQL',
     });
     server.get<{ Querystring: { email: string; purpose: string } }>('/__qa/code', async request =>
       ({ code: codes.get(`${request.query.email}:${request.query.purpose}`) }));
+    server.get('/__qa/native', async () => native);
+    server.post<{ Body: { action?: string; done?: boolean; error?: string } }>('/__qa/native', async request => {
+      const input = request.body;
+      if (input.action && !['system-settings', 'share-export'].includes(input.action)) throw new Error('Unknown native checkpoint');
+      native = input.action ? { action: input.action, done: false } : { ...native, done: true, error: input.error };
+      return native;
+    });
     server.post<{ Params: { name: string }; Body: { png: string } }>('/__qa/screenshots/:name', async request => {
       if (!/^[a-z0-9-]+$/.test(request.params.name)) throw new Error('Invalid screenshot name');
       const directory = resolve(process.cwd(), '../flutter_app/build/settings-emulator');

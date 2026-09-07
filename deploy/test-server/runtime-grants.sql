@@ -12,6 +12,11 @@ GRANT EXECUTE ON FUNCTION app.scope_can_reference(text, uuid, text, uuid)
   TO nf_tenant, nf_platform;
 GRANT EXECUTE ON FUNCTION app.content_target_matches_scope(text, uuid, text, uuid)
   TO nf_tenant, nf_platform;
+-- Privacy/account and moderation triggers call this guarded boolean predicate.
+-- It still requires a registered platform role and a matching pending request;
+-- granting EXECUTE does not authorize a tenant to perform an erasure.
+GRANT EXECUTE ON FUNCTION app.customer_erasure_authorized(uuid, uuid)
+  TO nf_tenant, nf_platform;
 INSERT INTO app.database_access_principals(role_name, access_scope)
 VALUES ('nf_platform', 'platform') ON CONFLICT DO NOTHING;
 GRANT EXECUTE ON FUNCTION app.resolve_tenant_by_host(text) TO nf_resolver;

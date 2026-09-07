@@ -48,6 +48,25 @@ describe('deployed runtime content/storage helper privileges', () => {
   }, 60000);
   afterAll(async () => { await db?.close(); });
 
+  it('allows guarded privacy predicates without granting erasure authority or resolver access', async () => {
+    for (const scope of ['tenant', 'platform'] as const) {
+      await db.transaction(async tx => {
+        await role(tx, scope);
+        await tx.query("select set_config('app.customer_erasure_request_id',$1,true)", [randomUUID()]);
+        const result = await tx.query<{ allowed: boolean }>('select app.customer_erasure_authorized($1,$2) as allowed', [tenant, randomUUID()]);
+        expect(result.rows[0]?.allowed).toBe(false);
+      });
+    }
+    const result = await db.query<{ allowed: boolean }>("select has_function_privilege('nf_resolver','app.customer_erasure_authorized(uuid,uuid)','EXECUTE') as allowed");
+    expect(result.rows[0]?.allowed).toBe(false);
+    await db.transaction(async tx => {
+      await role(tx, 'tenant');
+      await tx.exec("select set_config('app.access_scope','platform',true)");
+      const result = await tx.query<{ allowed: boolean }>('select app.customer_erasure_authorized($1,$2) as allowed', [other, randomUUID()]);
+      expect(result.rows[0]?.allowed).toBe(false);
+    });
+  });
+
   it('reproduces the upload 500 cause when the nested helper grant is missing', async () => {
     await expect(db.transaction(async tx => {
       await tx.exec('REVOKE EXECUTE ON FUNCTION app.scope_can_reference(text,uuid,text,uuid) FROM nf_platform');
