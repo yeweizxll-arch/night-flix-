@@ -74,6 +74,10 @@ Future<AppController> open(
 }) async {
   final repo = DramaRepository(apiBaseUrl: base);
   final controller = AppController(repo);
+  addTearDown(() async {
+    await tester.pumpWidget(const SizedBox());
+    controller.dispose();
+  });
   await controller.initialize();
   expect(controller.error, isNull);
   if (controller.session != null) await controller.logout();
@@ -83,12 +87,8 @@ Future<AppController> open(
   }
   await tester.pumpWidget(DramaApp(controller: controller));
   await ready(tester);
-  await tap(tester, 'Profile');
+  await tap(tester, 'Me');
   await setting(tester, 'Settings');
-  addTearDown(() async {
-    await tester.pumpWidget(const SizedBox());
-    controller.dispose();
-  });
   return controller;
 }
 
