@@ -2,6 +2,7 @@ import { SUPPORTED_APP_LOCALES } from '@drama/contracts';
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
@@ -104,18 +105,11 @@ export class MerchantSettingsService {
   }
 
   updatePlatformBranding(
-    tenantId: string,
-    rawInput: unknown,
-    metadata: MerchantSettingsMutationMetadata,
+    _tenantId: string,
+    _rawInput: unknown,
+    _metadata: MerchantSettingsMutationMetadata,
   ): Promise<TenantSiteSettingsRecord> {
-    return this.updateSettings(
-      platformOwner(),
-      tenantId,
-      rawInput,
-      metadata,
-      'none',
-      'platform.merchant.site.update',
-    );
+    throw new ForbiddenException('品牌配置由所属代理商管理');
   }
 
   updatePlatformSiteStatus(
@@ -306,7 +300,7 @@ export class MerchantSettingsService {
         verificationRecordValue(pending.verification_token),
       );
       if (!verified) {
-        throw new BadRequestException('Required DNS TXT verification record was not found');
+        throw new BadRequestException('尚未检测到匹配的 DNS TXT 记录，请按页面提供的名称和值完成解析，等待生效后重新验证。');
       }
     }
 

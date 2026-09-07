@@ -34,6 +34,7 @@ describe('AccessManagementService', () => {
       expect.objectContaining({ code: 'platform.role.read', scope: 'platform' }),
     );
     expect(platform.some((item) => item.scope !== 'platform')).toBe(false);
+    expect(platform.some((item) => ['platform.customer.manage', 'platform.customer.session_revoke'].includes(item.code))).toBe(false);
     expect(tenant).toContainEqual(
       expect.objectContaining({ code: 'tenant.role.read', scope: 'tenant' }),
     );
@@ -71,6 +72,11 @@ describe('AccessManagementService', () => {
       }),
     ).toThrow(BadRequestException);
     expect(database.inTenantContext).not.toHaveBeenCalled();
+    for (const code of ['platform.customer.manage', 'platform.customer.session_revoke']) {
+      expect(() => service.createRole(platformContext, {
+        name: 'Legacy operator', permissions: [{ code, dataScope: 'all' }],
+      })).toThrow(BadRequestException);
+    }
   });
 
   it('rejects tenantId supplied by the caller body', async () => {

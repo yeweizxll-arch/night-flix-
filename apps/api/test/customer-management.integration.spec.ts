@@ -2,6 +2,7 @@ import { PGlite, type Transaction } from '@electric-sql/pglite';
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -328,12 +329,28 @@ describe('customer management PostgreSQL workflow', () => {
         (select status from customer_push_tokens where device_id = '${ids.deviceA2}') as push_status
     `);
     expect(revokedDevice.rows[0]).toEqual({ device_status: 'revoked', push_status: 'revoked' });
-    const all = await customers.revokeSessions(
+    expect(() => customers.revokeSessions(
       platformContext, ids.tenantB, ids.accountB,
       { reason: 'platform security response' },
       { idempotencyKey: 'customer-sessions-001', requestId: uuidV7() },
+    )).toThrow(ForbiddenException);
+    expect(() => customers.updateStatus(
+      platformContext, ids.tenantB, ids.accountB,
+      { expectedVersion: 0, status: 'disabled', reason: 'platform operation' },
+      { idempotencyKey: 'customer-hq-status-001', requestId: uuidV7() },
+    )).toThrow(ForbiddenException);
+    const untouched = await database.query<{ status: string; revoked_at: string | null }>(`
+      select account.status, session.revoked_at
+      from customer_accounts account join customer_sessions session on session.account_id = account.id
+      where session.id = '${ids.sessionB}'
+    `);
+    expect(untouched.rows[0]).toEqual({ status: 'active', revoked_at: null });
+    const all = await customers.revokeSessions(
+      tenantContext, undefined, ids.accountA2,
+      { reason: 'tenant support request' },
+      { idempotencyKey: 'customer-sessions-002', requestId: uuidV7() },
     );
-    expect(all).toEqual({ accountId: ids.accountB, sessionsRevoked: 1 });
+    expect(all).toEqual({ accountId: ids.accountA2, sessionsRevoked: 0 });
   });
 
   it('keeps the maximum page bounded and paginates a larger tenant safely', async () => {

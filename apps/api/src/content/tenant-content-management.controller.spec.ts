@@ -36,6 +36,8 @@ describe('tenant content management controller policy', () => {
     [TenantContentController, 'unpublish', 'write', 'content.drama.update'],
     [TenantContentController, 'addEpisode', 'write', 'content.drama.update'],
     [TenantContentController, 'updateEpisode', 'write', 'content.drama.update'],
+    [TenantContentController, 'saveTrack', 'write', 'content.drama.update'],
+    [TenantContentController, 'disableTrack', 'write', 'content.drama.update'],
     [TenantContentTaxonomyController, 'categories', 'read', 'content.drama.read'],
     [TenantContentTaxonomyController, 'createCategory', 'write', 'content.drama.update'],
     [TenantContentTaxonomyController, 'updateCategory', 'write', 'content.drama.update'],

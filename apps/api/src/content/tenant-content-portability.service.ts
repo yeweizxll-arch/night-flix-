@@ -161,16 +161,15 @@ export class TenantContentPortabilityService {
             or exists (select 1 from episodes where drama_id = drama.id and deleted_at is null
               and not exists (select 1 from episode_translations where episode_id = episodes.id)))`;
       if ((invalid[0]?.invalid ?? 0) > 0) {
-        throw new ConflictException(
-          `Export contains ${invalid[0]?.invalid ?? 0} incomplete dramas; add covers and translations first`,
-        );
+        throw new ConflictException({ code: 'CONTENT_EXPORT_NOT_READY',
+          message: `有 ${invalid[0]?.invalid ?? 0} 部短剧缺少封面或标题，请补齐后再导出。` });
       }
       const counts = await transaction<{ episodes: number }[]>`select count(*)::integer as episodes
         from episodes join dramas on dramas.id = episodes.drama_id
         where dramas.owner_type = 'tenant' and dramas.owner_tenant_id = ${tenantId}
           and dramas.deleted_at is null and episodes.deleted_at is null`;
       if ((counts[0]?.episodes ?? 0) > 5_000) {
-        throw new ConflictException('Export is limited to 5000 episodes');
+        throw new ConflictException({ code: 'CONTENT_EXPORT_NOT_READY', message: '一次最多导出 5000 集，请联系管理员分批导出。' });
       }
       const rows = await transaction<Array<{
         category_id: string | null; code: string; cover_file_id: string | null;
@@ -196,7 +195,7 @@ export class TenantContentPortabilityService {
         from dramas as drama where drama.owner_type = 'tenant'
           and drama.owner_tenant_id = ${tenantId} and drama.deleted_at is null
         order by drama.created_at, drama.id limit 501`;
-      if (rows.length > 500) throw new ConflictException('Export is limited to 500 dramas');
+      if (rows.length > 500) throw new ConflictException({ code: 'CONTENT_EXPORT_NOT_READY', message: '一次最多导出 500 部短剧，请联系管理员分批导出。' });
       const safe: ImportDrama[] = rows.map((row) => ({
         categoryId: row.category_id ?? undefined, code: row.code,
         coverMediaAssetId: row.cover_file_id!,
@@ -207,15 +206,14 @@ export class TenantContentPortabilityService {
       }));
       const referenceErrors = await validateDatabaseReferences(transaction, tenantId, safe, false);
       if (referenceErrors.size) {
-        throw new ConflictException(
-          `Export contains ${referenceErrors.size} dramas whose media or taxonomy is not currently re-importable`,
-        );
+        throw new ConflictException({ code: 'CONTENT_EXPORT_NOT_READY',
+          message: `有 ${referenceErrors.size} 部短剧的媒体文件或分类当前不可用，请检查存储及内容关联后重试。` });
       }
       const content = format === 'json'
         ? JSON.stringify(safe, null, 2)
         : csvExport(safe);
       if (Buffer.byteLength(content, 'utf8') > 20 * 1024 * 1024) {
-        throw new ConflictException('Export exceeds the 20 MiB response limit');
+        throw new ConflictException({ code: 'CONTENT_EXPORT_NOT_READY', message: '导出内容超过 20 MiB，请联系管理员分批导出。' });
       }
       await recordAudit(transaction, tenantId, metadata, 'content.export',
         'tenant', tenantId, { format, rowCount: rows.length });

@@ -41,7 +41,7 @@ export interface ManagedCustomerRecord {
   phone?: string;
   phoneVerified: boolean;
   pointsBalance: string;
-  status: 'active' | 'disabled';
+  status: 'active' | 'disabled' | 'erasure_pending' | 'erased';
   tenantId: string;
   updatedAt: string;
   username: string;

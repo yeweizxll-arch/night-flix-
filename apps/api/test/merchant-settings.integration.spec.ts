@@ -2,6 +2,7 @@ import { PGlite, type Transaction } from '@electric-sql/pglite';
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
 import { readdir, readFile } from 'node:fs/promises';
@@ -68,6 +69,14 @@ function metadata(
 }
 
 describe('merchant white-label and domain PostgreSQL workflow', () => {
+  it('prevents headquarters from changing tenant branding', async () => {
+    const before = await service.getTenantSettings(tenantA);
+    expect(() => service.updatePlatformBranding(tenantA,
+      { siteName: 'Headquarters override', version: before.version },
+      metadata(platformActor, 'hq-branding-denied-001'),
+    )).toThrow(ForbiddenException);
+    expect(await service.getTenantSettings(tenantA)).toEqual(before);
+  });
   beforeAll(async () => {
     process.env.PLATFORM_TENANT_BASE_DOMAIN = 'shops.example.test';
     process.env.PLATFORM_ADMIN_HOSTS = 'admin.example.test';
@@ -269,6 +278,9 @@ describe('merchant white-label and domain PostgreSQL workflow', () => {
       metadata(tenantActorA, 'tenant-domain-primary-001'),
     )).rejects.toBeInstanceOf(BadRequestException);
 
+    dnsVerification.hasExactRecord.mockResolvedValueOnce(false);
+    await expect(service.verifyTenantCustomDomain(tenantA, custom.id, { version: custom.version },
+      metadata(tenantActorA, 'tenant-domain-verify-missing-001'))).rejects.toThrow('尚未检测到匹配的 DNS TXT 记录');
     const verified = await service.verifyTenantCustomDomain(
       tenantA,
       custom.id,

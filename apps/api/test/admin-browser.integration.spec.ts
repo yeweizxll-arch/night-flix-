@@ -11,6 +11,10 @@ import { afterAll, beforeAll, describe, it } from 'vitest';
 import { AppModule } from '../src/app.module';
 import { hashPassword } from '../src/auth/password';
 import { uuidV7 } from '../src/common/uuid-v7';
+import { StorageCredentialCipher } from '../src/storage/storage-credentials';
+import { DomainTxtVerificationService } from '../src/merchants/domain-txt-verification.service';
+import { TenantContentImportWorkerService } from '../src/content/tenant-content-portability.service';
+import { PrivacyErasureWorkerService } from '../src/privacy/privacy-erasure-worker.service';
 
 const enabled = process.env.NIGHTFLIX_ADMIN_BROWSER === '1';
 const suffix = uuidV7().replaceAll('-', '');
@@ -78,24 +82,16 @@ describe.skipIf(!enabled)('local two-scope admin browser audit', () => {
       const dramaId = uuidV7();
       await owner`insert into dramas (id, owner_type, owner_tenant_id, code, status, total_episodes,
         shanchuang_work_id, shanchuang_creator_id, public_revision)
-        values (${dramaId}, ${scope}, ${tenantId}, ${`qa-drama-${index}`}, 'published', 2,
+        values (${dramaId}, ${scope}, ${tenantId}, ${`qa-drama-${index}`}, 'draft', 2,
         ${tenantId ? null : 'local-qa-work'}, ${tenantId ? null : 'local-qa-creator'}, ${tenantId ? null : 1})`;
       await owner`insert into drama_translations (id, drama_id, locale, title, summary)
         values (${uuidV7()}, ${dramaId}, 'zh-CN', ${['公共测试剧', '星河私有剧', '海风私有剧'][index]!}, '仅用于本地后台功能验证')`;
-      if (tenantId) {
-        const commentId = uuidV7();
-        await owner`insert into interaction_comments (id, tenant_id, drama_id, account_id, body, status)
-          values (${uuidV7()}, ${tenantId}, ${dramaId}, ${customerIds[index - 1]!}, '本地待审评论', 'pending'),
-          (${commentId}, ${tenantId}, ${dramaId}, ${customerIds[index - 1]!}, '本地可见评论', 'visible')`;
-        await owner`insert into interaction_reports (id, tenant_id, reporter_account_id, target_type, target_id, reason_category, details)
-          values (${uuidV7()}, ${tenantId}, ${customerIds[index - 1]!}, 'comment', ${commentId}, 'other', '本地举报功能测试')`;
-      }
       for (let no = 1; no <= 2; no++) {
         const mediaId = uuidV7(), episodeId = uuidV7();
         await owner`insert into media_assets (id, owner_type, owner_tenant_id, source_url, kind, mime_type, size_bytes, checksum, metadata_json, status)
           values (${mediaId}, ${scope}, ${tenantId}, ${`https://media.example.test/qa/${mediaId}.m3u8`}, 'video', 'application/vnd.apple.mpegurl', 1024, ${'a'.repeat(64)}, ${owner.json({ immutable: true })}, 'ready')`;
         await owner`insert into episodes (id, drama_id, episode_no, status, duration_seconds, media_asset_id)
-          values (${episodeId}, ${dramaId}, ${no}, 'published', 60, ${mediaId})`;
+          values (${episodeId}, ${dramaId}, ${no}, 'draft', 60, ${mediaId})`;
         await owner`insert into episode_translations (id, episode_id, locale, title)
           values (${uuidV7()}, ${episodeId}, 'zh-CN', ${`第 ${no} 集`})`;
       }
@@ -122,8 +118,44 @@ describe.skipIf(!enabled)('local two-scope admin browser audit', () => {
       process.env[active!] = '1';
     }
     process.env.PLATFORM_ADMIN_HOSTS = 'admin.localhost';
+    process.env.PLATFORM_TENANT_BASE_DOMAIN = 'shops.qa.example.test';
+    const cipher = new StorageCredentialCipher();
+    for (const [i, tenantId] of [null, ...tenantIds].entries()) {
+      const providerId = uuidV7(), ownerType = tenantId ? 'tenant' : 'platform';
+      const credentials = cipher.encrypt({ accessKeyId: 'local-fixture-key', secretAccessKey: 'local-fixture-secret-not-real', region: 'us-east-1', forcePathStyle: true }, { providerId, ownerType, ownerTenantId: tenantId });
+      await owner`insert into storage_providers (id, owner_type, owner_tenant_id, provider, account_label, bucket, credential_ciphertext, key_version)
+        values (${providerId}, ${ownerType}, ${tenantId}, 's3', ${`本地流程测试存储 ${i}`}, ${`qa-bucket-${i}`}, ${credentials.ciphertext}, ${credentials.keyVersion})`;
+      const coverId = uuidV7();
+      await owner`insert into media_assets (id, owner_type, owner_tenant_id, kind, storage_provider_id, object_key, mime_type, size_bytes, checksum, status)
+        values (${coverId}, ${ownerType}, ${tenantId}, 'image', ${providerId}, 'qa/cover.png', 'image/png', 68, ${'b'.repeat(64)}, 'ready')`;
+      await owner`update dramas set cover_file_id = ${coverId}, version = version + 1 where code = ${`qa-drama-${i}`} and owner_tenant_id is not distinct from ${tenantId}`;
+      const videoId = uuidV7();
+      await owner`insert into media_assets (id, owner_type, owner_tenant_id, kind, storage_provider_id, object_key, mime_type, size_bytes, checksum, status)
+        values (${videoId}, ${ownerType}, ${tenantId}, 'video', ${providerId}, 'qa/video.mp4', 'video/mp4', 128, ${'d'.repeat(64)}, 'ready')`;
+      await owner`update episodes set media_asset_id = ${videoId}, version = version + 1
+        where drama_id in (select id from dramas where code = ${`qa-drama-${i}`} and owner_tenant_id is not distinct from ${tenantId})`;
+      for (const [type, mime, extension] of [['字幕', 'text/vtt', 'vtt'], ['配音', 'audio/mpeg', 'mp3']]) {
+        await owner`insert into media_assets (id, owner_type, owner_tenant_id, kind, storage_provider_id, object_key, mime_type, size_bytes, checksum, status, metadata_json)
+          values (${uuidV7()}, ${ownerType}, ${tenantId}, 'file', ${providerId}, ${`qa/track.${extension}`}, ${mime!}, 128, ${'c'.repeat(64)}, 'ready', ${owner.json({ fixtureLabel: type })})`;
+      }
+    }
+    await owner`update dramas set status = 'published', version = version + 1`;
+    await owner`update episodes set status = 'published', version = version + 1`;
+    for (const [index, tenantId] of tenantIds.entries()) {
+      const [drama] = await owner`select id from dramas where owner_tenant_id = ${tenantId}`;
+      const commentId = uuidV7();
+      await owner`insert into interaction_comments (id, tenant_id, drama_id, account_id, body, status)
+        values (${uuidV7()}, ${tenantId}, ${drama!.id}, ${customerIds[index]!}, '本地待审评论', 'pending'),
+        (${commentId}, ${tenantId}, ${drama!.id}, ${customerIds[index]!}, '本地可见评论', 'visible')`;
+      await owner`insert into interaction_reports (id, tenant_id, reporter_account_id, target_type, target_id, reason_category, details)
+        values (${uuidV7()}, ${tenantId}, ${customerIds[index]!}, 'comment', ${commentId}, 'other', '本地举报功能测试')`;
+    }
     delete process.env.REDIS_URL;
-    const module = await Test.createTestingModule({ imports: [AppModule] }).compile();
+    const module = await Test.createTestingModule({ imports: [AppModule] })
+      .overrideProvider(DomainTxtVerificationService).useValue({
+        // No external DNS: one explicit local scenario succeeds; others fail closed.
+        hasExactRecord: async (name: string) => name === '_drama-verification.approved.qa.example.test',
+      }).compile();
     app = module.createNestApplication<NestFastifyApplication>(new FastifyAdapter({ bodyLimit: 2 * 1024 * 1024 }));
     app.useLogger(['error']);
     await app.register(cookie);
@@ -135,8 +167,11 @@ describe.skipIf(!enabled)('local two-scope admin browser audit', () => {
     server.get('/__qa/state', async () => ({ tenantIds, staffIds, requests,
       dramas: await owner`select id, owner_tenant_id, code, status from dramas`,
       roles: await owner`select id, scope_type, tenant_id, name from roles`,
+      media: await owner`select id, owner_type, owner_tenant_id, kind, mime_type from media_assets`,
     }));
     server.post('/__qa/finish', async () => { setTimeout(finish, 100); return { ok: true }; });
+    server.post('/__qa/run-imports', async () => app.get(TenantContentImportWorkerService).processAvailable(5));
+    server.post('/__qa/run-erasure', async () => app.get(PrivacyErasureWorkerService).processDue(5));
     await app.listen(3000, '127.0.0.1');
     console.log('ADMIN_BROWSER_READY: admin.localhost:4541, tenant-a.localhost:4542, tenant-b.localhost:4542');
   }, 120_000);

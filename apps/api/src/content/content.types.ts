@@ -60,6 +60,7 @@ export interface UpdateEpisodeInput {
 }
 
 export interface EpisodeRecord {
+  tracks?: EpisodeTrackRecord[];
   dramaId: string;
   durationSeconds: number;
   episodeNo: number;
@@ -72,6 +73,16 @@ export interface EpisodeRecord {
   translations: Array<{ locale: string; title: string }>;
   unpublishAt?: string;
   version: number;
+}
+
+export interface EpisodeTrackRecord {
+  id: string;
+  type: 'subtitle' | 'dubbing';
+  locale: string;
+  label: string;
+  mediaAssetId: string;
+  isDefault: boolean;
+  status: 'active' | 'disabled';
 }
 
 export interface DramaRecord {

@@ -10,7 +10,11 @@ import { StaffManagementPage } from './StaffManagementPage';
 import { CommerceCatalogPage } from './CommerceCatalogPage';
 import { TenantNotificationPage } from './TenantNotificationPage';
 import { InteractionModerationPage } from './InteractionModerationPage';
-import { TenantMediaUploadModal } from './TenantContentListPage';
+import { TenantContentListPage, TenantEpisodeTracksModal, TenantMediaUploadModal } from './TenantContentListPage';
+import { ApiError } from '../api/http';
+import { CustomerManagementPage } from './CustomerManagementPage';
+import { SiteSettingsPanel } from './SiteSettingsPanel';
+import { TenantLegalPrivacyPage } from './TenantLegalPrivacyPage';
 import { CustomerFeedbackPanel } from './CustomerFeedbackPanel';
 import { TenantFinancePage } from './TenantFinancePage';
 import { ContentRevenuePage } from './ContentRevenuePage';
@@ -37,6 +41,134 @@ afterEach(cleanup);
 function show(element: React.ReactNode) { return render(<ConfigProvider locale={zhCN} theme={{ token: { motion: false } }} button={{ autoInsertSpace: false }}>{element}</ConfigProvider>); }
 
 describe('real admin component buttons with controlled API outcomes', { timeout: 30000 }, () => {
+  it('domain activation is available only after certificate readiness and refresh retrieves new state', async () => {
+    let tlsStatus = 'provisioning';
+    auth.request.mockImplementation(async () => [{ id: 'domain', host: 'example.test', enabled: true, isPrimary: false,
+      readOnly: false, type: 'custom', tlsStatus, verification: { status: 'verified' }, version: 1 }]);
+    show(<SiteSettingsPanel canManageDomains canManageSettings={false} canReadDomains canReadSettings={false}
+      createDomainKind="custom" description="" domainsEndpoint="/domains" settingsEndpoint="/settings" title="域名" />);
+    await screen.findByText('证书生效后可设为主域名');
+    expect(screen.queryByRole('button', { name: '设为主域名' })).toBeNull();
+    tlsStatus = 'active';
+    fireEvent.click(screen.getByRole('button', { name: '刷新域名' }));
+    await screen.findByRole('button', { name: '设为主域名' });
+    expect(auth.request).toHaveBeenCalledTimes(2);
+  });
+  it('privacy details explain retention and external follow-up without internal codes', async () => {
+    auth.permissions = ['tenant.privacy_request.read'];
+    const detail = { id: 'privacy', accountSubjectId: 'customer', status: 'completed', dataErasurePerformed: true,
+      submittedAt: '2026-09-07T00:00:00Z', retainedItems: [{ category: 'commerce_finance', reason: 'accounting_and_tax',
+        recordCount: 1, retainedUntil: '2033-09-07T00:00:00Z' }], subprocessorStatus: [{ provider: 'payment_provider', boundary: 'internal English code' }] };
+    auth.request.mockImplementation(async path => path.endsWith('/privacy') ? detail : { items: [detail], page: 1, pageSize: 20 });
+    show(<TenantLegalPrivacyPage />);
+    fireEvent.click(await screen.findByRole('button', { name: '详情' }));
+    await screen.findByText('交易与财务记录');
+    expect(screen.getByText(/会计与税务留存/)).toBeTruthy();
+    expect(screen.getByText('支付服务商 · 需运营跟进')).toBeTruthy();
+    expect(screen.queryByText('commerce_finance')).toBeNull();
+    expect(screen.queryByText('internal English code')).toBeNull();
+  });
+  it('missing DNS verification remains actionable after the transient toast', async () => {
+    auth.request.mockImplementation(async path => {
+      if (path.endsWith('/verify')) throw new ApiError('尚未检测到匹配的 DNS TXT 记录，请完成解析后重新验证。', 400);
+      return [{ id: 'domain', host: 'pending.example.test', enabled: true, isPrimary: false, readOnly: false,
+        type: 'custom', tlsStatus: 'pending', verification: { status: 'pending', recordName: '_check', recordValue: 'qa-only' }, version: 1 }];
+    });
+    show(<SiteSettingsPanel canManageDomains canManageSettings={false} canReadDomains canReadSettings={false}
+      createDomainKind="custom" description="" domainsEndpoint="/domains" settingsEndpoint="/settings" title="域名"
+      verifyEndpoint={id => `/domains/${id}/verify`} />);
+    fireEvent.click(await screen.findByRole('button', { name: '验证 DNS' }));
+    await screen.findByRole('button', { name: '重试' });
+    expect(screen.getAllByText('尚未检测到匹配的 DNS TXT 记录，请完成解析后重新验证。').length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: '设为主域名' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '重试' }));
+    await waitFor(() => expect(auth.request.mock.calls.filter(([path]) => path.endsWith('/verify'))).toHaveLength(2));
+  });
+  it('erasure accounts have accurate labels and no reactivation or session buttons', async () => {
+    auth.permissions = ['tenant.customer.read', 'tenant.customer.manage', 'tenant.customer.session_revoke'];
+    auth.request.mockResolvedValue({ items: ['erasure_pending', 'erased'].map((status, index) => ({
+      id: String(index), username: `privacy-${index}`, status, pointsBalance: '0', orders: { total: 0 }, createdAt: '2026-09-07T00:00:00Z',
+    })), nextCursor: null, pageSize: 20 });
+    show(<CustomerManagementPage apiBase="/api/v1/tenant/customers" scope="tenant" title="用户管理"
+      managePermission="tenant.customer.manage" readPermission="tenant.customer.read" sessionRevokePermission="tenant.customer.session_revoke" />);
+    await screen.findByText('注销中');
+    await screen.findByText('已注销');
+    expect(screen.queryByRole('button', { name: '启用' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '停用' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '全部下线' })).toBeNull();
+    expect(screen.getAllByRole('button', { name: '详情' })).toHaveLength(2);
+  });
+  it('export prerequisite errors stay visible with actionable instructions rather than a version-conflict toast', async () => {
+    auth.request.mockImplementation(async path => {
+      if (path.includes('/export?')) throw new ApiError('有 1 部短剧缺少封面或标题，请补齐后再导出。', 409, 'CONTENT_EXPORT_NOT_READY');
+      return { items: [], total: 0, page: 1, pageSize: 20 };
+    });
+    show(<TenantContentListPage />);
+    fireEvent.click(await screen.findByRole('tab', { name: '导入导出' }));
+    fireEvent.click(screen.getByRole('button', { name: '导出 JSON' }));
+    await screen.findByText('有 1 部短剧缺少封面或标题，请补齐后再导出。');
+    expect(screen.queryByText('数据版本或状态已变化，页面将刷新，请重新操作')).toBeNull();
+    expect(auth.request).toHaveBeenCalledWith('/api/v1/tenant/content/export?format=json');
+  });
+  it('headquarters legacy customer grants do not expose tenant operating controls', async () => {
+    auth.permissions = ['platform.customer.read', 'platform.customer.manage', 'platform.customer.session_revoke'];
+    auth.request.mockResolvedValue({ items: [{ id: 'customer', username: 'viewer', status: 'active', pointsBalance: '0', orders: { total: 0 }, createdAt: '2026-09-07T00:00:00Z' }], nextCursor: null, pageSize: 20 });
+    show(<CustomerManagementPage apiBase="/api/v1/platform/customers" scope="platform" title="用户查询"
+      managePermission="platform.customer.manage" readPermission="platform.customer.read" sessionRevokePermission="platform.customer.session_revoke" />);
+    fireEvent.change(screen.getByPlaceholderText('代理商编号（需代理商查看权限才可搜索）'), { target: { value: '00000000-0000-4000-8000-000000000001' } });
+    fireEvent.click(screen.getByRole('button', { name: '查询代理商用户' }));
+    await screen.findByRole('button', { name: 'viewer' });
+    expect(screen.queryByRole('button', { name: '停用' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '全部下线' })).toBeNull();
+    expect(screen.getByRole('button', { name: '详情' })).toBeTruthy();
+  });
+  it('tenant tracks validate, retain failed input, save, stop and restore without headquarters', async () => {
+    const media = '00000000-0000-4000-8000-000000000001';
+    const record = { id: 'private-drama', code: 'private', status: 'draft' as const, version: 2, tagIds: [], totalEpisodes: 1, translations: [], createdAt: '', sourceType: 'upload' };
+    const episode = { id: 'episode', dramaId: record.id, episodeNo: 1, durationSeconds: 60, mediaAssetId: media, previewSeconds: 0, status: 'draft' as const, version: 0, translations: [] };
+    let track: Record<string, unknown> | undefined;
+    let fails = true, version = 2;
+    auth.request.mockImplementation(async (path: string, options?: { method?: string; body?: string }) => {
+      if (options?.method === 'POST') {
+        if (fails) throw new Error('测试保存失败');
+        const { expectedVersion, ...input } = JSON.parse(options.body!);
+        expect(expectedVersion).toBe(version++);
+        track = { ...input, id: 'track', status: 'active' };
+      } else if (options?.method === 'DELETE') { track = { ...track, status: 'disabled', isDefault: false }; version++; }
+      return { ...record, version, episodes: [{ ...episode, tracks: track ? [track] : [] }] };
+    });
+    show(<TenantEpisodeTracksModal drama={record} episode={episode} canUpload onClose={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: '保存轨道' }));
+    await screen.findByText('请上传文件或填写有效文件编号');
+    expect(auth.request).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByRole('textbox', { name: '显示名称' }), { target: { value: '中文字幕' } });
+    fireEvent.change(screen.getByRole('textbox', { name: '媒体文件编号' }), { target: { value: media } });
+    fireEvent.click(screen.getByRole('button', { name: '保存轨道' }));
+    await screen.findByText('轨道操作失败，请重试');
+    expect((screen.getByRole('textbox', { name: '显示名称' }) as HTMLInputElement).value).toBe('中文字幕');
+    fails = false;
+    fireEvent.click(screen.getByRole('button', { name: '保存轨道' }));
+    await screen.findByRole('cell', { name: '中文字幕' });
+    fireEvent.click(screen.getByRole('button', { name: '停用' }));
+    fireEvent.click(await screen.findByRole('button', { name: '取消' }));
+    expect(auth.request.mock.calls.some(([, opts]) => opts?.method === 'DELETE')).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: '停用' }));
+    fireEvent.click(await screen.findByRole('button', { name: '确定' }));
+    fireEvent.click(await screen.findByRole('button', { name: '恢复' }));
+    expect((screen.getByRole('textbox', { name: '显示名称' }) as HTMLInputElement).value).toBe('中文字幕');
+    fireEvent.click(screen.getByRole('button', { name: '保存轨道' }));
+    await screen.findByRole('button', { name: '停用' });
+    expect(auth.request.mock.calls.every(([path]) => !path.includes('/platform/'))).toBe(true);
+  });
+  it('published tenant tracks remain readable but cannot be edited or uploaded', async () => {
+    auth.permissions = ['content.drama.read', 'content.drama.update'];
+    show(<TenantEpisodeTracksModal drama={{ id: 'd', code: 'd', status: 'published', version: 0, translations: [], tagIds: [], totalEpisodes: 1, sourceType: 'upload', createdAt: '' }}
+      episode={{ id: 'e', dramaId: 'd', episodeNo: 1, durationSeconds: 60, previewSeconds: 0, mediaAssetId: '', translations: [], version: 0, status: 'published' }} canUpload onClose={() => {}} />);
+    expect(screen.queryByRole('button', { name: '保存轨道' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '上传字幕或配音' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '刷新轨道' }));
+    await waitFor(() => expect(auth.request).toHaveBeenCalledWith('/api/v1/tenant/content/dramas/d'));
+  });
   it('a late revenue response cannot replace the newly selected tenant totals or cash status', async () => {
     auth.permissions = ['finance.settlement.manage'];
     const a = '00000000-0000-4000-8000-000000000001';
@@ -102,11 +234,16 @@ describe('real admin component buttons with controlled API outcomes', { timeout:
     }));
     auth.request.mockImplementation(async path => path.includes('/ledger?') && !path.includes('beforeId') ? entries : []);
     show(<TenantFinancePage />);
-    fireEvent.click(await screen.findByText('加载更早记录'));
+    const earlier = (await screen.findByText('加载更早记录')).closest('button')!;
+    await waitFor(() => expect(earlier.classList.contains('ant-btn-loading')).toBe(false));
+    fireEvent.click(earlier);
     await waitFor(() => expect(auth.request).toHaveBeenCalledWith('/api/v1/tenant/finance/ledger?limit=50&beforeId=ledger-49'));
     await waitFor(() => expect(screen.queryByText('加载更早记录')).toBeNull());
     auth.request.mockClear();
-    fireEvent.click(screen.getByText('刷新'));
+    // Wait for Ant Design's loading transition without scanning all 50 rows for roles.
+    const refresh = screen.getByText('刷新').closest('button')!;
+    await waitFor(() => expect(refresh.classList.contains('ant-btn-loading')).toBe(false));
+    fireEvent.click(refresh);
     await waitFor(() => expect(auth.request).toHaveBeenCalledWith('/api/v1/tenant/finance/balances'));
     expect(auth.request).toHaveBeenCalledWith('/api/v1/tenant/finance/withdrawals?limit=100');
     expect(screen.queryByRole('button', { name: '申请提现' })).toBeNull();

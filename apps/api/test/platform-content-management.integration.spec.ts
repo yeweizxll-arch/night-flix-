@@ -1,5 +1,5 @@
 import { PGlite, type Transaction } from '@electric-sql/pglite';
-import { BadRequestException, ConflictException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { readdir, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -178,6 +178,11 @@ describe('platform content management PostgreSQL workflow', () => {
     expect(detail.episodes?.[0]?.tracks).toEqual([expect.objectContaining({
       id: track.id, isDefault: true, label: 'English', locale: 'en', status: 'active',
     })]);
+    const unrelated = await library.createDrama({ code: 'unrelated-track-parent', translations: [{ locale: 'en-US', title: 'Unrelated' }] }, metadata('track-unrelated-parent'));
+    await expect(library.disableEpisodeTrack(unrelated.id, episode.id, track.id,
+      { expectedVersion: unrelated.version }, metadata('track-wrong-parent-disable'),
+    )).rejects.toBeInstanceOf(NotFoundException);
+    expect((await library.getDrama(drama.id)).episodes?.[0]?.tracks[0]?.status).toBe('active');
     const published = await library.publishDrama(
       drama.id,
       { expectedVersion: track.dramaVersion },

@@ -126,6 +126,20 @@ export class TenantContentController {
     );
   }
 
+  @Post(':dramaId/episodes/:episodeId/tracks')
+  @RequirePermissions({ mode: 'write', permissions: ['content.drama.update'], scope: 'tenant' })
+  saveTrack(@Param('dramaId') dramaId: string, @Param('episodeId') episodeId: string,
+    @Body() input: unknown, @CurrentPrincipal() principal: AccessPrincipal, @Req() request: FastifyRequest) {
+    return this.content.saveTenantEpisodeTrack(requireTenantId(principal), dramaId, episodeId, input, mutationMetadata(principal, request));
+  }
+
+  @Delete(':dramaId/episodes/:episodeId/tracks/:trackId')
+  @RequirePermissions({ mode: 'write', permissions: ['content.drama.update'], scope: 'tenant' })
+  disableTrack(@Param('dramaId') dramaId: string, @Param('episodeId') episodeId: string, @Param('trackId') trackId: string,
+    @Body() input: unknown, @CurrentPrincipal() principal: AccessPrincipal, @Req() request: FastifyRequest) {
+    return this.content.saveTenantEpisodeTrack(requireTenantId(principal), dramaId, episodeId, input, mutationMetadata(principal, request), trackId);
+  }
+
   @Patch(':dramaId/episodes/:episodeId')
   @RequirePermissions({
     mode: 'write',

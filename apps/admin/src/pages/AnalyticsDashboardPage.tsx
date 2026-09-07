@@ -18,6 +18,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { ApiError } from '../api/http';
 import { useAuth } from '../auth/AuthProvider';
+import { MerchantSelect } from './MerchantSelect';
 import {
   type AnalyticsCurrency,
   type CursorState,
@@ -284,7 +285,7 @@ export function AnalyticsDashboardPage(props: {
     <>
       <div className="page-heading">
         <div>
-          <Typography.Title level={2}>经营概览</Typography.Title>
+          <Typography.Title level={2}>{props.scope === 'platform' ? '平台概览' : '经营概览'}</Typography.Title>
           <Typography.Text type="secondary">
             查看用户、内容、订单和收入的经营趋势。
           </Typography.Text>
@@ -478,10 +479,10 @@ function TenantRanking(props: {
       <div className="tenant-content-toolbar">
         <Select options={currencies.map((value) => ({ label: value, value }))} placeholder="先选币种" style={{ width: 120 }}
           value={props.currency} onChange={props.onCurrency} />
-        <Input.Search allowClear onChange={(event) => {
-          props.onInput(event.target.value);
-          if (!event.target.value) props.onSearch('');
-        }} onSearch={props.onSearch} placeholder="精确代理商 UUID（可选）" style={{ maxWidth: 330 }} value={props.input} />
+        <MerchantSelect onChange={(value) => {
+          props.onInput(value);
+          props.onSearch(value);
+        }} value={props.input} />
         <Button disabled={!props.currency} loading={props.loading} onClick={props.onReload}>刷新</Button>
       </div>
       {props.error ? <Alert action={<Button size="small" onClick={props.onReload}>重试</Button>}

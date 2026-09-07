@@ -27,12 +27,26 @@ export function safeExportFilename(value: string, format: 'csv' | 'json'): strin
 export function safeImportErrors(value: unknown): string {
   if (Array.isArray(value)) {
     return value.filter((item): item is string => typeof item === 'string')
-      .map((item) => item.slice(0, 500)).join('；') || '导入失败';
+      .map((item) => importErrorLabels[item] ?? item.slice(0, 500)).join('；') || '—';
   }
   if (typeof value === 'string') return value.slice(0, 1000);
   if (value && typeof value === 'object') {
-    try { return JSON.stringify(value).slice(0, 2000); }
-    catch { return '导入失败'; }
+    const summary = value as Record<string, unknown>;
+    if (summary.code) return '导入处理失败，请稍后重试；持续失败时请提供任务编号联系技术支持。';
+    return Object.entries({ importedRows: '成功部数', errorRows: '失败行数', rowCount: '提交部数', episodeCount: '剧集数' })
+      .filter(([key]) => Number.isSafeInteger(summary[key]) && Number(summary[key]) >= 0)
+      .map(([key, label]) => `${label}：${summary[key]}`).join('；') || '暂无处理结果';
   }
   return '—';
 }
+
+const importErrorLabels: Record<string, string> = {
+  'Drama code already exists': '短剧编号已存在，请更换编号后重试',
+  'Cover must be a ready tenant S3 image': '封面不可用，请选择本代理商已上传完成的图片',
+  'Category is unavailable': '分类不可用，请重新选择',
+  'One or more tags are unavailable': '部分标签不可用，请重新选择',
+  'Episode numbers must be unique': '集数重复，请检查后重试',
+  'Episodes must use ready tenant S3 video': '部分剧集视频不可用，请先完成上传',
+  'Preview media must be a separate ready tenant S3 video': '试看视频必须已上传完成且与正片不同',
+  'Tenant is unavailable': '代理商服务暂不可用，请联系技术支持',
+};

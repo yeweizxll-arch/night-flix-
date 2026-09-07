@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
@@ -37,7 +38,7 @@ interface CustomerRow {
   phone: string | null;
   phone_verified_at: Date | string | null;
   points_balance: string;
-  status: 'active' | 'disabled';
+  status: ManagedCustomerRecord['status'];
   tenant_id: string;
   updated_at: Date | string;
   username: string;
@@ -50,7 +51,7 @@ interface ParsedListQuery {
   pageSize: number;
   q?: { kind: 'email' | 'phone' | 'username'; value: string };
   queryHash: string;
-  status?: 'active' | 'disabled';
+  status?: ManagedCustomerRecord['status'];
   tenantId: string;
   to?: string;
 }
@@ -193,6 +194,9 @@ export class CustomerManagementService {
     metadata: CustomerMutationMetadata,
   ): Promise<ManagedCustomerRecord> {
     assertContext(context);
+    if (context.scope !== 'tenant') {
+      throw new ForbiddenException('用户状态由所属代理商管理');
+    }
     const tenantId = targetTenantId(context, tenantIdValue);
     const accountId = uuid(accountIdValue, 'accountId');
     const input = statusInput(rawInput);
@@ -207,6 +211,9 @@ export class CustomerManagementService {
       if (command.cached) return command.cached;
       const current = await loadCustomer(transaction, tenantId, accountId, true);
       if (!current) throw new NotFoundException('Customer account was not found');
+      if (current.status === 'erasure_pending' || current.status === 'erased') {
+        throw new ConflictException('注销中或已注销的账号不能启用或停用');
+      }
       if (current.version !== input.expectedVersion) {
         throw new ConflictException('Customer account version changed');
       }
@@ -273,6 +280,9 @@ export class CustomerManagementService {
     sessionsRevoked: number;
   }> {
     assertContext(context);
+    if (context.scope !== 'tenant') {
+      throw new ForbiddenException('用户登录设备由所属代理商管理');
+    }
     const tenantId = targetTenantId(context, tenantIdValue);
     const accountId = uuid(accountIdValue, 'accountId');
     const input = revokeInput(rawInput);
@@ -435,7 +445,8 @@ function parseListQuery(
   if ('tenant_id' in raw) throw new BadRequestException('tenant_id is not supported');
   const pageSize = integer(raw.pageSize, 'pageSize', 20, 1, 100);
   const status = raw.status === undefined || raw.status === ''
-    ? undefined : customerStatus(raw.status);
+    ? undefined : raw.status === 'erasure_pending' || raw.status === 'erased'
+      ? raw.status : customerStatus(raw.status);
   const from = optionalDate(raw.registeredFrom, 'registeredFrom');
   const to = optionalDate(raw.registeredTo, 'registeredTo');
   if (from && to && from > to) throw new BadRequestException('Registration date range is invalid');

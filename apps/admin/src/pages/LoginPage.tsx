@@ -63,7 +63,7 @@ export function LoginPage() {
 
         <Card className="login-card" bordered={false}>
           <Tag className="login-scope-tag" color={adminScope === 'platform' ? 'purple' : 'blue'}>
-            {adminScope === 'platform' ? '总部运营中心' : '代理商工作台'}
+            {adminScope === 'platform' ? '总部管理中心' : '代理商工作台'}
           </Tag>
           <Typography.Title level={2}>欢迎回来</Typography.Title>
           <Typography.Paragraph className="login-card-description" type="secondary">

@@ -48,8 +48,8 @@ const pageTitles: Record<string, string> = {
   'audit-logs': '审计日志',
   'content-library': '公共内容管理',
   'content-revenue': '内容分成',
-  customers: '用户监管',
-  dashboard: '经营概览',
+  customers: '用户查询',
+  dashboard: '平台概览',
   finance: '财务与提现',
   licensing: '公共内容授权',
   merchants: '代理商管理',
@@ -60,13 +60,13 @@ const pageTitles: Record<string, string> = {
 };
 
 const navigation = [
-  { key: 'dashboard', icon: <AppstoreOutlined />, label: '经营概览', permission: 'platform.analytics.read' },
+  { key: 'dashboard', icon: <AppstoreOutlined />, label: '平台概览', permission: 'platform.analytics.read' },
   { key: 'merchants', icon: <BankOutlined />, label: '代理商管理', permission: 'platform.merchant.read' },
   { key: 'content-library', icon: <BookOutlined />, label: '公共内容管理', permission: 'platform.content.read' },
   { key: 'licensing', icon: <KeyOutlined />, label: '公共内容授权', permission: 'content.license.read' },
   { key: 'storage', icon: <CloudServerOutlined />, label: '公共对象存储', permission: 'platform.storage.read' },
   { key: 'payments', icon: <CreditCardOutlined />, label: '支付配置', permission: 'platform.payment.read' },
-  { key: 'customers', icon: <UsergroupAddOutlined />, label: '用户监管', permission: 'platform.customer.read' },
+  { key: 'customers', icon: <UsergroupAddOutlined />, label: '用户查询', permission: 'platform.customer.read' },
 ];
 
 export function ScopedAdminShell({ principal }: { principal: AuthPrincipal }) {
@@ -188,7 +188,7 @@ export function ScopedAdminShell({ principal }: { principal: AuthPrincipal }) {
           <div className="brand-mark">NF</div>
           <div>
             <div className="brand-name">Night Flix</div>
-            <div className="brand-caption">总部运营中心</div>
+            <div className="brand-caption">总部管理中心</div>
           </div>
         </div>
         <div className="navigation-caption">平台管理</div>
@@ -205,7 +205,7 @@ export function ScopedAdminShell({ principal }: { principal: AuthPrincipal }) {
               type="text"
             />
             <div>
-              <div className="header-eyebrow">总部运营中心</div>
+              <div className="header-eyebrow">总部管理中心</div>
               <div className="header-page-title">{pageTitles[effectivePage ?? ''] ?? '管理后台'}</div>
             </div>
           </div>
@@ -229,7 +229,7 @@ export function ScopedAdminShell({ principal }: { principal: AuthPrincipal }) {
             <div className="brand-mark">NF</div>
             <div>
               <div className="brand-name">Night Flix</div>
-              <div className="brand-caption">总部运营中心</div>
+              <div className="brand-caption">总部管理中心</div>
             </div>
           </div>
           <div className="navigation-caption">平台管理</div>
@@ -299,7 +299,7 @@ export function ScopedAdminShell({ principal }: { principal: AuthPrincipal }) {
               readPermission="platform.customer.read"
               scope="platform"
               sessionRevokePermission="platform.customer.session_revoke"
-              title="平台用户监管"
+              title="用户查询"
             />
           ) : <Result status="403" title="当前账号没有可用的后台功能" />}
         </Content>

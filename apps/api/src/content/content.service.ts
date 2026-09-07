@@ -22,6 +22,7 @@ import type {
   DramaRecord,
   DramaTranslationInput,
   EpisodeRecord,
+  EpisodeTrackRecord,
   ExpectedTenantContentVersionInput,
   UpdateDramaInput,
   UpdateEpisodeInput,
@@ -53,6 +54,7 @@ interface DramaRow {
 }
 
 interface EpisodeRow {
+  tracks?: EpisodeTrackRecord[];
   drama_id: string;
   duration_seconds: number;
   episode_no: number;
@@ -152,6 +154,94 @@ export class ContentService {
       if (!drama) throw new NotFoundException('Drama not found');
       const episodes = await this.listTenantEpisodes(transaction, tenantId, dramaId);
       return { ...toDramaRecord(drama), episodes };
+    });
+  }
+
+  async saveTenantEpisodeTrack(
+    tenantId: string, dramaId: string, episodeId: string,
+    rawInput: unknown, metadata: ContentMutationMetadata, trackId?: string,
+  ): Promise<{ dramaVersion: number; id: string; status: 'active' | 'disabled' }> {
+    assertUuid(tenantId, 'tenantId');
+    assertUuid(dramaId, 'dramaId');
+    assertUuid(episodeId, 'episodeId');
+    if (trackId) assertUuid(trackId, 'trackId');
+    if (!rawInput || typeof rawInput !== 'object' || Array.isArray(rawInput)) throw new BadRequestException('轨道配置无效');
+    const raw = rawInput as Record<string, unknown>;
+    const keys = trackId ? ['expectedVersion'] : ['expectedVersion', 'type', 'locale', 'label', 'isDefault', 'mediaAssetId'];
+    if (Object.keys(raw).some(key => !keys.includes(key))) throw new BadRequestException('轨道配置包含不支持的字段');
+    const expectedVersion = boundedInteger(raw.expectedVersion, Number.NaN, 0, 1_000_000_000);
+    const type = raw.type, locale = typeof raw.locale === 'string' ? raw.locale.trim() : '';
+    const label = typeof raw.label === 'string' ? raw.label.trim() : '';
+    const mediaAssetId = raw.mediaAssetId;
+    if (!trackId) {
+      assertUuid(mediaAssetId, 'mediaAssetId');
+      if (!['subtitle', 'dubbing'].includes(String(type)) || !/^[a-z]{2,3}(?:-[A-Z][a-z]{3})?(?:-[A-Z]{2}|-[0-9]{3})?$/.test(locale)
+        || locale.length > 20 || !label || label.length > 100 || typeof raw.isDefault !== 'boolean') {
+        throw new BadRequestException('请填写有效的轨道类型、语言、名称和默认设置');
+      }
+    }
+    return this.database.inTenantContext(tenantId, async transaction => {
+      const command = await this.beginCommand<{ dramaVersion: number; id: string; status: 'active' | 'disabled' }>(transaction, {
+        actorId: metadata.actorId, actorType: 'tenant_staff', tenantId, scope: 'tenant',
+        idempotencyKey: metadata.idempotencyKey, request: { dramaId, episodeId, trackId, ...raw },
+        routeKey: trackId ? 'tenant.content.track.disable' : 'tenant.content.track.save',
+      });
+      if (command.cached) return command.cached;
+      const dramas = await transaction<{ version: number; status: string }[]>`
+        select version, status from dramas where id = ${dramaId} and owner_type = 'tenant'
+          and owner_tenant_id = ${tenantId} and deleted_at is null for update
+      `;
+      const drama = dramas[0];
+      if (!drama) throw new NotFoundException('短剧不存在');
+      if (drama.version !== expectedVersion) throw new ConflictException('短剧已被修改，请刷新后重试');
+      if (!['draft', 'rejected', 'unpublished'].includes(drama.status)) throw new ConflictException('请先下架短剧再修改轨道');
+      if (!await this.findTenantEpisode(transaction, tenantId, dramaId, episodeId, true)) throw new NotFoundException('剧集不存在');
+      let id = trackId;
+      if (trackId) {
+        const rows = await transaction<{ id: string }[]>`
+          update episode_media_tracks set status = 'disabled', is_default = false
+          where id = ${trackId} and episode_id = ${episodeId} and status = 'active' returning id
+        `;
+        if (!rows[0]) throw new NotFoundException('启用的轨道不存在');
+      } else {
+        const assets = await transaction<{ mime_type: string }[]>`
+          select media.mime_type from media_assets media join storage_providers provider on provider.id = media.storage_provider_id
+          where media.id = ${mediaAssetId as string} and media.owner_type = 'tenant' and media.owner_tenant_id = ${tenantId}
+            and media.kind = 'file' and media.status = 'ready' and media.deleted_at is null
+            and media.object_key is not null and media.source_url is null and provider.provider = 's3' and provider.status = 'active'
+            and (provider.owner_type = 'platform' or (provider.owner_type = 'tenant' and provider.owner_tenant_id = ${tenantId}))
+          for share of media, provider
+        `;
+        const mime = assets[0]?.mime_type;
+        if (type === 'subtitle' ? mime !== 'text/vtt' : !mime?.startsWith('audio/')) throw new BadRequestException('请选择本代理商已上传的 WebVTT 字幕或音频文件');
+        if (raw.isDefault) await transaction`
+          update episode_media_tracks set is_default = false where episode_id = ${episodeId} and track_type = ${type as string} and is_default
+        `;
+        const rows = await transaction<{ id: string }[]>`
+          insert into episode_media_tracks (id, episode_id, track_type, locale, label, media_asset_id, is_default, status, created_by)
+          values (${uuidV7()}, ${episodeId}, ${type as string}, ${locale}, ${label}, ${mediaAssetId as string}, ${raw.isDefault as boolean}, 'active', ${metadata.actorId})
+          on conflict (episode_id, track_type, locale) do update set label = excluded.label,
+            media_asset_id = excluded.media_asset_id, is_default = excluded.is_default, status = 'active'
+          returning id
+        `;
+        id = rows[0]?.id;
+      }
+      if (!id) throw new ConflictException('轨道已被修改，请刷新后重试');
+      const updated = await transaction<{ version: number }[]>`
+        update dramas set version = version + 1, updated_by = ${metadata.actorId}
+        where id = ${dramaId} and owner_tenant_id = ${tenantId} and version = ${expectedVersion} returning version
+      `;
+      if (!updated[0]) throw new ConflictException('短剧已被修改，请刷新后重试');
+      const response = { id, dramaVersion: updated[0].version, status: trackId ? 'disabled' as const : 'active' as const };
+      await this.insertAudit(transaction, tenantId, metadata, {
+        action: trackId ? 'content.episode_track.disable' : 'content.episode_track.save',
+        resourceId: id, resourceType: 'episode_media_track', after: { ...raw, ...response },
+      });
+      await this.insertOutbox(transaction, tenantId, metadata.requestId, {
+        aggregateId: dramaId, eventType: 'TenantEpisodeTrackChanged', payload: { episodeId, ...response },
+      });
+      await this.completeCommand(transaction, command.id, response, 200, { resourceId: id, resourceType: 'episode_media_track' });
+      return response;
     });
   }
 
@@ -1120,7 +1210,12 @@ export class ContentService {
         coalesce((select jsonb_agg(jsonb_build_object(
           'locale', translation.locale, 'title', translation.title
         ) order by translation.locale) from episode_translations as translation
-          where translation.episode_id = episode.id), '[]'::jsonb) as translations
+          where translation.episode_id = episode.id), '[]'::jsonb) as translations,
+        coalesce((select jsonb_agg(jsonb_build_object(
+          'id', track.id, 'type', track.track_type, 'locale', track.locale, 'label', track.label,
+          'mediaAssetId', track.media_asset_id, 'isDefault', track.is_default, 'status', track.status
+        ) order by track.track_type, track.locale) from episode_media_tracks track
+          where track.episode_id = episode.id), '[]'::jsonb) as tracks
       from episodes as episode
       inner join dramas as drama on drama.id = episode.drama_id
         and drama.owner_type = 'tenant' and drama.owner_tenant_id = ${tenantId}
@@ -1844,6 +1939,7 @@ function toDramaRecord(row: DramaRow): DramaRecord {
 function toEpisodeRecord(row: EpisodeRow): EpisodeRecord {
   return {
     dramaId: row.drama_id,
+    tracks: row.tracks ?? [],
     durationSeconds: row.duration_seconds,
     episodeNo: row.episode_no,
     id: row.id,

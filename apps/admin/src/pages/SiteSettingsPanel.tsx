@@ -123,6 +123,7 @@ export function SiteSettingsPanel({
   const [domainsLoading, setDomainsLoading] = useState(canReadDomains);
   const [settingsError, setSettingsError] = useState<string>();
   const [domainsError, setDomainsError] = useState<string>();
+  const [failedVerification, setFailedVerification] = useState<DomainRecord>();
   const [submitting, setSubmitting] = useState<string>();
   const [domainModalOpen, setDomainModalOpen] = useState(false);
   const [tlsTarget, setTlsTarget] = useState<DomainRecord>();
@@ -168,6 +169,7 @@ export function SiteSettingsPanel({
     const sequence = ++domainsSequence.current;
     setDomainsLoading(true);
     setDomainsError(undefined);
+    setFailedVerification(undefined);
     try {
       const result = await request<DomainRecord[]>(domainsEndpoint);
       if (sequence === domainsSequence.current) setDomains(result);
@@ -299,6 +301,7 @@ export function SiteSettingsPanel({
     if (!verifyEndpoint) return;
     const action = `verify:${domain.id}`;
     setSubmitting(action);
+    setDomainsError(undefined);
     try {
       await request<DomainRecord>(verifyEndpoint(domain.id), {
         body: JSON.stringify({ version: domain.version }),
@@ -307,7 +310,10 @@ export function SiteSettingsPanel({
       messageApi.success('DNS 所有权验证通过，证书状态已进入处理中');
       await loadDomains();
     } catch (reason) {
-      messageApi.error(errorMessage(reason, 'DNS TXT 验证未通过'));
+      const text = errorMessage(reason, 'DNS TXT 验证未通过');
+      setDomainsError(text);
+      setFailedVerification(domain);
+      messageApi.error(text);
     } finally {
       setSubmitting(undefined);
     }
@@ -415,7 +421,7 @@ export function SiteSettingsPanel({
             </Col>
             <Col span={24}>
               <Form.Item
-                label={siteStatusMode === 'platform' ? '平台用户站安全开关' : '代理商用户站开关'}
+                label={siteStatusMode === 'platform' ? 'SaaS 服务接入' : '代理商用户站开关'}
                 name="userSiteEnabled"
                 valuePropName="checked"
               >
@@ -440,7 +446,7 @@ export function SiteSettingsPanel({
       <>
         {domainsError ? (
           <Alert
-            action={<Button size="small" onClick={() => void loadDomains()}>重试</Button>}
+            action={<Button size="small" onClick={() => void (failedVerification ? verifyDomain(failedVerification) : loadDomains())}>重试</Button>}
             className="page-alert"
             message={domainsError}
             showIcon
@@ -448,6 +454,7 @@ export function SiteSettingsPanel({
           />
         ) : null}
         <div className="tenant-content-toolbar">
+          <Button loading={domainsLoading} onClick={() => void loadDomains()}>刷新域名</Button>
           {canManageDomains ? (
             <Button type="primary" onClick={() => setDomainModalOpen(true)}>
               {createDomainKind === 'subdomain' ? '分配子域名' : '绑定独立域名'}
@@ -529,11 +536,13 @@ export function SiteSettingsPanel({
                         证书状态
                       </Button>
                     ) : null}
-                    {!domain.isPrimary && domain.enabled && domain.verification.status === 'verified' ? (
+                    {!domain.isPrimary && domain.enabled && domain.verification.status === 'verified' && domain.tlsStatus === 'active' ? (
                       <Popconfirm title="将此域名设为主域名？" onConfirm={() => void updateDomain(domain, { isPrimary: true })}>
                         <Button disabled={busy} size="small">设为主域名</Button>
                       </Popconfirm>
                     ) : null}
+                    {!domain.isPrimary && domain.enabled && domain.verification.status === 'verified' && domain.tlsStatus !== 'active'
+                      ? <Typography.Text type="secondary">证书生效后可设为主域名</Typography.Text> : null}
                     {!domain.isPrimary ? (
                       <Popconfirm
                         title={domain.enabled ? '停用此域名？' : '重新启用此域名？'}

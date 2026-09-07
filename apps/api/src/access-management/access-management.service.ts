@@ -26,6 +26,7 @@ const UUID_PATTERN =
 const permissionByCode = new Map(
   permissionCatalog.map((permission) => [permission.code, permission]),
 );
+const retiredPermissions = new Set(['platform.customer.manage', 'platform.customer.session_revoke']);
 
 interface RoleRow {
   id: string;
@@ -53,7 +54,7 @@ export class AccessManagementService {
 
   listPermissionDirectory(scope: AccessScope): PermissionDirectoryItem[] {
     return permissionCatalog
-      .filter((permission) => permission.scope === scope)
+      .filter((permission) => permission.scope === scope && !retiredPermissions.has(permission.code))
       .map((permission) => ({ ...permission }));
   }
 
@@ -532,7 +533,7 @@ function parseGrants(value: unknown, scope: AccessScope): RolePermissionGrant[] 
       throw new BadRequestException('data_scope must be all');
     }
     const catalogEntry = permissionByCode.get(code as never);
-    if (!catalogEntry || catalogEntry.scope !== scope) {
+    if (!catalogEntry || catalogEntry.scope !== scope || retiredPermissions.has(code)) {
       throw new BadRequestException(
         `Permission ${code || '(empty)'} is not allowed for ${scope} roles`,
       );
@@ -550,7 +551,7 @@ function mapRoleRow(row: RoleRow): RoleRecord {
     ? row.permissions.map((value) => {
         const record = requireRecord(value);
         return mapStoredGrant(record.code, record.dataScope);
-      })
+      }).filter((grant) => !retiredPermissions.has(grant.code))
     : [];
   return {
     id: row.id,

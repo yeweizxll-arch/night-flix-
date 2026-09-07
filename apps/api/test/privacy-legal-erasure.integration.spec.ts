@@ -1,6 +1,7 @@
 import { PGlite, type Transaction } from '@electric-sql/pglite';
 import {
   BadRequestException,
+  ConflictException,
   ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -14,6 +15,7 @@ import { hashPassword } from '../src/auth/password';
 import { uuidV7 } from '../src/common/uuid-v7';
 import { CustomerAuthenticationService } from '../src/customer-auth/customer-authentication.service';
 import { CustomerOtpService } from '../src/customer-auth/customer-otp.service';
+import { CustomerManagementService } from '../src/customer-management/customer-management.service';
 import type {
   DatabaseService,
   DatabaseTransaction,
@@ -27,6 +29,7 @@ let database: PGlite;
 let authentication: CustomerAuthenticationService;
 let legal: LegalDocumentService;
 let privacy: CustomerPrivacyService;
+let customers: CustomerManagementService;
 let erasureWorker: PrivacyErasureWorkerService;
 
 const tenantA = '018f2f45-7f5e-7e70-b17f-f6e773579001';
@@ -150,6 +153,7 @@ describe('customer legal consent and privacy erasure', () => {
     );
     legal = new LegalDocumentService(databaseService);
     privacy = new CustomerPrivacyService(databaseService, crypto);
+    customers = new CustomerManagementService(databaseService);
     erasureWorker = new PrivacyErasureWorkerService(databaseService);
   }, 30_000);
 
@@ -425,12 +429,24 @@ describe('customer legal consent and privacy erasure', () => {
       tenantA, session.accessToken,
     )).rejects.toBeInstanceOf(UnauthorizedException);
 
+    const staff = { actorId: actorA, scope: 'tenant' as const, tenantId: tenantA };
+    const pending = await customers.detail(staff, undefined, accountId);
+    expect(pending.status).toBe('erasure_pending');
+    expect((await customers.list(staff, { status: 'erasure_pending' })).items.some(item => item.id === accountId)).toBe(true);
+    await expect(customers.updateStatus(staff, undefined, accountId, {
+      expectedVersion: pending.version, status: 'active', reason: 'must not restore pending erasure',
+    }, metadata())).rejects.toBeInstanceOf(ConflictException);
     const completed = await erasureWorker.processRequest(first.requestId);
     expect(completed).toMatchObject({
       dataErasurePerformed: true,
       requestId: first.requestId,
       status: 'completed',
     });
+    const erased = await customers.detail(staff, undefined, accountId);
+    expect(erased.status).toBe('erased');
+    await expect(customers.updateStatus(staff, undefined, accountId, {
+      expectedVersion: erased.version, status: 'disabled', reason: 'must not change erased account',
+    }, metadata())).rejects.toBeInstanceOf(ConflictException);
     await expect(erasureWorker.processRequest(first.requestId)).resolves.toMatchObject({
       dataErasurePerformed: true,
       status: 'completed',

@@ -60,6 +60,10 @@ describe('tenant content browser safety helpers', () => {
   it('renders import errors as bounded plain text', () => {
     expect(safeImportErrors(['bad code', '<img onerror=alert(1)>']))
       .toBe('bad code；<img onerror=alert(1)>');
-    expect(safeImportErrors({ code: 'INVALID' })).toBe('{"code":"INVALID"}');
+    expect(safeImportErrors({ code: 'INVALID', databaseCode: '42501' })).toContain('提供任务编号');
+    expect(safeImportErrors({ source: 'inline', importedRows: 1, errorRows: 0 })).toBe('成功部数：1；失败行数：0');
+    expect(safeImportErrors({ rowCount: 3, episodeCount: 60 })).toBe('提交部数：3；剧集数：60');
+    expect(safeImportErrors(['Drama code already exists'])).toBe('短剧编号已存在，请更换编号后重试');
+    expect(safeImportErrors([])).toBe('—');
   });
 });

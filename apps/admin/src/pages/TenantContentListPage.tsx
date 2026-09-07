@@ -84,6 +84,7 @@ interface DramaTranslation {
 interface EpisodeTranslation { locale: ContentLocale; title: string }
 
 interface EpisodeRecord {
+  tracks?: EpisodeTrack[];
   dramaId: string;
   durationSeconds: number;
   episodeNo: number;
@@ -96,6 +97,16 @@ interface EpisodeRecord {
   translations: EpisodeTranslation[];
   unpublishAt?: string;
   version: number;
+}
+
+interface EpisodeTrack {
+  id: string;
+  type: 'subtitle' | 'dubbing';
+  locale: string;
+  label: string;
+  mediaAssetId: string;
+  isDefault: boolean;
+  status: 'active' | 'disabled';
 }
 
 interface DramaRecord {
@@ -253,6 +264,8 @@ export function TenantContentListPage() {
   const [taxonomyEditor, setTaxonomyEditor] = useState<TaxonomyEditor>();
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget>();
   const [uploadTarget, setUploadTarget] = useState<UploadTarget>();
+  const [exportError, setExportError] = useState<string>();
+  const [trackEditor, setTrackEditor] = useState<{ drama: DramaRecord; episode: EpisodeRecord }>();
   const [batchDrama, setBatchDrama] = useState<DramaRecord>();
   const [importOpen, setImportOpen] = useState(false);
   const [importFormat, setImportFormat] = useState<ImportFormat>('json');
@@ -783,6 +796,7 @@ export function TenantContentListPage() {
   }
 
   async function exportContent(format: ImportFormat): Promise<void> {
+    setExportError(undefined);
     setSubmitting(`export:${format}`);
     try {
       const result = await request<ExportResponse>(`${API_BASE}/export?format=${format}`);
@@ -808,7 +822,7 @@ export function TenantContentListPage() {
       }
       messageApi.success(`已安全导出 ${result.rowCount} 部短剧`);
     } catch (reason) {
-      messageApi.error(contentError(reason, localError(reason, '内容导出失败')));
+      setExportError(contentError(reason, localError(reason, '内容导出失败')));
     } finally {
       setSubmitting(undefined);
     }
@@ -817,6 +831,7 @@ export function TenantContentListPage() {
   return (
     <>
       {messageContext}
+      {exportError ? <Alert className="page-alert" type="error" showIcon message={exportError} closable onClose={() => setExportError(undefined)} /> : null}
       <div className="page-heading">
         <div>
           <Typography.Title level={2}>代理商内容管理</Typography.Title>
@@ -939,6 +954,7 @@ export function TenantContentListPage() {
             onAddEpisode={() => openEpisodeEditor(selected)}
             onBatchEpisodes={canUploadEpisode ? () => setBatchDrama(selected) : undefined}
             onEditEpisode={(episode) => openEpisodeEditor(selected, episode)}
+            onTracks={(episode) => setTrackEditor({ drama: selected, episode })}
             record={selected}
           />
         ) : null}
@@ -1149,6 +1165,12 @@ export function TenantContentListPage() {
         </Form>
       </Modal>
 
+      {trackEditor ? <TenantEpisodeTracksModal drama={trackEditor.drama} episode={trackEditor.episode}
+        canUpload={canUploadEpisode} onClose={() => {
+          setTrackEditor(undefined);
+          void openDetail(trackEditor.drama);
+          void loadDramas(dramas.page, dramas.pageSize);
+        }} /> : null}
       <TenantMediaUploadModal
         kind={uploadTarget === 'cover' ? 'image' : 'video'}
         onCancel={() => setUploadTarget(undefined)}
@@ -1481,12 +1503,14 @@ function DramaDetail({
   onAddEpisode,
   onBatchEpisodes,
   onEditEpisode,
+  onTracks,
   record,
 }: {
   canUpdate: boolean;
   onAddEpisode(): void;
   onBatchEpisodes?(): void;
   onEditEpisode(episode: EpisodeRecord): void;
+  onTracks(episode: EpisodeRecord): void;
   record: DramaRecord;
 }) {
   const editable = canUpdate && isTenantDramaEditable(record);
@@ -1526,7 +1550,7 @@ function DramaDetail({
           <Typography.Title level={4}>剧集</Typography.Title>
           {editable ? <Space><Button onClick={onAddEpisode}>添加单集</Button>{onBatchEpisodes && <Button onClick={onBatchEpisodes} type="primary">批量添加剧集</Button>}</Space> : null}
         </div>
-        {!editable ? <Alert className="page-alert" message="仅草稿或驳回状态允许编辑剧集；审核中、已发布、已下架或已删除状态只读。" showIcon type="info" /> : null}
+        {!editable ? <Alert className="page-alert" message="草稿、驳回或下架后可编辑剧集；已上架的剧请先下架。只读账号和已删除内容不可编辑。" showIcon type="info" /> : null}
         <Alert className="page-alert" message="确认集数顺序和视频内容后，再上架剧目。" showIcon type="info" />
         <Table<EpisodeRecord>
           columns={[
@@ -1538,9 +1562,10 @@ function DramaDetail({
             { dataIndex: 'previewMediaAssetId', title: '独立试看媒体（绑定状态）', width: 300, render: (value?: string) => value ? <Space direction="vertical" size={2}><Tag color="blue">独立试看已绑定</Tag><Typography.Text copyable>{value}</Typography.Text></Space> : <Tag>未配置，不回退正片</Tag> },
             { dataIndex: 'releaseAt', title: '发布时间', width: 180, render: formatDateTime },
             { dataIndex: 'version', title: '版本', width: 70 },
-            { key: 'action', title: '操作', width: 90, render: (_, episode) => editable
-              ? <Button size="small" onClick={() => onEditEpisode(episode)}>编辑</Button>
-              : <Typography.Text type="secondary">只读</Typography.Text> },
+            { key: 'action', title: '操作', width: 180, render: (_, episode) => <Space>
+              {editable ? <Button size="small" onClick={() => onEditEpisode(episode)}>编辑</Button> : null}
+              <Button size="small" onClick={() => onTracks(episode)}>字幕/配音</Button>
+            </Space> },
           ]}
           dataSource={record.episodes ?? []}
           locale={{ emptyText: <Empty description="暂无剧集" /> }}
@@ -1577,12 +1602,12 @@ function ImportDetailView({
         <Descriptions.Item label="摘要"><Typography.Text>{safeImportErrors(detail.summary)}</Typography.Text></Descriptions.Item>
         <Descriptions.Item label="版本">{detail.version}</Descriptions.Item>
       </Descriptions>
-      <Button loading={loading} onClick={onRefresh}>刷新异步状态</Button>
+      <Button loading={loading} onClick={onRefresh}>刷新处理结果</Button>
       <Table<ImportRow>
         columns={[
           { dataIndex: 'rowNumber', title: '行', width: 70 },
-          { dataIndex: 'status', title: '状态', width: 100 },
-          { dataIndex: 'errors', title: '安全错误', render: (value) => <Typography.Text type={value ? 'danger' : undefined}>{safeImportErrors(value)}</Typography.Text> },
+          { dataIndex: 'status', title: '状态', width: 100, render: (value: string) => ({ pending: '待处理', valid: '校验通过', error: '校验失败', imported: '已导入' }[value] ?? '处理中') },
+          { dataIndex: 'errors', title: '失败原因', render: (value) => <Typography.Text type={value ? 'danger' : undefined}>{safeImportErrors(value)}</Typography.Text> },
           { dataIndex: 'importedDramaId', title: '已创建短剧 ID', render: (value?: string) => value ? <Typography.Text copyable>{value}</Typography.Text> : '—' },
         ]}
         dataSource={detail.rows}
@@ -1645,6 +1670,68 @@ function TranslationFields({ kind }: { kind: 'drama' | 'episode' | 'taxonomy' })
   );
 }
 
+export function TenantEpisodeTracksModal({ drama, episode, canUpload, onClose }: {
+  drama: DramaRecord; episode: EpisodeRecord; canUpload: boolean; onClose(): void;
+}) {
+  const { request, principal } = useAuth();
+  const [form] = Form.useForm<Omit<EpisodeTrack, 'id' | 'status'>>();
+  const [current, setCurrent] = useState(drama);
+  const [tracks, setTracks] = useState(episode.tracks ?? []);
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+  const editable = Boolean(principal?.permissions.includes('content.drama.update')) && isTenantDramaEditable(current);
+  const path = `${API_BASE}/dramas/${encodeURIComponent(drama.id)}`;
+  async function refresh() {
+    const next = await request<DramaRecord>(path);
+    setCurrent(next);
+    setTracks(next.episodes?.find(item => item.id === episode.id)?.tracks ?? []);
+  }
+  async function save(values: Omit<EpisodeTrack, 'id' | 'status'>, trackId?: string) {
+    if (busy || !editable) return;
+    setBusy(true); setError(undefined);
+    try {
+      await request(`${path}/episodes/${encodeURIComponent(episode.id)}/tracks${trackId ? `/${encodeURIComponent(trackId)}` : ''}`, {
+        method: trackId ? 'DELETE' : 'POST',
+        body: JSON.stringify(trackId ? { expectedVersion: current.version } : { ...values,
+          label: values.label.trim(), locale: values.locale.trim(), mediaAssetId: values.mediaAssetId.trim(), expectedVersion: current.version }),
+      });
+      await refresh();
+      form.resetFields();
+    } catch (reason) {
+      setError(contentError(reason, '轨道操作失败，请重试'));
+      if (isContentVersionConflict(reason)) await refresh().catch(() => {});
+    } finally { setBusy(false); }
+  }
+  return <>
+    <Modal open footer={null} title={`字幕与配音 · 第 ${episode.episodeNo} 集`} width={760} onCancel={() => { if (!busy) onClose(); }}>
+      {error ? <Alert type="error" showIcon message={error} /> : null}
+      <Typography.Paragraph type="secondary">字幕使用 WebVTT，配音使用音频文件。相同类型和语言可更新，每种类型仅保留一个默认轨道。</Typography.Paragraph>
+      <Button loading={busy} onClick={() => { setBusy(true); void refresh().catch(reason => setError(contentError(reason, '轨道加载失败'))).finally(() => setBusy(false)); }}>刷新轨道</Button>
+      <Table<EpisodeTrack> size="small" rowKey="id" pagination={false} dataSource={tracks} columns={[
+        { title: '类型', dataIndex: 'type', render: value => value === 'subtitle' ? '字幕' : '配音' },
+        { title: '语言', dataIndex: 'locale' }, { title: '名称', dataIndex: 'label' },
+        { title: '默认', dataIndex: 'isDefault', render: value => value ? '是' : '否' },
+        { title: '状态', dataIndex: 'status', render: value => value === 'active' ? '启用' : '停用' },
+        { title: '操作', render: (_, track) => editable ? <Space>
+          <Button size="small" disabled={busy} onClick={() => form.setFieldsValue({ type: track.type, locale: track.locale, label: track.label, mediaAssetId: track.mediaAssetId, isDefault: track.isDefault })}>{track.status === 'active' ? '编辑' : '恢复'}</Button>
+          {track.status === 'active' ? <Popconfirm title={`确认停用“${track.label}”？`} onConfirm={() => save(track, track.id)}><Button size="small" danger disabled={busy}>停用</Button></Popconfirm> : null}
+        </Space> : '只读' },
+      ]} />
+      {editable ? <Form name="tenant-episode-tracks" form={form} layout="vertical" initialValues={{ type: 'subtitle', locale: 'zh-CN', isDefault: false }} onFinish={values => void save(values)} disabled={busy}>
+        <Form.Item label="类型" name="type" rules={[{ required: true }]}><Select options={[{ label: '字幕', value: 'subtitle' }, { label: '配音', value: 'dubbing' }]} /></Form.Item>
+        <Form.Item label="语言" name="locale" rules={[{ required: true }, { pattern: /^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/, max: 20, message: '请输入有效语言代码，如 zh-CN、en-US' }]}><Select showSearch options={contentLocaleOptions} /></Form.Item>
+        <Form.Item label="显示名称" name="label" rules={[{ required: true, whitespace: true, max: 100 }]}><Input maxLength={100} /></Form.Item>
+        <Form.Item label="媒体文件编号" name="mediaAssetId" rules={[{ required: true }, { validator: (_, value) => isUuid(value?.trim() ?? '') ? Promise.resolve() : Promise.reject(new Error('请上传文件或填写有效文件编号')) }]}><Input /></Form.Item>
+        {canUpload ? <Button onClick={() => setUploadOpen(true)}>上传字幕或配音</Button> : null}
+        <Form.Item label="设为默认" name="isDefault" valuePropName="checked"><Switch /></Form.Item>
+        <Button htmlType="submit" type="primary" loading={busy}>保存轨道</Button>
+      </Form> : <Typography.Paragraph type="secondary">当前只读。拥有编辑权限的代理商员工可在下架后修改轨道。</Typography.Paragraph>}
+    </Modal>
+    <TenantMediaUploadModal kind="file" open={uploadOpen} onCancel={() => setUploadOpen(false)} onReady={mediaAssetId => { form.setFieldValue('mediaAssetId', mediaAssetId); setUploadOpen(false); }} />
+  </>;
+}
+
 export function TenantMediaUploadModal({
   kind,
   onCancel,
@@ -1653,7 +1740,7 @@ export function TenantMediaUploadModal({
   purpose,
   title,
 }: {
-  kind: 'image' | 'video';
+  kind: 'file' | 'image' | 'video';
   onCancel(): void;
   onReady(mediaId: string, durationSeconds?: number): void;
   open: boolean;
@@ -1788,7 +1875,7 @@ export function TenantMediaUploadModal({
       maskClosable={!stage}
       onCancel={cancel}
       open={open}
-      title={title ?? (kind === 'image' ? '上传封面图片' : purpose === 'episode-preview' ? '单独上传试看短片' : '单独上传正片视频')}
+      title={title ?? (kind === 'file' ? '上传字幕或配音' : kind === 'image' ? '上传封面图片' : purpose === 'episode-preview' ? '单独上传试看短片' : '单独上传正片视频')}
       width={640}
     >
       <Alert
@@ -1826,17 +1913,18 @@ export function TenantMediaUploadModal({
           )}
         </div>
         <div>
-          <Typography.Text strong>{kind === 'image' ? '图片文件' : '视频文件'}</Typography.Text>
+          <Typography.Text strong>{kind === 'file' ? '字幕或音频文件' : kind === 'image' ? '图片文件' : '视频文件'}</Typography.Text>
           <Input
             accept={kind === 'image'
               ? 'image/avif,image/jpeg,image/png,image/webp'
-              : 'video/mp4,video/quicktime,video/webm'}
+              : kind === 'file' ? 'text/vtt,audio/mpeg,audio/mp4,audio/m4a,audio/aac,audio/wav,audio/ogg,audio/flac' : 'video/mp4,video/quicktime,video/webm'}
+            aria-label={kind === 'file' ? '字幕或音频文件' : kind === 'image' ? '图片文件' : '视频文件'}
             disabled={Boolean(stage)}
             onChange={(event) => setFile(event.target.files?.[0])}
             type="file"
           />
           <Typography.Text type="secondary">
-            {kind === 'image' ? 'AVIF/JPEG/PNG/WebP，最大 25 MiB' : 'MP4/MOV/WebM，最大 2 GiB'}
+            {kind === 'file' ? 'WebVTT 字幕或音频，最大 100 MiB' : kind === 'image' ? 'AVIF/JPEG/PNG/WebP，最大 25 MiB' : 'MP4/MOV/WebM，最大 2 GiB'}
           </Typography.Text>
         </div>
         {file ? <Typography.Text>已选择：{file.name}（{formatContentBytes(file.size)}）</Typography.Text> : null}
@@ -1961,6 +2049,7 @@ async function confirmDelete(_: unknown, value: boolean): Promise<void> {
 
 function contentError(reason: unknown, fallback: string): string {
   if (!(reason instanceof ApiError)) return fallback;
+  if (reason.code === 'CONTENT_EXPORT_NOT_READY') return reason.message;
   if (reason.status === 401) return '登录状态已失效，请重新登录';
   if (reason.status === 403) return '当前账号没有执行该操作的权限，或代理商已过期进入只读状态';
   if (reason.status === 409) return '数据版本或状态已变化，页面将刷新，请重新操作';

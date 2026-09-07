@@ -23,12 +23,12 @@ export function PlatformMerchantSettingsDrawer({
       {merchant ? (
         <SiteSettingsPanel
           canManageDomains={permissions.includes('platform.domain.manage')}
-          canManageSettings={permissions.includes('platform.merchant.update')}
+          canManageSettings={false}
           canManageSiteStatus={permissions.includes('platform.merchant.status')}
           canReadDomains={permissions.includes('platform.merchant.read')}
           canReadSettings={permissions.includes('platform.merchant.read')}
           createDomainKind="subdomain"
-          description={`管理 ${merchant.name} 的品牌和域名。自定义域名需由代理商完成 DNS 验证。`}
+          description={`查看 ${merchant.name} 的品牌配置，管理技术接入。品牌由代理商自行设置。`}
           domainsEndpoint={`${base}/domains`}
           settingsEndpoint={`${base}/site-settings`}
           siteStatusEndpoint={`${base}/site-status`}

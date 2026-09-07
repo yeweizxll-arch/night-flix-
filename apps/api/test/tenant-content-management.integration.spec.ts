@@ -95,6 +95,49 @@ describe('tenant content management, taxonomy, import, and export', () => {
 
   afterAll(async () => database?.close());
 
+  it('manages private episode tracks with replay, defaults, restore, CAS and ownership checks', async () => {
+    const subtitle = uuidV7(), audio = uuidV7(), otherSubtitle = uuidV7();
+    await database.exec(`insert into media_assets (id, owner_type, owner_tenant_id, kind, storage_provider_id,
+      object_key, mime_type, size_bytes, checksum, status) values
+      ('${subtitle}', 'tenant', '${tenantId}', 'file', '${providerId}', 'tracks/sub.vtt', 'text/vtt', 50, 'sha256:${'a'.repeat(64)}', 'ready'),
+      ('${audio}', 'tenant', '${tenantId}', 'file', '${providerId}', 'tracks/audio.mp3', 'audio/mpeg', 100, 'sha256:${'b'.repeat(64)}', 'ready'),
+      ('${otherSubtitle}', 'tenant', '${otherTenantId}', 'file', '${otherProviderId}', 'tracks/sub.vtt', 'text/vtt', 50, 'sha256:${'c'.repeat(64)}', 'ready')`);
+    const drama = await content.createTenantDrama(tenantId, { code: 'tenant-track-test', translations: [{ locale: 'zh-CN', title: '轨道测试' }] }, metadata('track-drama-create'));
+    const episode = await content.addTenantEpisode(tenantId, drama.id, { durationSeconds: 60, episodeNo: 1,
+      expectedDramaVersion: drama.version, mediaAssetId: videoId, translations: [{ locale: 'zh-CN', title: '第一集' }] }, metadata('track-episode-create'));
+    const input = { expectedVersion: episode.dramaVersion, type: 'subtitle', locale: 'zh-CN', label: '中文字幕', isDefault: true, mediaAssetId: subtitle };
+    const first = await content.saveTenantEpisodeTrack(tenantId, drama.id, episode.id, input, metadata('track-save-001'));
+    expect(await content.saveTenantEpisodeTrack(tenantId, drama.id, episode.id, input, metadata('track-save-001'))).toEqual(first);
+    await expect(content.saveTenantEpisodeTrack(tenantId, drama.id, episode.id, { ...input, label: '冲突' }, metadata('track-save-001'))).rejects.toBeInstanceOf(ConflictException);
+    const currentInput = { ...input, expectedVersion: first.dramaVersion };
+    await expect(content.saveTenantEpisodeTrack(otherTenantId, drama.id, episode.id, currentInput, metadata('track-other-tenant'))).rejects.toBeInstanceOf(NotFoundException);
+    await expect(content.saveTenantEpisodeTrack(tenantId, drama.id, episode.id, { ...currentInput, mediaAssetId: otherSubtitle }, metadata('track-other-asset'))).rejects.toBeInstanceOf(BadRequestException);
+    await expect(content.saveTenantEpisodeTrack(tenantId, drama.id, episode.id, { ...currentInput, mediaAssetId: audio }, metadata('track-wrong-mime'))).rejects.toBeInstanceOf(BadRequestException);
+    await expect(content.saveTenantEpisodeTrack(tenantId, drama.id, uuidV7(), currentInput, metadata('track-wrong-episode'))).rejects.toBeInstanceOf(NotFoundException);
+    await expect(content.saveTenantEpisodeTrack(tenantId, drama.id, episode.id, input, metadata('track-stale-version'))).rejects.toBeInstanceOf(ConflictException);
+    const english = await content.saveTenantEpisodeTrack(tenantId, drama.id, episode.id, { ...currentInput, locale: 'en-US', label: 'English' }, metadata('track-save-002'));
+    let detail = await content.getTenantDrama(tenantId, drama.id);
+    expect(detail.episodes[0]?.tracks?.filter(track => track.isDefault).map(track => track.id)).toEqual([english.id]);
+    const dubbed = await content.saveTenantEpisodeTrack(tenantId, drama.id, episode.id, { ...input, expectedVersion: english.dramaVersion, type: 'dubbing', mediaAssetId: audio }, metadata('track-save-003'));
+    const disabled = await content.saveTenantEpisodeTrack(tenantId, drama.id, episode.id, { expectedVersion: dubbed.dramaVersion }, metadata('track-disable-001'), first.id);
+    const restored = await content.saveTenantEpisodeTrack(tenantId, drama.id, episode.id, { ...input, expectedVersion: disabled.dramaVersion }, metadata('track-restore-001'));
+    expect(restored.id).toBe(first.id);
+    detail = await content.getTenantDrama(tenantId, drama.id);
+    expect(detail.episodes[0]?.tracks).toHaveLength(3);
+    expect(detail.episodes[0]?.tracks?.filter(track => track.isDefault)).toHaveLength(2);
+    await database.exec(`update media_assets set status = 'quarantined' where id = '${subtitle}'`);
+    const quarantinedStop = await content.saveTenantEpisodeTrack(tenantId, drama.id, episode.id,
+      { expectedVersion: restored.dramaVersion }, metadata('track-quarantined-disable'), first.id);
+    expect(quarantinedStop.status).toBe('disabled');
+    await expect(content.saveTenantEpisodeTrack(tenantId, drama.id, episode.id,
+      { ...input, expectedVersion: quarantinedStop.dramaVersion }, metadata('track-quarantined-restore'))).rejects.toBeInstanceOf(BadRequestException);
+    await expect(database.exec(`update episode_media_tracks set status = 'active' where id = '${first.id}'`)).rejects.toThrow('ready file asset');
+    await database.exec(`update dramas set status = 'published', version = version + 1 where id = '${drama.id}'`);
+    await expect(content.saveTenantEpisodeTrack(tenantId, drama.id, episode.id, { ...input, expectedVersion: quarantinedStop.dramaVersion + 1 }, metadata('track-published-edit'))).rejects.toBeInstanceOf(ConflictException);
+    // Keep this deliberately incomplete fixture out of later export scenarios.
+    await database.exec(`update dramas set deleted_at = statement_timestamp(), deleted_by = '${staffId}', delete_reason = 'Completed isolated track fixture', restore_until = statement_timestamp() + interval '30 days', version = version + 1 where id = '${drama.id}'`);
+  });
+
   it('manages tenant taxonomy and binds editable drama and episode details with CAS', async () => {
     const category = await taxonomy.create(tenantId, 'category', {
       code: 'romance', sortOrder: 10, translations: [{ locale: 'en-US', name: 'Romance' }],
@@ -251,7 +294,7 @@ describe('tenant content management, taxonomy, import, and export', () => {
       where id = '${providerId}'`);
     await expect(portability.exportContent(tenantId, { format: 'json' }, {
       actorId: staffId, requestId: uuidV7(),
-    })).rejects.toThrow(/not currently re-importable/);
+    })).rejects.toThrow(/媒体文件或分类当前不可用/);
     await database.exec(`update storage_providers set status = 'active', version = version + 1
       where id = '${providerId}'`);
   });
@@ -262,7 +305,7 @@ describe('tenant content management, taxonomy, import, and export', () => {
     }, metadata('tenant-incomplete-export-001'));
     await expect(portability.exportContent(tenantId, { format: 'json' }, {
       actorId: staffId, requestId: uuidV7(),
-    })).rejects.toThrow(/incomplete dramas/);
+    })).rejects.toThrow(/缺少封面或标题/);
   });
 
   it('rejects malformed CSV and cross-tenant imported row bindings', async () => {

@@ -22,7 +22,7 @@ import { useAuth } from '../auth/AuthProvider';
 import { customerResourcePath, isValidTenantId } from './customer-management-ui';
 import { MerchantSelect } from './MerchantSelect';
 
-type CustomerStatus = 'active' | 'disabled';
+type CustomerStatus = 'active' | 'disabled' | 'erasure_pending' | 'erased';
 
 interface CustomerDevice {
   activeSessions: number;
@@ -113,8 +113,8 @@ export function CustomerManagementPage({
 
   const permissions = principal?.permissions ?? [];
   const canRead = permissions.includes(readPermission);
-  const canManage = permissions.includes(managePermission);
-  const canRevoke = permissions.includes(sessionRevokePermission);
+  const canManage = scope === 'tenant' && permissions.includes(managePermission);
+  const canRevoke = scope === 'tenant' && permissions.includes(sessionRevokePermission);
   const effectiveTenantId = scope === 'platform' ? tenantId : undefined;
   const ready = canRead && (scope === 'tenant' || Boolean(effectiveTenantId));
   const currentCursor = cursorStack[pageIndex];
@@ -285,15 +285,15 @@ export function CustomerManagementPage({
         <div>
           <Typography.Title level={2}>{title}</Typography.Title>
           <Typography.Text type="secondary">
-            管理用户状态和登录设备，查看金币、权益与订单。
+            {scope === 'tenant' ? '管理用户状态和登录设备，查看金币、权益与订单。' : '只读查询用户、权益与订单，供技术支持与对账使用。'}
           </Typography.Text>
         </div>
       </div>
 
-      {scope === 'platform' ? (
+      {scope === 'platform' && !ready ? (
         <Alert
           className="page-alert"
-          description="选择代理商后，查询和管理该代理商的用户。"
+          description="选择代理商后查询用户信息。用户管理由所属代理商负责。"
           message="先选择代理商"
           showIcon
           type="info"
@@ -322,18 +322,24 @@ export function CustomerManagementPage({
             options={[
               { label: '正常', value: 'active' },
               { label: '停用', value: 'disabled' },
+              { label: '注销中', value: 'erasure_pending' },
+              { label: '已注销', value: 'erased' },
             ]}
             placeholder="全部状态"
             style={{ width: 120 }}
             value={draftFilters.status}
           />
           <Input
+            aria-label="注册开始日期"
+            type="date"
             onChange={(event) => setDraftFilters((current) => ({ ...current, registeredFrom: event.target.value }))}
             placeholder="注册开始 YYYY-MM-DD"
             style={{ width: 190 }}
             value={draftFilters.registeredFrom}
           />
           <Input
+            aria-label="注册结束日期"
+            type="date"
             onChange={(event) => setDraftFilters((current) => ({ ...current, registeredTo: event.target.value }))}
             placeholder="注册结束 YYYY-MM-DD"
             style={{ width: 190 }}
@@ -378,17 +384,18 @@ export function CustomerManagementPage({
             {
               key: 'actions',
               title: '操作',
-              width: 230,
+              fixed: 'right',
+              width: scope === 'platform' ? 120 : 230,
               render: (_, record) => (
                 <Space wrap>
                   <Button size="small" onClick={() => void openDetail(record)}>详情</Button>
-                  {canManage ? (
+                  {canManage && (record.status === 'active' || record.status === 'disabled') ? (
                     <Button danger={record.status === 'active'} size="small" onClick={() => openStatus(record)}>
                       {record.status === 'active' ? '停用' : '启用'}
                     </Button>
                   ) : null}
-                  {canRevoke ? <Button size="small" onClick={() => openRevoke(record)}>全部下线</Button> : null}
-                  {!canManage && !canRevoke ? <Typography.Text type="secondary">只读</Typography.Text> : null}
+                  {canRevoke && record.status === 'active' ? <Button size="small" onClick={() => openRevoke(record)}>全部下线</Button> : null}
+                  {(!canManage && !canRevoke) || record.status === 'erasure_pending' || record.status === 'erased' ? <Typography.Text type="secondary">只读</Typography.Text> : null}
                 </Space>
               ),
             },
@@ -441,7 +448,7 @@ export function CustomerManagementPage({
         {detailError ? (
           <RetryAlert message={detailError} onRetry={() => selected && void openDetail(selected)} />
         ) : selected ? (
-          <CustomerDetail canRevoke={canRevoke} onRevoke={openRevoke} record={selected} />
+          <CustomerDetail canRevoke={canRevoke && selected.status === 'active'} onRevoke={openRevoke} record={selected} />
         ) : null}
       </Drawer>
 
@@ -577,7 +584,9 @@ function RetryAlert({ message: text, onRetry }: { message: string; onRetry(): vo
 }
 
 function StatusTag({ status }: { status: CustomerStatus }) {
-  return status === 'active' ? <Tag color="green">正常</Tag> : <Tag>停用</Tag>;
+  return <Tag color={status === 'active' ? 'green' : status === 'erasure_pending' ? 'orange' : undefined}>
+    {{ active: '正常', disabled: '停用', erasure_pending: '注销中', erased: '已注销' }[status]}
+  </Tag>;
 }
 
 function platformLabel(platform: CustomerDevice['platform']): string {

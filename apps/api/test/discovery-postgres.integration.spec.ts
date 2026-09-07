@@ -13,6 +13,7 @@ import { PlaybackService } from '../src/playback/playback.service';
 import { CustomerPlaybackAccessService } from '../src/playback/customer-playback-access.service';
 import { InteractionService } from '../src/interactions/interaction.service';
 import type { InteractionRateLimiterService } from '../src/interactions/interaction-rate-limiter.service';
+import { ContentService } from '../src/content/content.service';
 
 const url = process.env.NIGHTFLIX_PG_TEST_URL;
 const suffix = uuidV7().replaceAll('-', '');
@@ -28,6 +29,39 @@ const savedEnvironment = { DATABASE_URL: process.env.DATABASE_URL, PLATFORM_DATA
   TENANT_RESOLVER_DATABASE_URL: process.env.TENANT_RESOLVER_DATABASE_URL };
 
 describe.skipIf(!url)('real PostgreSQL discovery and interaction boundary', () => {
+  it('allows only private tenant track writes under actual non-owner RLS', async () => {
+    const provider = uuidV7(), asset = uuidV7(), privateDrama = uuidV7(), episode = uuidV7();
+    const publicEpisode = uuidV7(), publicAsset = uuidV7();
+    await owner.unsafe(`grant execute on function app.scope_can_reference(text, uuid, text, uuid), app.content_target_matches_scope(text, uuid, text, uuid) to ${role}`);
+    await owner`insert into storage_providers (id, owner_type, owner_tenant_id, provider, account_label, bucket, credential_ciphertext)
+      values (${provider}, 'tenant', ${tenantA}, 's3', 'Track QA', 'track-qa', ${'x'.repeat(64)})`;
+    await owner`insert into media_assets (id, owner_type, owner_tenant_id, kind, storage_provider_id, object_key, mime_type, size_bytes, checksum, status)
+      values (${asset}, 'tenant', ${tenantA}, 'file', ${provider}, 'qa.vtt', 'text/vtt', 50, ${'a'.repeat(64)}, 'ready')`;
+    await owner`insert into media_assets (id, owner_type, kind, source_url, mime_type, checksum, metadata_json, status)
+      values (${publicAsset}, 'platform', 'video', 'https://media.example.test/qa.mp4', 'video/mp4', ${'a'.repeat(64)}, '{"immutable":true}', 'ready')`;
+    await owner`insert into dramas (id, owner_type, owner_tenant_id, code) values (${privateDrama}, 'tenant', ${tenantA}, 'pg-track-private')`;
+    await owner`insert into episodes (id, drama_id, episode_no, media_asset_id) values (${episode}, ${privateDrama}, 1, ${publicAsset}), (${publicEpisode}, ${shared}, 1, ${publicAsset})`;
+    const content = new ContentService(database);
+    const input = { expectedVersion: 0, type: 'subtitle', locale: 'zh-CN', label: '中文字幕', mediaAssetId: asset, isDefault: true };
+    const metadata = { actorId: staff, idempotencyKey: uuidV7(), requestId: uuidV7() };
+    const track = await content.saveTenantEpisodeTrack(tenantA, privateDrama, episode, input, metadata);
+    expect((await content.getTenantDrama(tenantA, privateDrama)).episodes[0]?.tracks?.[0]?.id).toBe(track.id);
+    await expect(content.getTenantDrama(tenantB, privateDrama)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(database.inTenantContext(tenantB, tx => tx`
+      insert into episode_media_tracks (id, episode_id, track_type, locale, label, media_asset_id)
+      values (${uuidV7()}, ${episode}, 'subtitle', 'en-US', 'Other', ${asset})
+    `)).rejects.toThrow();
+    await expect(database.inTenantContext(tenantA, tx => tx`
+      insert into episode_media_tracks (id, episode_id, track_type, locale, label, media_asset_id)
+      values (${uuidV7()}, ${publicEpisode}, 'subtitle', 'en-US', 'Public override', ${asset})
+    `)).rejects.toThrow();
+    const denied = await database.inTenantContext(tenantB, tx => tx`
+      update episode_media_tracks set label = 'Other tenant' where id = ${track.id} returning id
+    `);
+    expect(denied).toHaveLength(0);
+    await content.saveTenantEpisodeTrack(tenantA, privateDrama, episode, { expectedVersion: track.dramaVersion }, { ...metadata, idempotencyKey: uuidV7(), requestId: uuidV7() }, track.id);
+    expect((await content.getTenantDrama(tenantA, privateDrama)).episodes[0]?.tracks?.[0]?.status).toBe('disabled');
+  });
   beforeAll(async () => {
     const source = new URL(url!);
     if (source.hostname !== '127.0.0.1' || source.pathname !== '/nightflix_local_features') {

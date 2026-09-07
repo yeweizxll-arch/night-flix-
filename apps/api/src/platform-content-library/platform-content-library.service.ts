@@ -537,6 +537,9 @@ export class PlatformContentLibraryService {
       );
       if (command.cached) return command.cached;
       await this.lockEditableDrama(transaction, dramaId, input.expectedVersion);
+      if (!await this.findEpisode(transaction, dramaId, episodeId, true)) {
+        throw new NotFoundException('Platform episode not found');
+      }
       const rows = await transaction<{ id: string }[]>`
         update episode_media_tracks set status = 'disabled', is_default = false
         where id = ${trackId} and episode_id = ${episodeId} and status = 'active'

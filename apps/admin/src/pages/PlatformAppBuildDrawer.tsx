@@ -505,7 +505,7 @@ export function PlatformAppBuildDrawer({ merchant, onClose, principal }: Props) 
           >
             <Input maxLength={200} placeholder="com.example.drama" />
           </Form.Item>
-          <Form.Item label="绑定 H5 域名" name="h5DomainId" rules={[{ required: true }]}>
+          <Form.Item label="App 服务域名" name="h5DomainId" rules={[{ required: true }]}>
             <Select
               options={eligibleDomains.map((domain) => ({
                 label: `${domain.host}${domain.isPrimary ? '（主域名）' : ''}`,
@@ -947,7 +947,7 @@ function BuildTargetCard({ available, busy, canManage, onCreate, title }: {
 }) {
   return (
     <Card size="small" style={{ width: 230 }} title={title}>
-      <Typography.Paragraph type="secondary">发布通道：internal_test</Typography.Paragraph>
+      <Typography.Paragraph type="secondary">发布通道：内部测试</Typography.Paragraph>
       <Button disabled={!available || !canManage} loading={busy} onClick={onCreate} type="primary">
         {available ? '创建构建任务' : '前置条件未满足'}
       </Button>

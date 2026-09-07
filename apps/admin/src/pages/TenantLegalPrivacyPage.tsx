@@ -36,6 +36,15 @@ const LEGAL_BASE = '/api/v1/tenant/legal/documents';
 const PRIVACY_BASE = '/api/v1/tenant/privacy/requests';
 const PAGE_SIZE = 20;
 const privacyStatusLabels: Record<string, string> = { submitted: '已提交', processing: '处理中', completed: '已完成', failed: '处理失败' };
+const retentionLabels: Record<string, string> = {
+  commerce_finance: '交易与财务记录', commission_finance: '佣金结算记录', security_audit: '安全审计记录',
+  accounting_and_tax: '会计与税务留存', contract_and_dispute: '合同履行与争议处理', security_and_fraud: '安全与反欺诈',
+};
+const processorLabels: Record<string, { name: string; boundary: string }> = {
+  payment_provider: { name: '支付服务商', boundary: '支付服务商持有的交易记录需按其政策单独处理；本系统不保存银行卡资料。' },
+  email_sms_provider: { name: '邮件与短信服务商', boundary: '发送记录可能由服务商按其政策保留，请核实是否需要另行申请删除。' },
+  push_provider: { name: '推送服务商', boundary: 'APNs/FCM 的送达记录不在本地擦除范围内，需按服务商政策处理。' },
+};
 
 interface LegalDocumentRecord {
   bodyMarkdown: string;
@@ -382,7 +391,7 @@ export function TenantLegalPrivacyPage() {
         <Form name="tenantlegalprivacypage-2" form={publishForm} layout="vertical" onFinish={(values) => void publishDocument(values as { effectiveAt: string })}><Form.Item label="生效时间" name="effectiveAt" {...dateTimeFormProps} rules={[{ required: true, message: '请选择生效时间' }]}><DatePicker showTime format="YYYY-MM-DD HH:mm" style={{ width: '100%' }} /></Form.Item></Form>
       </Modal>
       <Drawer destroyOnHidden onClose={() => setPrivacyDetail(undefined)} open={Boolean(privacyDetail)} title="隐私请求详情" width={640}>
-        {privacyDetail ? <Space direction="vertical" size="large" style={{ width: '100%' }}><Descriptions bordered column={1} size="small"><Descriptions.Item label="请求 ID">{privacyDetail.id}</Descriptions.Item><Descriptions.Item label="账户主体">{privacyDetail.accountSubjectId}</Descriptions.Item><Descriptions.Item label="状态">{privacyStatusLabels[privacyDetail.status] ?? privacyDetail.status}</Descriptions.Item><Descriptions.Item label="本地擦除已执行">{privacyDetail.dataErasurePerformed ? '是' : '否'}</Descriptions.Item><Descriptions.Item label="提交时间">{new Date(privacyDetail.submittedAt).toLocaleString('zh-CN')}</Descriptions.Item><Descriptions.Item label="完成时间">{privacyDetail.completedAt ? new Date(privacyDetail.completedAt).toLocaleString('zh-CN') : '—'}</Descriptions.Item></Descriptions><Typography.Title level={5}>法定保留项</Typography.Title>{privacyDetail.retainedItems.length ? privacyDetail.retainedItems.map((item) => <Alert key={`${item.category}:${item.reason}`} description={`${item.reason} · ${item.recordCount} 条 · 保留至 ${new Date(item.retainedUntil).toLocaleString('zh-CN')}`} message={item.category} type="info" />) : <Empty description="尚无实际保留项记录" image={Empty.PRESENTED_IMAGE_SIMPLE} />}<Typography.Title level={5}>第三方处理边界</Typography.Title>{privacyDetail.subprocessorStatus.length ? privacyDetail.subprocessorStatus.map((item) => <Alert key={`${item.provider}:${item.boundary}`} description={item.boundary} message={`${item.provider} · 需运营跟进`} type="warning" />) : <Typography.Text type="secondary">未记录需要第三方跟进的边界。</Typography.Text>}</Space> : null}
+        {privacyDetail ? <Space direction="vertical" size="large" style={{ width: '100%' }}><Descriptions bordered column={1} size="small"><Descriptions.Item label="请求 ID">{privacyDetail.id}</Descriptions.Item><Descriptions.Item label="账户主体">{privacyDetail.accountSubjectId}</Descriptions.Item><Descriptions.Item label="状态">{privacyStatusLabels[privacyDetail.status] ?? privacyDetail.status}</Descriptions.Item><Descriptions.Item label="本地擦除已执行">{privacyDetail.dataErasurePerformed ? '是' : '否'}</Descriptions.Item><Descriptions.Item label="提交时间">{new Date(privacyDetail.submittedAt).toLocaleString('zh-CN')}</Descriptions.Item><Descriptions.Item label="完成时间">{privacyDetail.completedAt ? new Date(privacyDetail.completedAt).toLocaleString('zh-CN') : '—'}</Descriptions.Item></Descriptions><Typography.Title level={5}>法定保留项</Typography.Title>{privacyDetail.retainedItems.length ? privacyDetail.retainedItems.map((item) => <Alert key={`${item.category}:${item.reason}`} description={`${retentionLabels[item.reason] ?? '其他保留原因'} · ${item.recordCount} 条 · 保留至 ${new Date(item.retainedUntil).toLocaleString('zh-CN')}`} message={retentionLabels[item.category] ?? '其他保留记录'} type="info" />) : <Empty description="尚无实际保留项记录" image={Empty.PRESENTED_IMAGE_SIMPLE} />}<Typography.Title level={5}>第三方处理边界</Typography.Title>{privacyDetail.subprocessorStatus.length ? privacyDetail.subprocessorStatus.map((item) => <Alert key={`${item.provider}:${item.boundary}`} description={processorLabels[item.provider]?.boundary ?? '请向相关服务方核实其数据保留与删除政策。'} message={`${processorLabels[item.provider]?.name ?? '第三方服务'} · 需运营跟进`} type="warning" />) : <Typography.Text type="secondary">未记录需要第三方跟进的边界。</Typography.Text>}</Space> : null}
       </Drawer>
     </>
   );
