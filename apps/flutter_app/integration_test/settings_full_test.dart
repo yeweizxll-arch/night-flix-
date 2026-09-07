@@ -13,7 +13,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 const base = 'http://127.0.0.1:4326';
 const initialPassword = 'Local-password-123';
-final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+late final IntegrationTestWidgetsFlutterBinding binding;
 
 Future<Map<String, dynamic>> qa(
   String path, [
@@ -93,6 +93,7 @@ Future<AppController> open(
 }
 
 void main() {
+  binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
   setUpAll(() async {
     // Only this test API's local preference keys are cleared; native keystore is real.
     final preferences = await SharedPreferences.getInstance();
