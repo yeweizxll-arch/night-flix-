@@ -79,13 +79,19 @@ Future<void> tap(WidgetTester tester, String label) async {
 
 Future<void> fill(WidgetTester tester, Finder field, String value) async {
   await tester.ensureVisible(field);
-  await tester.showKeyboard(field);
-  // Wait for Android's previous input connection to close before injecting
-  // text; otherwise a stale IME update can replace the new test value.
+  // Submit temporarily disables the field and drops its native input
+  // connection. showKeyboard caches focusedEditable, so calling it twice on
+  // the same field may not request focus again. Tap as a user would to reopen.
+  await tester.tap(field);
   await tester.pump(const Duration(milliseconds: 500));
   await ready(tester);
+  final editable = tester.widget<EditableText>(
+    find.descendant(of: field, matching: find.byType(EditableText)),
+  );
+  expect(editable.focusNode.hasFocus, isTrue);
   await tester.enterText(field, value);
   await tester.pump(const Duration(milliseconds: 200));
+  expect(editable.controller.text, value);
 }
 
 Future<void> setting(WidgetTester tester, String label) async {
