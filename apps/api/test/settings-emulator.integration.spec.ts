@@ -53,6 +53,11 @@ describe.skipIf(!enabled)('local Android settings with real API and PostgreSQL',
       await owner`insert into customer_accounts (id, tenant_id, username, email, email_verified_at, password_hash)
         values (${uuidV7()}, ${tenant}, ${name}, ${`${name}@example.test`}, statement_timestamp(), ${await hashPassword('Local-password-123')})`;
     }
+    await owner`insert into customer_feedback (id, tenant_id, account_id, locale, body, created_at)
+      select gen_random_uuid(), ${tenant}, account.id, 'en-US', 'Fixture feedback ' || lpad(n::text, 3, '0'),
+        statement_timestamp() - n * interval '1 second'
+      from customer_accounts as account cross join generate_series(1, 101) as n
+      where account.tenant_id = ${tenant} and account.username = 'export'`;
     for (const locale of ['en-US', 'zh-CN']) {
       for (const type of ['privacy', 'terms']) {
         const id = uuidV7();

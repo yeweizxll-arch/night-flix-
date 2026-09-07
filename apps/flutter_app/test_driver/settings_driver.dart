@@ -41,7 +41,7 @@ Future<void> main() async {
             .split('\n')
             .any(
               (line) =>
-                  line.contains('mResumedActivity') && line.contains(expected),
+              line.contains('ResumedActivity') && line.contains(expected),
             );
         if (visible) break;
         await Future<void>.delayed(const Duration(milliseconds: 250));

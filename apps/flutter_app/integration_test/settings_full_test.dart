@@ -10,6 +10,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:night_flix/src/app.dart';
+import 'package:night_flix/src/account_sheet.dart';
+import 'package:night_flix/src/app_strings.dart';
 import 'package:night_flix/src/drama_repository.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -191,6 +193,75 @@ void main() {
   );
 
   testWidgets(
+    'every configured language can be selected, including Chinese and RTL',
+    (tester) async {
+      final controller = await open(tester);
+      for (final locale in controller.config.supportedLocales) {
+        final title = translateAppString(
+          localeFromTag(controller.locale),
+          'language',
+          'Language',
+        );
+        await setting(tester, title);
+        await tap(tester, localeNames[locale]!);
+        expect(controller.locale, locale);
+        if (['ar-SA', 'hi-IN', 'zh-TW'].contains(locale)) {
+          await capture(tester, 'language-${locale.toLowerCase()}');
+        }
+      }
+    },
+  );
+
+  testWidgets(
+    'guest registration validates OTP and real legal consent then resumes settings',
+    (tester) async {
+      final controller = await open(tester);
+      await setting(tester, 'Change password');
+      await tap(tester, 'Create account');
+      final fields = find.descendant(
+        of: find.byType(AccountSheet),
+        matching: find.byType(TextField),
+      );
+      await tester.enterText(fields.at(0), 'signup@example.test');
+      await tester.enterText(fields.at(1), 'signup');
+      await tester.enterText(fields.at(2), initialPassword);
+      await qa('fail-next', {'path': '/api/v1/customer/auth/otp/challenges'});
+      await tap(tester, 'Send code');
+      expect(find.text('Send code'), findsOneWidget);
+      await tap(tester, 'Send code');
+      final code =
+          (await qa(
+                'code?email=signup%40example.test&purpose=verify_email',
+              ))['code']
+              as String;
+      await tester.enterText(
+        fields.at(3),
+        code == '000000' ? '111111' : '000000',
+      );
+      await tap(tester, 'QA Privacy Policy');
+      expect(
+        find.textContaining('Local test document: privacy.'),
+        findsOneWidget,
+      );
+      await tap(tester, 'Close');
+      await tester.ensureVisible(find.byType(CheckboxListTile));
+      await tester.tap(find.byType(CheckboxListTile));
+      await ready(tester);
+      await tap(tester, 'Create account');
+      expect(controller.session, isNull);
+      await tester.enterText(fields.at(3), code);
+      await tap(tester, 'Create account');
+      expect(controller.session?.email, 'signup@example.test');
+      expect(find.text('Current password'), findsOneWidget);
+      expect(
+        (await qa('state'))['accounts'],
+        contains(equals({'username': 'signup', 'status': 'active'})),
+      );
+      await capture(tester, 'registration-return');
+    },
+  );
+
+  testWidgets(
     'notifications real GET/PUT, failure rollback, retry and reload',
     (tester) async {
       final controller = await open(tester, account: 'notifications');
@@ -356,6 +427,11 @@ void main() {
         await tap(tester, section);
         await tap(tester, 'Export personal data');
         expect(find.text('Save / share current page'), findsOneWidget);
+        if (section == 'Feedback') {
+          await tap(tester, 'Read next page');
+          expect(find.textContaining('Fixture feedback 101'), findsOneWidget);
+          expect(find.text('Read next page'), findsNothing);
+        }
       }
       await back(tester);
       await qa('fail-next', {'path': '/api/v1/customer/legal'});
