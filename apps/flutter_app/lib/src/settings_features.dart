@@ -236,19 +236,22 @@ Future<bool> _confirmSetting(
 ) async =>
     await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(title),
-        content: Text(message),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text(context.isChinese ? '取消' : 'Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: Text(context.isChinese ? '确认' : 'Confirm'),
-          ),
-        ],
+      builder: (context) => Theme(
+        data: _lightPageTheme(context),
+        child: AlertDialog(
+          title: Text(title),
+          content: Text(message),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text(context.isChinese ? '取消' : 'Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: Text(context.isChinese ? '确认' : 'Confirm'),
+            ),
+          ],
+        ),
       ),
     ) ==
     true;
@@ -503,10 +506,18 @@ class _DevicesSettingsPageState extends State<_DevicesSettingsPage> {
 
   Future<void> _revoke(Map<String, dynamic> device) async {
     if (!active || busy) return;
+    final current = device['current'] == true;
+    final label = device['label'] ?? device['platform'] ?? 'Device';
     if (!await _confirmSetting(
       context,
-      context.isChinese ? '退出此设备？' : 'Sign out this device?',
-      context.isChinese ? '此设备需要重新登录。退出当前设备会同时退出本应用。' : 'This device will need to sign in again. Revoking this device also signs you out here.',
+      context.isChinese ? '退出“$label”？' : 'Sign out “$label”?',
+      current
+          ? (context.isChinese
+                ? '这是当前设备。确认后本应用也会退出登录。'
+                : 'This is your current device. Confirming also signs you out here.')
+          : (context.isChinese
+                ? '该设备需要重新登录，本机仍保持登录。'
+                : 'That device will need to sign in again. You will stay signed in on this device.'),
     )) {
       return;
     }

@@ -21,8 +21,10 @@ Future<bool> showAccountSheet(
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
-      builder: (_) => Theme(
-        data: _accountTheme(context),
+      // A password reset can remove the account-scoped caller while this route
+      // is still open. Only the sheet's own context remains valid then.
+      builder: (sheetContext) => Theme(
+        data: _accountTheme(sheetContext),
         child: AccountSheet(
           controller: controller,
           reason: reason,

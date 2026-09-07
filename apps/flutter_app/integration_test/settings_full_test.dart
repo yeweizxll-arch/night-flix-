@@ -44,7 +44,12 @@ Future<void> ready(WidgetTester tester) async {
 }
 
 Future<void> tap(WidgetTester tester, String label) async {
-  final target = find.text(label).last;
+  // Scaffold traversal can place the AppBar after the body. A page title is
+  // not its identically named submit button.
+  final submit = find.widgetWithText(FilledButton, label);
+  final target = submit.evaluate().isNotEmpty
+      ? submit.last
+      : find.text(label).last;
   await tester.ensureVisible(target);
   await ready(tester);
   await tester.tap(target);

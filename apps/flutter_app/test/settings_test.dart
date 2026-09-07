@@ -116,12 +116,14 @@ Future<AppController> openSettings(
   SettingsFixture repo, {
   bool signedIn = true,
   double textScale = 1,
+  bool darkRoot = false,
 }) async {
   final controller = AppController(repo);
   await controller.initialize();
   if (signedIn) await controller.login(user.email, 'fixture-password');
   await tester.pumpWidget(
     MaterialApp(
+      theme: darkRoot ? ThemeData.dark() : ThemeData.light(),
       builder: (context, child) => MediaQuery(
         data: MediaQuery.of(context)
             .copyWith(textScaler: TextScaler.linear(textScale)),
@@ -340,6 +342,49 @@ void main() {
     expect(find.text('Welcome back'), findsOneWidget);
     expect(find.text('Other phone'), findsNothing);
   });
+
+  testWidgets(
+    'device confirmation stays light under the real dark app root and identifies the device',
+    (tester) async {
+      await openSettings(tester, SettingsFixture(), darkRoot: true);
+      await tapSetting(tester, 'Signed-in devices');
+      await tester.tap(find.text('Sign out').first);
+      await tester.pumpAndSettle();
+      expect(
+        Theme.of(tester.element(find.byType(AlertDialog))).brightness,
+        Brightness.light,
+      );
+      expect(find.textContaining('Other phone'), findsWidgets);
+      expect(
+        find.textContaining('You will stay signed in on this device.'),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
+    'password reset sheet survives its account-scoped caller being removed',
+    (tester) async {
+      final controller = await openSettings(
+        tester,
+        SettingsFixture(),
+        darkRoot: true,
+      );
+      await tapSetting(tester, 'Change password');
+      await tester.tap(find.text('Forgot password / Set a password by email'));
+      await tester.pumpAndSettle();
+      await controller.logout();
+      await tester.pumpAndSettle();
+      // Real Android changes keyboard insets as the reset flow signs in again.
+      tester.view.viewInsets = const FakeViewPadding(bottom: 280);
+      addTearDown(tester.view.resetViewInsets);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.text('Send code'), findsOneWidget);
+      await tester.tap(find.byTooltip('Close'));
+      await tester.pumpAndSettle();
+    },
+  );
 
   testWidgets(
     'device revoke supports cancel, other-device removal, and current-device signout',
