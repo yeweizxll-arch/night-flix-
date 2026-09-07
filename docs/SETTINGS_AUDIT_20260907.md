@@ -44,7 +44,20 @@ flutter test integration_test/settings_smoke_test.dart -d emulator-5554 --no-pub
 
 `test/settings_test.dart` 覆盖持久化、接口协议、错误密码、通知读写/隔离、游客登录门槛、设备撤销、密码校验/防重复、导出分页/换号、注销确认、缓存保护、语言/帮助/退出、广告隐私失败以及双倍字号。`test/settings_visual_test.dart` 记录 390×844 的实际 Flutter 页面，字体来自当前 Flutter SDK；不将 widget fixture 冒充线上联调。
 
-API 验证使用本地 PGlite 测试数据库，覆盖真实 SQL/认证/通知/隐私流程，不访问测试服务器或真实账号。构建前先提交候选代码，完成后另补充实际测试结果。
+API 验证使用本地 PGlite 测试数据库，覆盖真实 SQL/认证/通知/隐私流程；另启动仅监听 `127.0.0.1:55439` 的临时 PostgreSQL 18.4，运行现有租户隔离/排序回归。没有访问测试服务器或真实账号。
+
+## 实际结果
+
+- 源码候选提交：`1b18d285063253685a7ecda77c0cadf219ea31e0`；测试/构建时工作树干净，后续仅补充本文结果。
+- `flutter analyze --no-pub`：通过，无问题。
+- Flutter 全量：61 项通过，包含设置专项 14 项及设置页视觉回归。
+- Android 15 模拟器：`integration_test/settings_smoke_test.dart` 3 项通过。包括原生播放器暂停/恢复/第 10 集/倍速/选集/自动连播开关、真实 ML Kit OCR，以及中文设置页、原生 version/build/package、真实通知授权状态和打开本应用系统设置。接口数据使用隔离 fixture，不冒充服务器端到端测试。
+- API 类型检查：`pnpm --filter @drama/api typecheck` 通过。
+- API 全量：`pnpm exec vitest run --maxWorkers=2`，129 个文件通过、845 项通过。另 6 项真实 PostgreSQL 回归因全量运行未配置连接而跳过，随后使用受控本地连接独立补跑，6 项全部通过。去重合计 130 个测试文件、851 项通过，1 项可选外部 NativeAppBuilder 工具链测试跳过，不计入通过。
+- 首次高并发全量运行发生数据库初始化超时，未计为通过；降低并发后从头重跑，全部数据库初始化及相关用例通过。
+- 普通 Android debug 候选包（不是 integration_test 驱动包）构建通过：`API_BASE_URL=https://47.110.245.29`，版本 `0.1.0 (10)`。工作区产物 `outputs/nightflix-settings-1b18d28-local-candidate.apk`，SHA-256 `652cc3cb370909e77ee415dad8ac5263c9aa9f6170a7b094b0b6784d0d7cd731`。只作为本地候选留存，服务端尚未部署对应修复，不作为完整升级分发。
+- 实际 Flutter 设置页前后渲染留存在工作区 `outputs/nightflix-settings-audit/before.png`、`after.png`；仓库保留 `apps/flutter_app/test/goldens/settings.png`。原生测试截图写入模拟器临时缓存，测试卸载后不再保留，未当作可交付图片。
+- Android 构建存在上游 `firebase_core` 仍使用旧 Kotlin Gradle Plugin 的未来兼容警告；当前工具链构建通过。本轮未擅自升级依赖，后续升级 Flutter 时需单独回归。
 
 ## 尚未验收 / 不包含
 
