@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -18,6 +19,7 @@ import 'player_controls.dart';
 import 'drama_scanner.dart';
 
 part 'account_features.dart';
+part 'settings_features.dart';
 
 const _ink = Color(0xff080911);
 const _purple = Color(0xff7558ff);
@@ -1216,7 +1218,7 @@ class _DramaPageState extends State<DramaPage>
                 await dubbingAudio?.setPlaybackSpeed(value);
                 if (mounted) setState(() {});
               },
-              itemBuilder: (_) => const [1.0, 1.25, 1.5, 2.0]
+              itemBuilder: (_) => playbackSpeeds
                   .map(
                     (value) =>
                         PopupMenuItem(value: value, child: Text('${value}x')),
@@ -2796,15 +2798,7 @@ class ProfileScreen extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.only(top: 18),
             child: OutlinedButton(
-              onPressed: () async {
-                try {
-                  await controller.logout();
-                } catch (cause) {
-                  if (context.mounted) {
-                    _message(context, friendlyError(context, cause));
-                  }
-                }
-              },
+              onPressed: () => _confirmSignOut(context, controller),
               child: Text(context.tr('signOut', 'Sign out')),
             ),
           ),
@@ -3237,10 +3231,13 @@ Future<bool> _showLogin(
   String? reason,
 }) => showAccountSheet(context, controller, reason: reason);
 
-void _languageSheet(BuildContext context, AppController controller) =>
-    showModalBottomSheet<void>(
-      context: context,
-      builder: (context) => ListView(
+void _languageSheet(BuildContext context, AppController controller) {
+  var busy = false;
+  showModalBottomSheet<void>(
+    context: context,
+    useSafeArea: true,
+    builder: (context) => StatefulBuilder(
+      builder: (context, update) => ListView(
         shrinkWrap: true,
         padding: const EdgeInsets.all(20),
         children: [
@@ -3248,6 +3245,7 @@ void _languageSheet(BuildContext context, AppController controller) =>
             context.tr('language', 'Language'),
             style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
           ),
+          if (busy) const LinearProgressIndicator(),
           ...controller.config.supportedLocales.map(
             (locale) => ListTile(
               selected: locale == controller.locale,
@@ -3255,23 +3253,28 @@ void _languageSheet(BuildContext context, AppController controller) =>
               trailing: locale == controller.locale
                   ? const Icon(Icons.check, color: _purple)
                   : null,
-              onTap: () async {
-                try {
-                  await controller.setLocale(locale);
-                  if (context.mounted) Navigator.pop(context);
-                } catch (error) {
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text(friendlyError(context, error))),
-                    );
-                  }
-                }
-              },
+              onTap: busy
+                  ? null
+                  : () async {
+                      update(() => busy = true);
+                      try {
+                        await controller.setLocale(locale);
+                        if (context.mounted) Navigator.pop(context);
+                      } catch (error) {
+                        if (context.mounted) {
+                          _message(context, friendlyError(context, error));
+                        }
+                      } finally {
+                        if (context.mounted) update(() => busy = false);
+                      }
+                    },
             ),
           ),
         ],
       ),
-    );
+    ),
+  );
+}
 
 Future<void> _openStoreForController(
   BuildContext context,

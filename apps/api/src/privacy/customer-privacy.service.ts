@@ -22,7 +22,6 @@ import {
   object,
   rejectUnknown,
   requireUuid,
-  text,
 } from './legal-document.service';
 import type {
   CustomerErasureRequestInput,
@@ -379,7 +378,7 @@ function parseExportInput(value: CustomerPrivacyExportInput) {
     throw new BadRequestException('section is invalid');
   }
   return {
-    currentPassword: text(record.currentPassword, 'currentPassword', 8, 256),
+    currentPassword: currentPassword(record.currentPassword),
     cursor: record.cursor,
     pageSize: record.pageSize === undefined
       ? 50 : integer(record.pageSize, 'pageSize', 1, 100),
@@ -395,8 +394,17 @@ function parseErasureInput(value: CustomerErasureRequestInput) {
   }
   return {
     acknowledgeRetention: true,
-    currentPassword: text(record.currentPassword, 'currentPassword', 8, 256),
+    currentPassword: currentPassword(record.currentPassword),
   };
+}
+
+function currentPassword(value: unknown): string {
+  // Passwords are opaque: match login/change-password validation without trimming.
+  if (typeof value !== 'string' || Buffer.byteLength(value, 'utf8') < 8
+    || Buffer.byteLength(value, 'utf8') > 4096) {
+    throw new BadRequestException('currentPassword must contain 8 to 4096 UTF-8 bytes');
+  }
+  return value;
 }
 
 async function lockVerifiedCredential(

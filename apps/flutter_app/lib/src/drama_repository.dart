@@ -10,6 +10,8 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'models.dart';
 import 'native_identity.dart';
 
+const playbackSpeeds = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
+
 class DramaRepository {
   DramaRepository({
     required String apiBaseUrl,
@@ -28,6 +30,7 @@ class DramaRepository {
   String get _sessionKey => 'nightflix:$apiBaseUrl:session:v1';
   String get _deviceKey => 'nightflix:$apiBaseUrl:device:v1';
   final Set<String> _demoUnlockedEpisodes = {};
+  final Map<String, Map<String, dynamic>> _demoNotificationPreferences = {};
   bool get demoMode => apiBaseUrl.isEmpty;
 
   Future<AppRuntimeConfig> bootstrap() async => demoMode
@@ -508,8 +511,12 @@ class DramaRepository {
       throw const ApiException('Sign in to change notifications', 401);
     }
     if (demoMode) {
-      return update ??
-          {'marketingInAppEnabled': true, 'marketingPushEnabled': true};
+      final preferences = _demoNotificationPreferences.putIfAbsent(
+        session!.accountId.isEmpty ? session!.email : session!.accountId,
+        () => {'marketingInAppEnabled': true, 'marketingPushEnabled': true},
+      );
+      if (update != null) preferences.addAll(update);
+      return Map.of(preferences);
     }
     return _request(
       Uri.parse('$apiBaseUrl/api/v1/customer/notifications/preferences'),
@@ -812,12 +819,94 @@ class DramaRepository {
     String password,
     String verificationToken,
   ) async {
+    final epoch = _authEpoch;
+    final previous = session;
     await _post('/api/v1/customer/auth/password/reset', {
       'channel': 'email',
       'destination': email.trim(),
       'newPassword': password,
       'verificationToken': verificationToken,
     });
+    if (previous != null &&
+        previous.email.toLowerCase() == email.trim().toLowerCase() &&
+        epoch == _authEpoch) {
+      ++_authEpoch;
+      await _setSession(null);
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> accountDevices() async {
+    final result = await _accountSettingRequest('account/devices');
+    return (result['items'] as List? ?? [])
+        .map((item) => Map<String, dynamic>.from(item as Map))
+        .toList();
+  }
+
+  Future<void> revokeDevice(String id, String requestKey) async {
+    final result = await _accountSettingRequest(
+      'account/devices/${Uri.encodeComponent(id)}/revoke',
+      body: {},
+      requestKey: requestKey,
+    );
+    if (result['requiresReauthentication'] == true) {
+      ++_authEpoch;
+      await _setSession(null);
+    }
+  }
+
+  Future<void> changePassword(String current, String next) async {
+    await _accountSettingRequest(
+      'account/password/change',
+      body: {'currentPassword': current, 'newPassword': next},
+    );
+  }
+
+  Future<Map<String, dynamic>> exportAccountData({
+    required String password,
+    required String section,
+    String? cursor,
+  }) => _accountSettingRequest(
+    'privacy/export',
+    body: {
+      'currentPassword': password,
+      'section': section,
+      'pageSize': 100,
+      'cursor': ?cursor,
+    },
+  );
+
+  Future<void> requestAccountErasure(String password, String requestKey) async {
+    await _accountSettingRequest(
+      'privacy/erasure-requests',
+      body: {'currentPassword': password, 'acknowledgeRetention': true},
+      requestKey: requestKey,
+    );
+    ++_authEpoch;
+    await _setSession(null);
+  }
+
+  Future<Map<String, dynamic>> _accountSettingRequest(
+    String path, {
+    Map<String, dynamic>? body,
+    String? requestKey,
+  }) {
+    if (session == null) throw const ApiException('Sign in required', 401);
+    // Account actions need the real service: never simulate password changes or erasure.
+    if (demoMode) {
+      throw const ApiException(
+        'Connect to a server to manage your account',
+        503,
+      );
+    }
+    return _request(
+      Uri.parse('$apiBaseUrl/api/v1/customer/$path'),
+      method: body == null ? 'GET' : 'POST',
+      payload: body,
+      accessToken: session!.accessToken,
+      extraHeaders: requestKey == null ? null : {'Idempotency-Key': requestKey},
+      // For these forms a 401 can mean an incorrect current password, not an expired token.
+      retryAuthentication: body?['currentPassword'] == null,
+    );
   }
 
   Future<void> logout() async {
@@ -992,7 +1081,8 @@ class AppController extends ChangeNotifier {
   final Map<String, PlaybackProgress> _pendingProgress = {};
   bool _savingProgress = false;
   bool _disposed = false;
-  int _localeRevision = 0;
+  Future<void> _settingsWrite = Future.value();
+  Future<void> _localeWrite = Future.value();
   final Set<String> _interactionCommands = {};
 
   Future<void> _interaction(
@@ -1013,22 +1103,28 @@ class AppController extends ChangeNotifier {
     bool? autoAdvance,
     bool? subtitlesEnabled,
     double? speed,
-  }) async {
-    if (speed != null && ![0.5, 0.75, 1.0, 1.25, 1.5, 2.0].contains(speed)) {
+  }) {
+    if (speed != null && !playbackSpeeds.contains(speed)) {
       throw ArgumentError.value(speed, 'speed');
     }
-    final prefs = await SharedPreferences.getInstance();
-    final key = '${repository.apiBaseUrl}:playback-settings';
-    final next = {
-      'autoAdvance': autoAdvance ?? this.autoAdvance,
-      'subtitlesEnabled': subtitlesEnabled ?? this.subtitlesEnabled,
-      'speed': speed ?? playbackSpeed,
-    };
-    await prefs.setString(key, jsonEncode(next));
-    this.autoAdvance = next['autoAdvance'] as bool;
-    this.subtitlesEnabled = next['subtitlesEnabled'] as bool;
-    playbackSpeed = next['speed'] as double;
-    notifyListeners();
+    final write = _settingsWrite.catchError((Object _) {}).then((_) async {
+      final prefs = await SharedPreferences.getInstance();
+      final key = '${repository.apiBaseUrl}:playback-settings';
+      final next = {
+        'autoAdvance': autoAdvance ?? this.autoAdvance,
+        'subtitlesEnabled': subtitlesEnabled ?? this.subtitlesEnabled,
+        'speed': speed ?? playbackSpeed,
+      };
+      if (!await prefs.setString(key, jsonEncode(next))) {
+        throw StateError('Could not save playback settings');
+      }
+      this.autoAdvance = next['autoAdvance'] as bool;
+      this.subtitlesEnabled = next['subtitlesEnabled'] as bool;
+      playbackSpeed = next['speed'] as double;
+      notifyListeners();
+    });
+    _settingsWrite = write;
+    return write;
   }
 
   @override
@@ -1220,7 +1316,7 @@ class AppController extends ChangeNotifier {
         autoAdvance = saved['autoAdvance'] != false;
         subtitlesEnabled = saved['subtitlesEnabled'] != false;
         final storedSpeed = (saved['speed'] as num?)?.toDouble() ?? 1.0;
-        playbackSpeed = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0].contains(storedSpeed)
+        playbackSpeed = playbackSpeeds.contains(storedSpeed)
             ? storedSpeed
             : 1.0;
       } catch (_) {
@@ -1258,13 +1354,25 @@ class AppController extends ChangeNotifier {
 
   Future<void> setLocale(String value) async {
     if (!config.supportedLocales.contains(value)) return;
-    final revision = ++_localeRevision;
-    final loaded = await repository.discover(locale: value);
-    if (revision != _localeRevision) return;
-    locale = value;
-    dramas = loaded;
-    await (await SharedPreferences.getInstance()).setString(_localeKey, value);
-    notifyListeners();
+    final write = _localeWrite.catchError((Object _) {}).then((_) async {
+      final loaded = await repository.discover(locale: value);
+      if (!await (await SharedPreferences.getInstance()).setString(
+        _localeKey,
+        value,
+      )) {
+        throw StateError('Could not save language');
+      }
+      locale = value;
+      dramas = loaded;
+      notifyListeners();
+    });
+    _localeWrite = write;
+    await write;
+  }
+
+  void clearImageUrls() {
+    assetUrls.clear();
+    _assetExpiry.clear();
   }
 
   Future<void> search(String query) async {

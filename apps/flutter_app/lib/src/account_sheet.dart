@@ -11,6 +11,7 @@ Future<bool> showAccountSheet(
   BuildContext context,
   AppController controller, {
   String? reason,
+  bool resetPassword = false,
 }) async =>
     await showModalBottomSheet<bool>(
       context: context,
@@ -22,7 +23,11 @@ Future<bool> showAccountSheet(
       ),
       builder: (_) => Theme(
         data: _accountTheme(context),
-        child: AccountSheet(controller: controller, reason: reason),
+        child: AccountSheet(
+          controller: controller,
+          reason: reason,
+          resetPassword: resetPassword,
+        ),
       ),
     ) ==
     true;
@@ -51,9 +56,15 @@ ThemeData _accountTheme(BuildContext context) {
 }
 
 class AccountSheet extends StatefulWidget {
-  const AccountSheet({super.key, required this.controller, this.reason});
+  const AccountSheet({
+    super.key,
+    required this.controller,
+    this.reason,
+    this.resetPassword = false,
+  });
   final AppController controller;
   final String? reason;
+  final bool resetPassword;
   @override
   State<AccountSheet> createState() => _AccountSheetState();
 }
@@ -79,7 +90,11 @@ class _AccountSheetState extends State<AccountSheet> {
   @override
   void initState() {
     super.initState();
-    if (repository.demoMode) {
+    if (widget.resetPassword) {
+      mode = 'reset';
+      email.text = widget.controller.session?.email ?? '';
+    }
+    if (repository.demoMode && !widget.resetPassword) {
       email.text = 'demo@nightflix.test';
       password.text = 'Demo-only-password';
     }
@@ -270,13 +285,28 @@ class _AccountSheetState extends State<AccountSheet> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(
-            mode == 'login'
-                ? widget.reason ?? context.tr('welcomeBack', 'Welcome back')
-                : mode == 'register'
-                ? context.tr('createAccount', 'Create account')
-                : context.tr('resetPassword', 'Reset password'),
-            style: const TextStyle(fontSize: 23, fontWeight: FontWeight.w800),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  mode == 'login'
+                      ? widget.reason ??
+                            context.tr('welcomeBack', 'Welcome back')
+                      : mode == 'register'
+                      ? context.tr('createAccount', 'Create account')
+                      : context.tr('resetPassword', 'Reset password'),
+                  style: const TextStyle(
+                    fontSize: 23,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              IconButton(
+                tooltip: context.tr('close', 'Close'),
+                onPressed: () => Navigator.pop(context, false),
+                icon: const Icon(Icons.close),
+              ),
+            ],
           ),
           const SizedBox(height: 8),
           Text(

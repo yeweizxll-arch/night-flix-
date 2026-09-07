@@ -187,7 +187,11 @@ class TenantAds extends ChangeNotifier with WidgetsBindingObserver {
     _open = null;
     _busy(true);
     try {
-      await ConsentForm.showPrivacyOptionsForm((_) {});
+      FormError? formError;
+      await ConsentForm.showPrivacyOptionsForm((error) => formError = error);
+      if (formError != null) {
+        throw StateError('Could not open ad privacy choices');
+      }
       ready = !_disposed && await ConsentInformation.instance.canRequestAds();
     } finally {
       _busy(false);

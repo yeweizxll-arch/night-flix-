@@ -283,6 +283,25 @@ describe('customer legal consent and privacy erasure', () => {
     );
   });
 
+  it.each(['  password with edge spaces  ', 'a'.repeat(300), '汉字密码'])(
+    'preserves valid login password bytes for exports and erasure (%#)', async (password) => {
+      const accountId = uuidV7();
+      await database.query(`insert into customer_accounts (id, tenant_id, username, password_hash)
+        values ($1, $2, $3, $4)`, [accountId, tenantA, `password-${accountId}`, await hashPassword(password)]);
+      const principal = { accountId, tenantId: tenantA, deviceId: uuidV7(), sessionId: uuidV7(), username: `password-${accountId}` };
+      const result = await privacy.exportData(principal, { currentPassword: password, section: 'profile' }, { requestId: uuidV7() });
+      expect(result.items).toEqual([expect.objectContaining({ accountId })]);
+      if (password !== password.trim()) {
+        await expect(privacy.exportData(principal, { currentPassword: password.trim(), section: 'profile' }, { requestId: uuidV7() }))
+          .rejects.toBeInstanceOf(UnauthorizedException);
+      }
+      await expect(privacy.exportData(principal, { currentPassword: 'a'.repeat(4097), section: 'profile' }, { requestId: uuidV7() }))
+        .rejects.toBeInstanceOf(BadRequestException);
+      const resultErasure = await privacy.requestErasure(principal, { currentPassword: password, acknowledgeRetention: true }, metadata());
+      expect(resultErasure.status).toBe('submitted');
+    },
+  );
+
   it('queues one erasure, revokes access, irreversibly scrubs PII, and retains anonymous facts', async () => {
     const account = await database.query<{ id: string }>(`
       select id from customer_accounts where tenant_id = '${tenantA}'

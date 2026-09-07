@@ -9,6 +9,7 @@ import Vision
   private var pendingPushLink: String?
   private var pushReady = false
   private var recognitionChannel: FlutterMethodChannel?
+  private var settingsChannel: FlutterMethodChannel?
 
   func recordPushLink(_ payload: [AnyHashable: Any]) {
     guard let link = payload["deepLink"] as? String, link.count < 2048 else { return }
@@ -35,6 +36,27 @@ import Vision
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "NightFlixSettings") {
+      let channel = FlutterMethodChannel(name: "nightflix/settings", binaryMessenger: registrar.messenger())
+      settingsChannel = channel
+      channel.setMethodCallHandler { call, result in
+        switch call.method {
+        case "appInfo":
+          result(["version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "",
+                  "build": Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "",
+                  "package": Bundle.main.bundleIdentifier ?? ""])
+        case "notificationsAllowed":
+          UNUserNotificationCenter.current().getNotificationSettings { settings in
+            let allowed = [UNAuthorizationStatus.authorized, .provisional, .ephemeral].contains(settings.authorizationStatus)
+            DispatchQueue.main.async { result(allowed) }
+          }
+        case "openAppSettings":
+          guard let url = URL(string: UIApplication.openSettingsURLString) else { result(false); return }
+          UIApplication.shared.open(url, options: [:]) { opened in result(opened) }
+        default: result(FlutterMethodNotImplemented)
+        }
+      }
+    }
     if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "NightFlixTextRecognition") {
       let channel = FlutterMethodChannel(name: "nightflix/text-recognition", binaryMessenger: registrar.messenger())
       recognitionChannel = channel

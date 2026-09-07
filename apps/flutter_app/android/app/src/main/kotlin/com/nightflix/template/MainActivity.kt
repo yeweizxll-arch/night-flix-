@@ -4,6 +4,10 @@ import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import android.net.Uri
+import android.content.Intent
+import android.app.NotificationManager
+import android.provider.Settings
+import androidx.core.content.pm.PackageInfoCompat
 import java.io.File
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
@@ -15,6 +19,26 @@ import com.google.mlkit.vision.text.devanagari.DevanagariTextRecognizerOptions
 class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "nightflix/settings")
+            .setMethodCallHandler { call, result ->
+                try {
+                    when (call.method) {
+                        "appInfo" -> {
+                            val info = packageManager.getPackageInfo(packageName, 0)
+                            result.success(mapOf("version" to (info.versionName ?: ""),
+                                "build" to PackageInfoCompat.getLongVersionCode(info).toString(), "package" to packageName))
+                        }
+                        "notificationsAllowed" -> result.success(getSystemService(NotificationManager::class.java).areNotificationsEnabled())
+                        "openAppSettings" -> {
+                            startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+                            result.success(true)
+                        }
+                        else -> result.notImplemented()
+                    }
+                } catch (_: Exception) {
+                    result.error("SETTINGS_UNAVAILABLE", "Could not access device settings", null)
+                }
+            }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "nightflix/text-recognition")
             .setMethodCallHandler { call, result ->
                 if (call.method != "recognize") { result.notImplemented(); return@setMethodCallHandler }
