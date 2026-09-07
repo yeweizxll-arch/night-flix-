@@ -95,28 +95,27 @@ export function AuthProvider({ children }: PropsWithChildren) {
         if (!(error instanceof ApiError) || error.status !== 401) {
           throw error;
         }
+        let renewed: SessionResponse;
         try {
-          const renewed = await refreshSession();
-          return await requestJson<T>(path, preparedInit, renewed.accessToken);
+          renewed = await refreshSession();
         } catch (refreshError) {
           updateSession(undefined);
           throw refreshError;
         }
+        // A business error after renewal must not discard the valid login.
+        return requestJson<T>(path, preparedInit, renewed.accessToken);
       }
     },
     [refreshSession, updateSession],
   );
 
   const logout = useCallback(async () => {
-    try {
-      await requestJson<void>(
-        `${AUTH_API_BASE}/logout`,
-        { method: 'POST' },
-        session?.accessToken,
-      );
-    } finally {
-      updateSession(undefined);
-    }
+    await requestJson<void>(
+      `${AUTH_API_BASE}/logout`,
+      { method: 'POST' },
+      session?.accessToken,
+    );
+    updateSession(undefined);
   }, [session?.accessToken, updateSession]);
 
   const value = useMemo<AuthContextValue>(

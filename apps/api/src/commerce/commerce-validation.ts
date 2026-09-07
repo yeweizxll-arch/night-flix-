@@ -135,6 +135,15 @@ export function amountNumber(value: string | number | bigint): number {
   return amount;
 }
 
+/** Ledger changes may be negative; balances and prices must still use amountNumber. */
+export function signedAmountNumber(value: string | number | bigint): number {
+  const amount = Number(value);
+  if (!Number.isSafeInteger(amount)) {
+    throw new Error('Stored monetary amount is outside the supported range');
+  }
+  return amount;
+}
+
 export function isUniqueViolation(error: unknown): boolean {
   return Boolean(
     error

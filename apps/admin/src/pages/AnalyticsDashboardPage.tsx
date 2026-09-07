@@ -286,7 +286,7 @@ export function AnalyticsDashboardPage(props: {
         <div>
           <Typography.Title level={2}>经营概览</Typography.Title>
           <Typography.Text type="secondary">
-            仅展示真实订单、退款、客户、内容与财务汇总，不估算在线人数。
+            查看用户、内容、订单和收入的经营趋势。
           </Typography.Text>
         </div>
       </div>
@@ -305,7 +305,7 @@ export function AnalyticsDashboardPage(props: {
           </label>
           {props.scope === 'platform' ? (
             <label>
-              <Typography.Text type="secondary">IANA 时区</Typography.Text>
+              <Typography.Text type="secondary">统计时区</Typography.Text>
               <Select showSearch onChange={setTimeZone} options={timeZones.map((value) => ({ label: value, value }))}
                 style={{ display: 'block', minWidth: 210 }} value={timeZone} />
             </label>
@@ -406,7 +406,7 @@ function DailyTable({ daily }: { daily: AnalyticsOverview['daily'] }) {
         { dataIndex: 'newCustomers', title: '新客户', width: 90 },
         { dataIndex: 'paidOrders', title: '支付订单', width: 90 },
         { dataIndex: 'refunds', title: '退款数', width: 80 },
-        { dataIndex: 'amounts', title: '分币种 gross / refund / net', render: (amounts: AmountByCurrency[]) => amounts.length ? (
+        { dataIndex: 'amounts', title: '成交 / 退款 / 净收入（按币种）', render: (amounts: AmountByCurrency[]) => amounts.length ? (
           <Space direction="vertical" size={2}>{amounts.map((amount) => (
             <Typography.Text key={amount.currency}>{amount.currency}：{minorText(amount.grossMinor, amount.currency)} / {minorText(amount.refundMinor, amount.currency)} / {minorText(amount.netMinor, amount.currency)}</Typography.Text>
           ))}</Space>

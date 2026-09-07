@@ -18,6 +18,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { ApiError } from '../api/http';
 import { useAuth } from '../auth/AuthProvider';
+import { permissionActions, permissionName, roleName } from './permission-ui';
 
 interface PermissionDirectoryItem {
   action: string;
@@ -62,21 +63,12 @@ const moduleLabels: Record<string, string> = {
   platform: '平台管理',
   storage: '对象存储',
   tenant: '代理商管理',
-};
-
-const actionLabels: Record<string, string> = {
-  approve: '通过',
-  confirm_transfer: '确认转账',
-  create: '创建',
-  export: '导出',
-  manage: '管理',
-  payout_account_read: '查看收款账户',
-  read: '查看',
-  reject: '驳回',
-  review: '审核',
-  status: '状态管理',
-  submit: '提交',
-  update: '修改',
+  legal: '法律与隐私',
+  communication: '邮件与短信',
+  analytics: '经营统计',
+  app_build: '应用构建',
+  payment: '支付配置',
+  interaction: '社区治理',
 };
 
 export function RoleManagementPage({
@@ -222,10 +214,9 @@ export function RoleManagementPage({
           render: (name: string, role) => (
             <Space direction="vertical" size={0}>
               <Space size={6}>
-                <Typography.Text strong>{name}</Typography.Text>
+                <Typography.Text strong>{roleName(name)}</Typography.Text>
                 {role.isSystem ? <Tag>系统</Tag> : <Tag color="blue">自定义</Tag>}
               </Space>
-              <Typography.Text type="secondary">版本 {role.version}</Typography.Text>
             </Space>
           ),
         },
@@ -244,7 +235,7 @@ export function RoleManagementPage({
             rolePermissions.length ? (
               <Space size={[4, 4]} wrap>
                 {rolePermissions.slice(0, 4).map((permission) => (
-                  <Tag key={permission.code}>{permission.code}</Tag>
+                  <Tag key={permission.code}>{permissionName(permission.code)}</Tag>
                 ))}
                 {rolePermissions.length > 4 ? <Tag>+{rolePermissions.length - 4}</Tag> : null}
               </Space>
@@ -283,8 +274,8 @@ export function RoleManagementPage({
       columns={[
         {
           dataIndex: 'code',
-          title: '权限代码',
-          render: (code: string) => <Typography.Text code>{code}</Typography.Text>,
+          title: '权限名称',
+          render: (code: string) => permissionName(code),
         },
         {
           dataIndex: 'module',
@@ -294,12 +285,12 @@ export function RoleManagementPage({
         {
           dataIndex: 'action',
           title: '操作',
-          render: (action: string) => actionLabels[action] ?? action,
+          render: (action: string) => permissionActions[action] ?? action,
         },
         {
           key: 'dataScope',
           title: '数据范围',
-          render: () => <Tag color="blue">all / 全部</Tag>,
+          render: () => <Tag color="blue">当前工作空间</Tag>,
         },
       ]}
       dataSource={permissions}
@@ -361,7 +352,7 @@ export function RoleManagementPage({
         width={760}
       >
         <Form<CreateRoleFormValues>
-          form={createForm}
+          name="rolemanagementpage-1" form={createForm}
           initialValues={{ permissionCodes: [] }}
           layout="vertical"
           onFinish={(values) => void createRole(values)}
@@ -398,7 +389,7 @@ export function RoleManagementPage({
         title="编辑角色"
       >
         <Form<EditRoleFormValues>
-          form={editForm}
+          name="rolemanagementpage-2" form={editForm}
           layout="vertical"
           onFinish={(values) => void updateRole(values)}
           requiredMark={false}
@@ -428,7 +419,7 @@ export function RoleManagementPage({
         footer={canManage && !permissionTarget?.isSystem ? undefined : (
           <Button onClick={() => setPermissionTarget(undefined)}>关闭</Button>
         )}
-        okText="原子替换权限"
+        okText="保存权限"
         confirmLoading={submitting === `permissions:${permissionTarget?.id}`}
         onCancel={() => {
           if (!submitting) {
@@ -449,7 +440,7 @@ export function RoleManagementPage({
           />
         ) : null}
         <Form<PermissionFormValues>
-          disabled={!canManage || permissionTarget?.isSystem}
+          name="rolemanagementpage-3" disabled={!canManage || permissionTarget?.isSystem}
           form={permissionForm}
           layout="vertical"
           onFinish={(values) => void replacePermissions(values)}
@@ -499,8 +490,7 @@ function PermissionSelector({
             {items.map((permission) => (
               <Checkbox key={permission.code} value={permission.code}>
                 <span className="permission-option-label">
-                  <span>{actionLabels[permission.action] ?? permission.action}</span>
-                  <Typography.Text type="secondary">{permission.code}</Typography.Text>
+                  <span>{permissionName(permission.code)}</span>
                 </span>
               </Checkbox>
             ))}

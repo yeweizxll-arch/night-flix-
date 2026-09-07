@@ -29,6 +29,7 @@ import {
   formatDateTime,
   formatMoney,
   fractionDigits,
+  ledgerLabel,
   parseMajorAmount,
   WithdrawalDetail,
   type WithdrawalRecord,
@@ -126,14 +127,14 @@ export function TenantFinancePage() {
     }
   }, [canReadBalance, request]);
 
-  const loadLedger = useCallback(async (before?: string, append = false) => {
+  const loadLedger = useCallback(async (beforeId?: string, append = false) => {
     if (!canReadBalance) return;
     const sequence = ++ledgerSequence.current;
     setLedgerLoading(true);
     setLedgerError(undefined);
     const parameters = new URLSearchParams({ limit: '50' });
     if (ledgerCurrency) parameters.set('currency', ledgerCurrency);
-    if (before) parameters.set('before', before);
+    if (beforeId) parameters.set('beforeId', beforeId);
     try {
       const result = await request<LedgerRecord[]>(`${API_BASE}/ledger?${parameters}`);
       if (sequence !== ledgerSequence.current) return;
@@ -333,10 +334,16 @@ export function TenantFinancePage() {
         <div>
           <Typography.Title level={2}>余额与提现</Typography.Title>
           <Typography.Text type="secondary">
-            余额与账本以服务端数据为准；收款账户提交后仅显示指纹。
+            查看可用余额、交易流水并申请提现。
           </Typography.Text>
         </div>
-        {canSubmit ? <Button disabled={Boolean(submitting)} type="primary" onClick={openSubmit}>申请提现</Button> : null}
+        <Space>
+          <Button loading={balanceLoading || ledgerLoading || withdrawalLoading} onClick={() => {
+            setLastSubmission(undefined);
+            void Promise.all([loadBalances(), loadLedger(), loadWithdrawals()]);
+          }}>刷新</Button>
+          {canSubmit ? <Button disabled={Boolean(submitting)} type="primary" onClick={openSubmit}>申请提现</Button> : null}
+        </Space>
       </div>
 
       {lastSubmission ? (
@@ -412,8 +419,8 @@ export function TenantFinancePage() {
               columns={[
                 { dataIndex: 'createdAt', title: '时间', render: formatDateTime, width: 180 },
                 { dataIndex: 'currency', title: '币种', width: 80 },
-                { dataIndex: 'bucket', title: '账户桶', width: 110 },
-                { dataIndex: 'entryType', title: '类型', width: 150 },
+                { dataIndex: 'bucket', title: '账户类型', width: 110, render: ledgerLabel },
+                { dataIndex: 'entryType', title: '类型', width: 150, render: ledgerLabel },
                 {
                   key: 'delta',
                   title: '变动',
@@ -433,7 +440,7 @@ export function TenantFinancePage() {
                   title: '关联资源',
                   render: (_: unknown, record) => (
                     <Space direction="vertical" size={0}>
-                      <Tag>{record.referenceType}</Tag>
+                      <Tag>{ledgerLabel(record.referenceType)}</Tag>
                       <Typography.Text className="secondary-id" copyable type="secondary">
                         {record.referenceId}
                       </Typography.Text>
@@ -453,7 +460,7 @@ export function TenantFinancePage() {
               <Button
                 block
                 loading={ledgerLoading}
-                onClick={() => void loadLedger(ledger.at(-1)?.createdAt, true)}
+                onClick={() => void loadLedger(ledger.at(-1)?.id, true)}
               >
                 加载更早记录
               </Button>
@@ -531,7 +538,7 @@ export function TenantFinancePage() {
           type="warning"
         />
         <Form<WithdrawalFormValues>
-          form={withdrawalForm}
+          name="tenantfinancepage-1" form={withdrawalForm}
           layout="vertical"
           onFinish={(values) => void submitWithdrawal(values)}
           requiredMark={false}
@@ -545,8 +552,8 @@ export function TenantFinancePage() {
             <Col span={16}>
               <Form.Item
                 extra={amountMinorPreview === undefined
-                  ? `当前币种支持 ${fractionDigits(watchedCurrency)} 位小数，将精确转换为 minor 提交`
-                  : `服务端将收到 ${amountMinorPreview} minor`}
+                  ? `当前币种最多支持 ${fractionDigits(watchedCurrency)} 位小数`
+                  : `提现金额：${formatMoney(amountMinorPreview, watchedCurrency)}`}
                 label="提现金额"
                 name="amount"
                 rules={[{ required: true, message: '请输入提现金额', whitespace: true }]}

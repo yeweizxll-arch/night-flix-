@@ -24,6 +24,7 @@ import { APP_LOCALE_OPTIONS } from '@drama/contracts';
 import { ApiError } from '../api/http';
 import { useAuth } from '../auth/AuthProvider';
 import { canAdvanceTlsStatus } from './site-settings-ui';
+import { TenantMediaUploadModal } from './TenantContentListPage';
 
 interface SiteTheme {
   accentColor: string;
@@ -363,7 +364,7 @@ export function SiteSettingsPanel({
           />
         ) : null}
         <Form<SettingsFormValue>
-          disabled={submitting === 'settings'}
+          name="sitesettingspanel-1" disabled={submitting === 'settings'}
           form={form}
           layout="vertical"
           onFinish={(values) => void saveSettings(values)}
@@ -382,16 +383,15 @@ export function SiteSettingsPanel({
             </Col>
             <Col md={12} xs={24}>
               <Form.Item
-                extra="填写当前代理商已上传且状态为 ready 的图片媒体 UUID；留空可清除。"
-                label="Logo 媒体 ID"
+                label="品牌 Logo"
                 name="logoMediaAssetId"
               >
-                <Input disabled={!canManageSettings} placeholder="UUID（可选）" />
+                <SiteImageField disabled={!canManageSettings} label="品牌 Logo" tenant={siteStatusMode === 'tenant'} />
               </Form.Item>
             </Col>
             <Col md={12} xs={24}>
-              <Form.Item label="图标媒体 ID" name="iconMediaAssetId">
-                <Input disabled={!canManageSettings} placeholder="UUID（可选）" />
+              <Form.Item label="站点图标" name="iconMediaAssetId">
+                <SiteImageField disabled={!canManageSettings} label="站点图标" tenant={siteStatusMode === 'tenant'} />
               </Form.Item>
             </Col>
             <Col md={8} xs={24}>
@@ -575,11 +575,11 @@ export function SiteSettingsPanel({
           className="page-alert"
           message={createDomainKind === 'subdomain'
             ? '仅填写前缀，服务端会拼接平台租户根域名。'
-            : '添加后仍是待验证状态；必须配置页面给出的 TXT 记录并真实验证，不会自动伪造通过。'}
+            : '添加后，请按提示配置 DNS TXT 记录，再点击验证。'}
           showIcon
           type="info"
         />
-        <Form form={domainForm} layout="vertical" onFinish={(values) => void createDomain(values)}>
+        <Form name="sitesettingspanel-2" form={domainForm} layout="vertical" onFinish={(values) => void createDomain(values)}>
           <Form.Item
             label={createDomainKind === 'subdomain' ? '子域名前缀' : '独立域名'}
             name="value"
@@ -605,7 +605,7 @@ export function SiteSettingsPanel({
           showIcon
           type="warning"
         />
-        <Form form={tlsForm} layout="vertical" onFinish={(values) => void setTlsStatus(values)}>
+        <Form name="sitesettingspanel-3" form={tlsForm} layout="vertical" onFinish={(values) => void setTlsStatus(values)}>
           <Form.Item label="状态" name="tlsStatus" rules={[{ required: true }]}>
             <Select options={[
               { label: '已生效', value: 'active' },
@@ -630,6 +630,24 @@ export function SiteSettingsPanel({
       </Modal>
     </>
   );
+}
+
+function SiteImageField({ value, onChange, disabled, label, tenant, id }: {
+  value?: string; onChange?(value?: string): void; disabled: boolean; label: string; tenant: boolean; id?: string;
+}) {
+  const { principal } = useAuth();
+  const [uploading, setUploading] = useState(false);
+  if (!tenant) return <Input id={id} disabled={disabled} value={value} onChange={event => onChange?.(event.target.value)} placeholder="代理商提供的图片编号（可选）" allowClear />;
+  const canUpload = principal?.permissions.includes('content.drama.create');
+  return <><Space wrap>
+    <Typography.Text type="secondary">{value ? '已关联图片' : '未设置图片'}</Typography.Text>
+    {canUpload && <Button id={id} disabled={disabled} onClick={() => setUploading(true)}>{value ? `更换${label}` : `上传${label}`}</Button>}
+    {value && <Button disabled={disabled} onClick={() => onChange?.(undefined)}>清除{label}</Button>}
+    {!canUpload && <Typography.Text type="secondary">上传图片需要内容创建权限</Typography.Text>}
+  </Space>
+    <TenantMediaUploadModal kind="image" open={uploading} title={`上传${label}`} onCancel={() => setUploading(false)}
+      onReady={mediaId => { onChange?.(mediaId); setUploading(false); }} />
+  </>;
 }
 
 function optionalUuid(value: string | undefined): string | null {

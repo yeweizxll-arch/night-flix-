@@ -80,6 +80,7 @@ describe('tenant staff commerce controllers', () => {
     [TenantCommerceCatalogController, 'replaceMembershipTranslations', 'write', 'commerce.catalog.manage'],
     [TenantCommerceCatalogController, 'replacePointsTranslations', 'write', 'commerce.catalog.manage'],
     [TenantCommerceCatalogController, 'upsertContentPointPrice', 'write', 'commerce.catalog.manage'],
+    [TenantCommerceCatalogController, 'contentOptions', 'read', 'commerce.catalog.read'],
   ] as const)('%s.%s is protected by tenant permissions', (controller, method, mode, permission) => {
     const handler = Reflect.get(controller.prototype, method) as Function;
     expect(Reflect.getMetadata(ACCESS_REQUIREMENT_METADATA, handler) as AccessRequirement)

@@ -1,4 +1,4 @@
-import { type AppLocale } from '@drama/contracts';
+import { APP_LOCALE_OPTIONS, type AppLocale } from '@drama/contracts';
 import {
   Alert,
   Button,
@@ -20,6 +20,8 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { ApiError } from '../api/http';
 import { useAuth } from '../auth/AuthProvider';
+import { formatMoney, fractionDigits, parseMajorAmount } from './finance-ui';
+import { ContentTargetSelect } from './ContentTargetSelect';
 
 type CatalogStatus = 'active' | 'disabled';
 type Currency = 'CNY' | 'USD' | 'EUR' | 'JPY' | 'KRW';
@@ -59,6 +61,7 @@ interface PointsPackage {
 }
 
 interface ContentPrice extends Price {
+  targetTitle?: string;
   id: string;
   targetId: string;
   targetType: 'drama' | 'episode';
@@ -66,6 +69,7 @@ interface ContentPrice extends Price {
 }
 
 interface ContentPointPrice {
+  targetTitle?: string;
   id: string;
   pointsAmount: number;
   status: CatalogStatus;
@@ -91,7 +95,7 @@ interface CatalogCreateForm {
 }
 
 interface PriceForm {
-  amountMinor: number;
+  amountMajor: string;
   currency: Currency;
   status: CatalogStatus;
 }
@@ -128,14 +132,7 @@ const currencyOptions = ['CNY', 'USD', 'EUR', 'JPY', 'KRW'].map((value) => ({
   label: value,
   value,
 }));
-const localeOptions = [
-  ['zh-CN', '简体中文'],
-  ['zh-TW', '繁體中文'],
-  ['en-US', 'English'],
-  ['fr-FR', 'Français'],
-  ['ja-JP', '日本語'],
-  ['ko-KR', '한국어'],
-].map(([value, label]) => ({ label: `${label} (${value})`, value }));
+const localeOptions = APP_LOCALE_OPTIONS;
 const statusOptions = [
   { label: '启用', value: 'active' },
   { label: '停用', value: 'disabled' },
@@ -157,6 +154,8 @@ export function CommerceCatalogPage() {
   const [contentPriceForm] = Form.useForm<ContentPriceForm>();
   const [contentPointPriceForm] = Form.useForm<ContentPointPriceForm>();
   const [translationForm] = Form.useForm<TranslationForm>();
+  const moneyTargetType = Form.useWatch('targetType', contentPriceForm);
+  const pointsTargetType = Form.useWatch('targetType', contentPointPriceForm);
   const [catalog, setCatalog] = useState(emptyCatalog);
   const [activeTab, setActiveTab] = useState('membership');
   const [loading, setLoading] = useState(true);
@@ -212,7 +211,7 @@ export function CommerceCatalogPage() {
   function editContentPrice(price: ContentPrice): void {
     contentPriceForm.resetFields();
     contentPriceForm.setFieldsValue({
-      amountMinor: price.amountMinor,
+      amountMajor: (price.amountMinor / 10 ** fractionDigits(price.currency)).toFixed(fractionDigits(price.currency)),
       currency: price.currency,
       status: price.status,
       targetId: price.targetId,
@@ -257,11 +256,11 @@ export function CommerceCatalogPage() {
         body: JSON.stringify(normalizeCreate(values)),
         method: 'POST',
       });
-      messageApi.success('积分充值包已创建');
+      messageApi.success('金币充值包已创建');
       setDialog(undefined);
       await load();
     } catch (reason) {
-      messageApi.error(errorMessage(reason, '积分充值包创建失败'));
+      messageApi.error(errorMessage(reason, '金币充值包创建失败'));
     } finally {
       setSubmitting(undefined);
     }
@@ -277,7 +276,7 @@ export function CommerceCatalogPage() {
       await request(
         `${API_BASE}/${segment}/${encodeURIComponent(priceTarget.id)}/prices/${values.currency}`,
         {
-          body: JSON.stringify({ amountMinor: values.amountMinor, status: values.status }),
+          body: JSON.stringify({ amountMinor: parseMajorAmount(values.amountMajor, values.currency), status: values.status }),
           method: 'PUT',
         },
       );
@@ -297,7 +296,7 @@ export function CommerceCatalogPage() {
       await request(
         `${API_BASE}/content-prices/${values.targetType}/${encodeURIComponent(values.targetId.trim())}/${values.currency}`,
         {
-          body: JSON.stringify({ amountMinor: values.amountMinor, status: values.status }),
+          body: JSON.stringify({ amountMinor: parseMajorAmount(values.amountMajor, values.currency), status: values.status }),
           method: 'PUT',
         },
       );
@@ -327,12 +326,12 @@ export function CommerceCatalogPage() {
           method: 'PUT',
         },
       );
-      messageApi.success(contentPointTarget ? '积分价格已更新' : '积分价格已创建');
+      messageApi.success(contentPointTarget ? '金币价格已更新' : '金币价格已创建');
       setDialog(undefined);
       setContentPointTarget(undefined);
       await load();
     } catch (reason) {
-      messageApi.error(errorMessage(reason, '积分价格保存失败'));
+      messageApi.error(errorMessage(reason, '金币价格保存失败'));
       if (reason instanceof ApiError && reason.status === 409) {
         setDialog(undefined);
         setContentPointTarget(undefined);
@@ -396,7 +395,7 @@ export function CommerceCatalogPage() {
   function openPrice(target: PriceTarget, prices: Price[]): void {
     priceForm.resetFields();
     const current = prices[0];
-    priceForm.setFieldsValue(current ?? { currency: 'USD', status: 'active' });
+    priceForm.setFieldsValue(current ? { ...current, amountMajor: (current.amountMinor / 10 ** fractionDigits(current.currency)).toFixed(fractionDigits(current.currency)) } : { currency: 'USD', status: 'active' });
     setPriceTarget(target);
   }
 
@@ -429,10 +428,10 @@ export function CommerceCatalogPage() {
       {activeTab === 'membership'
         ? '创建会员套餐'
         : activeTab === 'points'
-          ? '创建积分包'
+          ? '创建金币包'
           : activeTab === 'content'
             ? '设置内容价格'
-            : '设置积分价格'}
+            : '设置金币价格'}
     </Button>
   ) : null;
 
@@ -443,7 +442,7 @@ export function CommerceCatalogPage() {
         <div>
           <Typography.Title level={2}>商品与定价</Typography.Title>
           <Typography.Text type="secondary">
-            维护商品多语言信息和服务端价格，客户端不能覆盖金额。
+            管理会员、金币充值包与剧目价格。
           </Typography.Text>
         </div>
         {createButton}
@@ -451,7 +450,7 @@ export function CommerceCatalogPage() {
 
       <Alert
         className="page-alert"
-        message="金额使用货币最小单位，例如 USD 9.99 填写 999。"
+        message="按实际售价填写金额，例如美元 9.99。日元和韩元仅支持整数。"
         showIcon
         type="info"
       />
@@ -490,7 +489,7 @@ export function CommerceCatalogPage() {
           },
           {
             key: 'points',
-            label: '积分充值包',
+            label: '金币充值包',
             children: (
               <CatalogTable<PointsPackage>
                 canManage={canManage}
@@ -522,7 +521,7 @@ export function CommerceCatalogPage() {
           },
           {
             key: 'content-points',
-            label: '内容积分价格',
+            label: '内容金币价格',
             children: (
               <ContentPointPriceTable
                 canManage={canManage}
@@ -557,6 +556,11 @@ export function CommerceCatalogPage() {
         loading={Boolean(priceTarget && submitting === `price:${priceTarget.id}`)}
         onCancel={() => setPriceTarget(undefined)}
         onFinish={(values) => void savePrice(values)}
+        onCurrencyChange={currency => {
+          const products = priceTarget?.kind === 'membership' ? catalog.membershipPlans : catalog.pointsTopupPackages;
+          const price = products.find(product => product.id === priceTarget?.id)?.prices.find(item => item.currency === currency);
+          priceForm.setFieldsValue({ amountMajor: price ? (price.amountMinor / 10 ** fractionDigits(currency)).toFixed(fractionDigits(currency)) : '', status: price?.status ?? 'active' });
+        }}
         open={Boolean(priceTarget)}
         title={`设置价格·${priceTarget?.label ?? ''}`}
       />
@@ -570,7 +574,7 @@ export function CommerceCatalogPage() {
         title={`编辑多语言文案·${translationTarget?.label ?? ''}`}
         width={820}
       >
-        <Form form={translationForm} layout="vertical" onFinish={(values) => void saveTranslations(values)}>
+        <Form name="commercecatalogpage-1" form={translationForm} layout="vertical" onFinish={(values) => void saveTranslations(values)}>
           <TranslationFields />
         </Form>
       </Modal>
@@ -581,13 +585,13 @@ export function CommerceCatalogPage() {
         open={dialog === 'content-price'}
         title="设置内容价格"
       >
-        <Form form={contentPriceForm} layout="vertical" onFinish={(values) => void saveContentPrice(values)}>
+        <Form name="commercecatalogpage-2" form={contentPriceForm} layout="vertical" onFinish={(values) => void saveContentPrice(values)}>
           <div className="two-column-form">
             <Form.Item label="内容类型" name="targetType" rules={[{ required: true }]}>
-              <Select options={[{ label: '整部短剧', value: 'drama' }, { label: '单集', value: 'episode' }]} />
+              <Select onChange={() => contentPriceForm.setFieldValue('targetId', undefined)} options={[{ label: '整部短剧', value: 'drama' }, { label: '单集', value: 'episode' }]} />
             </Form.Item>
-            <Form.Item label="内容 UUID" name="targetId" rules={[{ required: true, whitespace: true }]}>
-              <Input maxLength={36} />
+            <Form.Item label="选择内容" name="targetId" rules={[{ required: true, message: '请选择需要定价的内容' }]}>
+              <ContentTargetSelect type={moneyTargetType} />
             </Form.Item>
           </div>
           <PriceFields />
@@ -601,16 +605,16 @@ export function CommerceCatalogPage() {
         }}
         onOk={() => contentPointPriceForm.submit()}
         open={dialog === 'content-point-price'}
-        title={contentPointTarget ? '更新内容积分价格' : '创建内容积分价格'}
+        title={contentPointTarget ? '更新内容金币价格' : '创建内容金币价格'}
       >
         <Alert
           className="page-alert"
-          message="请填写已有短剧或剧集 UUID；此处不提供未经校验的公共内容目录。"
+          message="选择已上架的短剧或单集，设置解锁所需金币。"
           showIcon
           type="info"
         />
         <Form
-          form={contentPointPriceForm}
+          name="commercecatalogpage-3" form={contentPointPriceForm}
           layout="vertical"
           onFinish={(values) => void saveContentPointPrice(values)}
         >
@@ -618,20 +622,21 @@ export function CommerceCatalogPage() {
             <Form.Item label="内容类型" name="targetType" rules={[{ required: true }]}>
               <Select
                 disabled={Boolean(contentPointTarget)}
+                onChange={() => contentPointPriceForm.setFieldValue('targetId', undefined)}
                 options={[{ label: '整部短剧', value: 'drama' }, { label: '单集', value: 'episode' }]}
               />
             </Form.Item>
             <Form.Item
-              label="内容 UUID"
+              label="选择内容"
               name="targetId"
               rules={[
                 { required: true, whitespace: true },
                 { message: '请输入有效 UUID', pattern: UUID_PATTERN },
               ]}
             >
-              <Input disabled={Boolean(contentPointTarget)} maxLength={36} />
+              <ContentTargetSelect disabled={Boolean(contentPointTarget)} type={pointsTargetType} />
             </Form.Item>
-            <Form.Item label="所需积分" name="pointsAmount" rules={[{ required: true }]}>
+            <Form.Item label="所需金币" name="pointsAmount" rules={[{ required: true }]}>
               <InputNumber min={1} max={9_000_000_000_000_000} precision={0} style={{ width: '100%' }} />
             </Form.Item>
             <Form.Item label="状态" name="status" rules={[{ required: true }]}>
@@ -682,7 +687,7 @@ function CatalogTable<T extends MembershipPlan | PointsPackage>({
           width: 150,
           render: (_, record) => kind === 'membership'
             ? `${(record as MembershipPlan).durationDays} 天`
-            : `${(record as PointsPackage).pointsAmount} + ${(record as PointsPackage).bonusPoints} 积分`,
+            : `${(record as PointsPackage).pointsAmount} + ${(record as PointsPackage).bonusPoints} 金币`,
         },
         {
           dataIndex: 'translations',
@@ -701,7 +706,7 @@ function CatalogTable<T extends MembershipPlan | PointsPackage>({
             <Space size={[4, 4]} wrap>
               {prices.map((price) => (
                 <Tag color={price.status === 'active' ? 'green' : undefined} key={price.currency}>
-                  {price.currency} {price.amountMinor}{price.status === 'disabled' ? '·停用' : ''}
+                  {formatMoney(price.amountMinor, price.currency)}{price.status === 'disabled' ? '·停用' : ''}
                 </Tag>
               ))}
             </Space>
@@ -761,12 +766,12 @@ function ContentPriceTable({
       columns={[
         { dataIndex: 'targetType', title: '类型', render: (value) => value === 'drama' ? '短剧' : '单集' },
         {
-          dataIndex: 'targetId',
-          title: '内容 UUID',
-          render: (value: string) => <Typography.Text copyable>{value}</Typography.Text>,
+          dataIndex: 'targetTitle',
+          title: '内容',
+          render: (value?: string) => value ?? '内容名称暂不可用',
         },
         { dataIndex: 'currency', title: '币种', width: 90 },
-        { dataIndex: 'amountMinor', title: '最小单位金额', width: 150 },
+        { dataIndex: 'amountMinor', title: '售价', width: 150, render: (amount: number, row) => formatMoney(amount, row.currency) },
         { dataIndex: 'status', title: '状态', width: 90, render: (value) => value === 'active' ? <Tag color="green">启用</Tag> : <Tag>停用</Tag> },
         {
           key: 'action',
@@ -807,11 +812,11 @@ function ContentPointPriceTable({
           render: (value) => value === 'drama' ? '短剧' : '单集',
         },
         {
-          dataIndex: 'targetId',
-          title: '内容 UUID',
-          render: (value: string) => <Typography.Text copyable>{value}</Typography.Text>,
+          dataIndex: 'targetTitle',
+          title: '内容',
+          render: (value?: string) => value ?? '内容名称暂不可用',
         },
-        { dataIndex: 'pointsAmount', title: '所需积分', width: 120 },
+        { dataIndex: 'pointsAmount', title: '所需金币', width: 120 },
         {
           dataIndex: 'status',
           title: '状态',
@@ -830,7 +835,7 @@ function ContentPointPriceTable({
       ]}
       dataSource={data}
       loading={loading}
-      locale={{ emptyText: <Empty description="暂无内容积分价格" image={Empty.PRESENTED_IMAGE_SIMPLE} /> }}
+      locale={{ emptyText: <Empty description="暂无内容金币价格" image={Empty.PRESENTED_IMAGE_SIMPLE} /> }}
       pagination={false}
       rowKey="id"
     />
@@ -858,10 +863,10 @@ function CreateCatalogModal({
       onCancel={onCancel}
       onOk={() => form.submit()}
       open={open}
-      title={kind === 'membership' ? '创建会员套餐' : '创建积分充值包'}
+      title={kind === 'membership' ? '创建会员套餐' : '创建金币充值包'}
       width={820}
     >
-      <Form<CatalogCreateForm> form={form} layout="vertical" onFinish={onFinish}>
+      <Form<CatalogCreateForm> name="commercecatalogpage-4" form={form} layout="vertical" onFinish={onFinish}>
         <div className="two-column-form">
           <Form.Item label="商品代码" name="code" rules={[{ required: true, whitespace: true }]}>
             <Input maxLength={64} />
@@ -875,10 +880,10 @@ function CreateCatalogModal({
             </Form.Item>
           ) : (
             <>
-              <Form.Item label="积分数量" name="pointsAmount" rules={[{ required: true }]}>
+              <Form.Item label="金币数量" name="pointsAmount" rules={[{ required: true }]}>
                 <InputNumber min={1} precision={0} style={{ width: '100%' }} />
               </Form.Item>
-              <Form.Item label="赠送积分" name="bonusPoints">
+              <Form.Item label="赠送金币" name="bonusPoints">
                 <InputNumber min={0} precision={0} style={{ width: '100%' }} />
               </Form.Item>
             </>
@@ -908,10 +913,10 @@ function TranslationFields() {
           <>
             {fields.map((field) => (
               <div className="translation-form-row" key={field.key}>
-                <Form.Item name={[field.name, 'locale']} rules={[{ required: true }]}>
+                <Form.Item name={[field.name, 'locale']} rules={[{ required: true, message: '请选择语言' }]}>
                   <Select options={localeOptions} placeholder="语言" />
                 </Form.Item>
-                <Form.Item name={[field.name, 'name']} rules={[{ required: true, whitespace: true }]}>
+                <Form.Item name={[field.name, 'name']} rules={[{ required: true, whitespace: true, message: '请填写商品名称' }]}>
                   <Input maxLength={120} placeholder="商品名称" />
                 </Form.Item>
                 <Form.Item name={[field.name, 'description']}>
@@ -934,17 +939,18 @@ function TranslationFields() {
   );
 }
 
-function PriceModal({ form, loading, onCancel, onFinish, open, title }: {
+function PriceModal({ form, loading, onCancel, onFinish, onCurrencyChange, open, title }: {
   form: ReturnType<typeof Form.useForm<PriceForm>>[0];
   loading: boolean;
   onCancel(): void;
   onFinish(values: PriceForm): void;
+  onCurrencyChange(currency: Currency): void;
   open: boolean;
   title: string;
 }) {
   return (
     <Modal confirmLoading={loading} onCancel={onCancel} onOk={() => form.submit()} open={open} title={title}>
-      <Form form={form} layout="vertical" onFinish={onFinish}>
+      <Form name="commercecatalogpage-5" form={form} layout="vertical" onFinish={onFinish} onValuesChange={changed => { if (changed.currency) onCurrencyChange(changed.currency); }}>
         <PriceFields />
       </Form>
     </Modal>
@@ -957,8 +963,11 @@ function PriceFields() {
       <Form.Item label="币种" name="currency" rules={[{ required: true }]}>
         <Select options={currencyOptions} />
       </Form.Item>
-      <Form.Item label="最小货币单位金额" name="amountMinor" rules={[{ required: true }]}>
-        <InputNumber min={1} max={9_000_000_000_000_000} precision={0} style={{ width: '100%' }} />
+      <Form.Item label="售价" name="amountMajor" dependencies={['currency']} rules={[
+        { required: true, message: '请输入售价' },
+        ({ getFieldValue }) => ({ validator: async (_, value) => { if (value) parseMajorAmount(value, getFieldValue('currency') ?? 'USD'); } }),
+      ]}>
+        <Input inputMode="decimal" placeholder="例如 9.99" />
       </Form.Item>
       <Form.Item label="状态" name="status" rules={[{ required: true }]}>
         <Select options={statusOptions} />

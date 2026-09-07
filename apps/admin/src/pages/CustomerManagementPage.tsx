@@ -20,6 +20,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError } from '../api/http';
 import { useAuth } from '../auth/AuthProvider';
 import { customerResourcePath, isValidTenantId } from './customer-management-ui';
+import { MerchantSelect } from './MerchantSelect';
 
 type CustomerStatus = 'active' | 'disabled';
 
@@ -284,7 +285,7 @@ export function CustomerManagementPage({
         <div>
           <Typography.Title level={2}>{title}</Typography.Title>
           <Typography.Text type="secondary">
-            联系方式仅显示掩码；积分、会员权益和订单数据均为只读，不能在此修改。
+            管理用户状态和登录设备，查看金币、权益与订单。
           </Typography.Text>
         </div>
       </div>
@@ -292,7 +293,7 @@ export function CustomerManagementPage({
       {scope === 'platform' ? (
         <Alert
           className="page-alert"
-          description="为避免全库模糊扫描，总后台必须先输入准确的代理商 UUID，再查询该代理商的用户。"
+          description="选择代理商后，查询和管理该代理商的用户。"
           message="先选择代理商"
           showIcon
           type="info"
@@ -303,14 +304,7 @@ export function CustomerManagementPage({
         <Space wrap>
           {scope === 'platform' ? (
             <>
-              <Input
-                maxLength={36}
-                onChange={(event) => setTenantInput(event.target.value)}
-                onPressEnter={chooseTenant}
-                placeholder="代理商 UUID"
-                style={{ width: 330 }}
-                value={tenantInput}
-              />
+              <MerchantSelect onChange={setTenantInput} value={tenantInput} />
               <Button onClick={chooseTenant} type="primary">查询代理商用户</Button>
             </>
           ) : null}
@@ -351,7 +345,7 @@ export function CustomerManagementPage({
       </div>
 
       {!ready && scope === 'platform' ? (
-        <Empty description="输入代理商 UUID 后查询；系统不会自动加载全平台用户" />
+        <Empty description="请选择代理商并点击查询" />
       ) : (
         <Table<CustomerRecord>
           columns={[
@@ -378,7 +372,7 @@ export function CustomerManagementPage({
               ),
             },
             { dataIndex: 'status', title: '状态', width: 90, render: (value: CustomerStatus) => <StatusTag status={value} /> },
-            { dataIndex: 'pointsBalance', title: '积分（只读）', width: 130 },
+            { dataIndex: 'pointsBalance', title: '金币', width: 130 },
             { key: 'orders', title: '订单（只读）', width: 130, render: (_, record) => `${record.orders.total} 笔` },
             { dataIndex: 'createdAt', title: '注册时间', width: 180, render: formatDateTime },
             {
@@ -460,13 +454,14 @@ export function CustomerManagementPage({
       >
         <Alert
           className="page-alert"
+          description={statusTarget ? `用户：${statusTarget.username}（${statusTarget.id}）` : undefined}
           message={statusTarget?.status === 'active'
             ? '停用后，全部登录会话与推送令牌会立即失效。'
             : '启用只恢复账号状态，不会恢复任何旧会话。'}
           showIcon
           type="warning"
         />
-        <Form form={statusForm} layout="vertical" onFinish={(values) => void changeStatus(values)}>
+        <Form name="customermanagementpage-1" form={statusForm} layout="vertical" onFinish={(values) => void changeStatus(values)}>
           <Form.Item label="操作原因" name="reason" rules={[{ max: 1000, min: 2, required: true, whitespace: true }]}>
             <Input.TextArea maxLength={1000} rows={3} showCount />
           </Form.Item>
@@ -492,18 +487,19 @@ export function CustomerManagementPage({
       >
         <Alert
           className="page-alert"
+          description={revokeTarget ? `用户：${revokeTarget.record.username}（${revokeTarget.record.id}）` : undefined}
           message={revokeTarget?.deviceId
-            ? '单设备操作会撤销设备身份、该设备推送令牌及活动会话；用户需重新登录建立新设备身份。'
-            : '全部下线只撤销现有会话，不停用账号或设备；用户之后仍可重新登录。'}
+            ? '该设备将退出登录并停止接收推送，重新登录后可恢复使用。'
+            : '用户将在所有设备上退出登录，但账号不会停用，之后仍可重新登录。'}
           showIcon
           type="info"
         />
-        <Form form={revokeForm} layout="vertical" onFinish={(values) => void revokeSessions(values)}>
+        <Form name="customermanagementpage-2" form={revokeForm} layout="vertical" onFinish={(values) => void revokeSessions(values)}>
           <Form.Item label="下线原因" name="reason" rules={[{ max: 1000, min: 2, required: true, whitespace: true }]}>
             <Input.TextArea maxLength={1000} rows={3} showCount />
           </Form.Item>
           <Form.Item name="confirmed" rules={[{ validator: confirmValidator }]} valuePropName="checked">
-            <Checkbox>我确认撤销所选范围内的全部活动会话</Checkbox>
+            <Checkbox>{revokeTarget?.deviceId ? '我确认让该设备退出登录' : '我确认让该用户在全部设备上退出登录'}</Checkbox>
           </Form.Item>
           <Button
             block
@@ -536,7 +532,7 @@ function CustomerDetail({
         <Descriptions.Item label="邮箱（脱敏）">{record.email ?? '—'} / {record.emailVerified ? '已验证' : '未验证'}</Descriptions.Item>
         <Descriptions.Item label="手机号（脱敏）">{record.phone ?? '—'} / {record.phoneVerified ? '已验证' : '未验证'}</Descriptions.Item>
         <Descriptions.Item label="状态"><StatusTag status={record.status} /></Descriptions.Item>
-        <Descriptions.Item label="积分余额（只读）">{record.pointsBalance}</Descriptions.Item>
+        <Descriptions.Item label="金币余额">{record.pointsBalance}</Descriptions.Item>
         <Descriptions.Item label="有效权益（只读）">
           合计 {record.activeEntitlements.total}；会员 {record.activeEntitlements.membership}；短剧 {record.activeEntitlements.drama}；单集 {record.activeEntitlements.episode}
         </Descriptions.Item>

@@ -213,7 +213,7 @@ export function RefundManagementPanel(props: {
       >
         <Alert
           className="page-alert"
-          description="退款金额完全由服务端已支付订单决定；处理中或需人工对账的订单不可重复发起。"
+          description="按订单实付金额全额退款。处理中或待核对的退款不能重复发起。"
           message={props.mode === 'platform' ? '平台只处理平台代收订单' : '代理商只处理独立直收订单'}
           showIcon
           type="info"
@@ -231,8 +231,8 @@ export function RefundManagementPanel(props: {
             { dataIndex: 'id', title: '退款单', render: (value: string) => (
               <Button className="table-link-button" type="link" onClick={() => openDetail(value)}>{value}</Button>
             ) },
-            { dataIndex: 'orderId', title: '订单 UUID', render: (value: string) => <Typography.Text copyable>{value}</Typography.Text> },
-            { key: 'amount', title: '服务端金额', render: (_, record) => formatMoney(record.amountMinor, record.currency) },
+            { dataIndex: 'orderId', title: '订单编号', render: (value: string) => <Typography.Text copyable>{value}</Typography.Text> },
+            { key: 'amount', title: '退款金额', render: (_, record) => formatMoney(record.amountMinor, record.currency) },
             { dataIndex: 'collectionMode', title: '收款模式', render: (value: CollectionMode) => value === 'platform_collect' ? '平台代收' : '代理商直收' },
             { dataIndex: 'status', title: '状态', render: (value: RefundStatus) => <RefundStatusTag status={value} /> },
             { dataIndex: 'createdAt', title: '发起时间', render: formatDateTime, width: 180 },
@@ -261,10 +261,10 @@ export function RefundManagementPanel(props: {
       </Drawer>
 
       <Modal destroyOnHidden footer={null} onCancel={closeCreate} open={createOpen} title="平台代收订单全额退款">
-        <Alert className="page-alert" message="仅输入订单 UUID 和原因，金额不可输入或修改。" showIcon type="warning" />
-        <Form form={form} layout="vertical" onFinish={confirmCreate} requiredMark={false}>
-          <Form.Item label="订单 UUID" name="orderId" rules={[
-            { required: true, message: '请输入订单 UUID' },
+        <Alert className="page-alert" message="仅输入订单编号 和原因，金额不可输入或修改。" showIcon type="warning" />
+        <Form name="refundmanagementpanel-1" form={form} layout="vertical" onFinish={confirmCreate} requiredMark={false}>
+          <Form.Item label="订单编号" name="orderId" rules={[
+            { required: true, message: '请输入订单编号' },
             { pattern: UUID_PATTERN, message: '请输入正确 UUID' },
           ]}><Input maxLength={36} /></Form.Item>
           <Form.Item label="退款原因" name="reason" rules={[
@@ -286,12 +286,12 @@ function RefundDetail({ record }: { record: RefundRecord }) {
           message="需要人工对账" showIcon type="warning" />
       ) : null}
       <Descriptions bordered column={2} size="small">
-        <Descriptions.Item label="退款 UUID" span={2}><Typography.Text copyable>{record.id}</Typography.Text></Descriptions.Item>
-        <Descriptions.Item label="订单 UUID" span={2}><Typography.Text copyable>{record.orderId}</Typography.Text></Descriptions.Item>
+        <Descriptions.Item label="退款编号" span={2}><Typography.Text copyable>{record.id}</Typography.Text></Descriptions.Item>
+        <Descriptions.Item label="订单编号" span={2}><Typography.Text copyable>{record.orderId}</Typography.Text></Descriptions.Item>
         <Descriptions.Item label="状态"><RefundStatusTag status={record.status} /></Descriptions.Item>
         <Descriptions.Item label="类型">{record.fullRefund ? '全额退款' : '—'}</Descriptions.Item>
         <Descriptions.Item label="收款模式">{record.collectionMode === 'platform_collect' ? '平台代收' : '代理商直收'}</Descriptions.Item>
-        <Descriptions.Item label="服务端金额"><Typography.Text strong>{formatMoney(record.amountMinor, record.currency)}</Typography.Text></Descriptions.Item>
+        <Descriptions.Item label="退款金额"><Typography.Text strong>{formatMoney(record.amountMinor, record.currency)}</Typography.Text></Descriptions.Item>
         <Descriptions.Item label="发起时间" span={2}>{formatDateTime(record.createdAt)}</Descriptions.Item>
         <Descriptions.Item label="原因" span={2}><Typography.Paragraph style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{record.reason}</Typography.Paragraph></Descriptions.Item>
       </Descriptions>

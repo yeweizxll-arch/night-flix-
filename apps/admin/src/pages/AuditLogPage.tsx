@@ -17,6 +17,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { ApiError } from '../api/http';
 import { useAuth } from '../auth/AuthProvider';
+import { auditActionLabel, auditResourceLabel, snapshotRows } from './audit-snapshot-ui';
 
 type ActorType = 'platform_staff' | 'system' | 'tenant_staff' | 'user';
 
@@ -133,13 +134,13 @@ export function AuditLogPage({
 
       <Alert
         className="page-alert"
-        message="仅显示服务端已脱敏的审计内容；本页不显示 User-Agent、认证头、Cookie 或密钥。"
+        message="记录员工操作及变更内容，敏感信息已隐藏。"
         showIcon
         type="info"
       />
 
       <Form<AuditFilterForm>
-        className="audit-filter-card"
+        name="auditlogpage-1" className="audit-filter-card"
         form={form}
         layout="vertical"
         onFinish={applyFilters}
@@ -166,7 +167,7 @@ export function AuditLogPage({
             />
           </Form.Item>
           <Form.Item
-            label="Action"
+            label="操作类型"
             name="action"
             rules={[{
               message: 'Action 格式不正确',
@@ -181,7 +182,7 @@ export function AuditLogPage({
               options={Object.entries(actorLabels).map(([value, label]) => ({ label, value }))}
             />
           </Form.Item>
-          <Form.Item label="执行人 UUID" name="actorId" rules={[uuidRule]}>
+          <Form.Item label="执行人编号" name="actorId" rules={[uuidRule]}>
             <Input allowClear maxLength={36} />
           </Form.Item>
           <Form.Item
@@ -194,19 +195,19 @@ export function AuditLogPage({
           >
             <Input allowClear maxLength={100} placeholder="order" />
           </Form.Item>
-          <Form.Item label="资源 UUID" name="resourceId" rules={[uuidRule]}>
+          <Form.Item label="对象编号" name="resourceId" rules={[uuidRule]}>
             <Input allowClear maxLength={36} />
           </Form.Item>
-          <Form.Item label="Request ID" name="requestId" rules={[{ min: 8, message: '至少输入 8 个字符' }]}>
+          <Form.Item label="请求编号" name="requestId" rules={[{ min: 8, message: '至少输入 8 个字符' }]}>
             <Input allowClear maxLength={128} />
           </Form.Item>
           {allowTenantFilter ? (
-            <Form.Item label="代理商 UUID" name="tenantId" rules={[uuidRule]}>
+            <Form.Item label="代理商编号" name="tenantId" rules={[uuidRule]}>
               <Input allowClear maxLength={36} />
             </Form.Item>
           ) : null}
           <Form.Item label="模糊搜索" name="q" rules={[{ min: 2, message: '至少输入 2 个字符' }]}>
-            <Input allowClear maxLength={100} placeholder="Action / 资源 / Request ID" />
+            <Input allowClear maxLength={100} placeholder="操作代码、资源或请求编号" />
           </Form.Item>
         </div>
         <Space className="audit-filter-actions">
@@ -235,8 +236,8 @@ export function AuditLogPage({
           },
           {
             dataIndex: 'action',
-            title: 'Action',
-            render: (value: string) => <Typography.Text code>{value}</Typography.Text>,
+            title: '操作类型',
+            render: (value: string, record) => <Typography.Text title={value}>{auditActionLabel(value, record.resource.type)}</Typography.Text>,
           },
           {
             key: 'actor',
@@ -255,7 +256,7 @@ export function AuditLogPage({
             title: '资源',
             render: (_, record) => (
               <Space direction="vertical" size={0}>
-                <Typography.Text>{record.resource.type}</Typography.Text>
+                <Typography.Text title={record.resource.type}>{auditResourceLabel(record.resource.type)}</Typography.Text>
                 <Typography.Text className="secondary-id" copyable={Boolean(record.resource.id)} type="secondary">
                   {record.resource.id ?? '—'}
                 </Typography.Text>
@@ -264,7 +265,7 @@ export function AuditLogPage({
           },
           ...(allowTenantFilter ? [{
             dataIndex: 'tenantId' as const,
-            title: '代理商 UUID',
+            title: '代理商编号',
             width: 160,
             render: (value: string | null) => value
               ? <Typography.Text className="secondary-id" copyable>{value}</Typography.Text>
@@ -272,7 +273,7 @@ export function AuditLogPage({
           }] : []),
           {
             dataIndex: 'requestId',
-            title: 'Request ID',
+            title: '请求编号',
             width: 170,
             render: (value: string) => (
               <Typography.Text className="secondary-id" copyable>{value}</Typography.Text>
@@ -316,14 +317,15 @@ function AuditDetailDrawer({ detail, onClose }: {
         <Space direction="vertical" size={24} style={{ width: '100%' }}>
           <Descriptions bordered column={2} size="small">
             <Descriptions.Item label="时间" span={2}>{formatDateTime(detail.createdAt)}</Descriptions.Item>
-            <Descriptions.Item label="Action" span={2}>{detail.action}</Descriptions.Item>
+            <Descriptions.Item label="操作类型" span={2}>{auditActionLabel(detail.action, detail.resource.type)}</Descriptions.Item>
+            <Descriptions.Item label="操作代码" span={2}><Typography.Text copyable>{detail.action}</Typography.Text></Descriptions.Item>
             <Descriptions.Item label="执行人类型">{actorLabels[detail.actor.type]}</Descriptions.Item>
-            <Descriptions.Item label="执行人 UUID">{detail.actor.id ?? '—'}</Descriptions.Item>
-            <Descriptions.Item label="资源类型">{detail.resource.type}</Descriptions.Item>
-            <Descriptions.Item label="资源 UUID">{detail.resource.id ?? '—'}</Descriptions.Item>
-            <Descriptions.Item label="Request ID" span={2}>{detail.requestId}</Descriptions.Item>
+            <Descriptions.Item label="执行人编号">{detail.actor.id ?? '—'}</Descriptions.Item>
+            <Descriptions.Item label="资源类型"><Typography.Text title={detail.resource.type}>{auditResourceLabel(detail.resource.type)}</Typography.Text></Descriptions.Item>
+            <Descriptions.Item label="对象编号">{detail.resource.id ?? '—'}</Descriptions.Item>
+            <Descriptions.Item label="请求编号" span={2}>{detail.requestId}</Descriptions.Item>
             {detail.tenantId ? (
-              <Descriptions.Item label="代理商 UUID" span={2}>{detail.tenantId}</Descriptions.Item>
+              <Descriptions.Item label="代理商编号" span={2}>{detail.tenantId}</Descriptions.Item>
             ) : null}
           </Descriptions>
           <JsonPanel title="变更前" value={detail.before} />
@@ -338,7 +340,9 @@ function JsonPanel({ title, value }: { title: string; value: unknown }) {
   return (
     <div>
       <Typography.Title level={5}>{title}</Typography.Title>
-      <pre className="snapshot-json">{safeJsonText(value)}</pre>
+      <Table size="small" rowKey="key" pagination={false}
+        dataSource={snapshotRows(redactClientSide(value))}
+        columns={[{ title: '字段', dataIndex: 'field', width: '40%' }, { title: '内容', dataIndex: 'value', render: text => <span style={{ overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }}>{text}</span> }]} />
     </div>
   );
 }
@@ -383,15 +387,6 @@ function normalizeFilters(
     resourceType: trim(values.resourceType),
     tenantId: allowTenantFilter ? trim(values.tenantId) : undefined,
   };
-}
-
-function safeJsonText(value: unknown): string {
-  if (value === null || value === undefined) return '无数据';
-  try {
-    return JSON.stringify(redactClientSide(value), null, 2);
-  } catch {
-    return '内容无法安全显示';
-  }
 }
 
 function redactClientSide(value: unknown, depth = 0): unknown {

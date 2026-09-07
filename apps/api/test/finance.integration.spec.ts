@@ -171,6 +171,12 @@ describe('merchant settlement and withdrawal finance domain', () => {
     expect(await balances()).toEqual({
       available: '900', frozen: '100', pending: '0', withdrawn: '0',
     });
+    const frozenLedger = await finance.listTenantLedger(tenantA, {});
+    expect(frozenLedger).toEqual(expect.arrayContaining([
+      expect.objectContaining({ bucket: 'available', deltaMinor: -100, balanceAfterMinor: 900 }),
+      expect.objectContaining({ bucket: 'frozen', deltaMinor: 100, balanceAfterMinor: 100 }),
+    ]));
+    expect(await finance.listTenantLedger(tenantB, {})).toEqual([]);
     await expect(finance.cancelWithdrawal(
       tenantA, submitted.id, applicant, submitted.version, uuidV7(),
     )).resolves.toMatchObject({ status: 'cancelled', version: 1 });
@@ -180,6 +186,21 @@ describe('merchant settlement and withdrawal finance domain', () => {
     expect(await balances()).toEqual({
       available: '1000', frozen: '0', pending: '0', withdrawn: '0',
     });
+    expect(await finance.listTenantLedger(tenantA, {})).toEqual(expect.arrayContaining([
+      expect.objectContaining({ bucket: 'frozen', deltaMinor: -100, balanceAfterMinor: 0 }),
+      expect.objectContaining({ bucket: 'available', deltaMinor: 100, balanceAfterMinor: 1000 }),
+    ]));
+    // One withdrawal emits multiple rows at exactly the same database timestamp.
+    // An ID cursor also avoids losing PostgreSQL sub-millisecond precision in JSON dates.
+    const all = await finance.listTenantLedger(tenantA, {});
+    const paged: string[] = [];
+    for (let index = 0; index <= all.length; index++) {
+      const page = await finance.listTenantLedger(tenantA, { limit: '1', ...(paged.length ? { beforeId: paged.at(-1) } : {}) });
+      if (!page.length) break;
+      paged.push(page[0]!.id);
+    }
+    expect(paged).toEqual(all.map(row => row.id));
+    expect(await finance.listTenantLedger(tenantB, { beforeId: all[0]!.id })).toEqual([]);
   });
 
   it('rejects and unfreezes atomically, including stale/double reviews', async () => {

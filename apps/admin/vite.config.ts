@@ -16,6 +16,7 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react()],
+    optimizeDeps: { include: ['@drama/contracts'] },
     build: {
       commonjsOptions: { include: [/node_modules/, /packages\/contracts\/dist/] },
     },

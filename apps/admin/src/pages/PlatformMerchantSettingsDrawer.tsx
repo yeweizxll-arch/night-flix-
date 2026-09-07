@@ -28,7 +28,7 @@ export function PlatformMerchantSettingsDrawer({
           canReadDomains={permissions.includes('platform.merchant.read')}
           canReadSettings={permissions.includes('platform.merchant.read')}
           createDomainKind="subdomain"
-          description={`查看并管控 ${merchant.name} 的用户站配置；自定义域名验证状态只读，不允许人工伪造。`}
+          description={`管理 ${merchant.name} 的品牌和域名。自定义域名需由代理商完成 DNS 验证。`}
           domainsEndpoint={`${base}/domains`}
           settingsEndpoint={`${base}/site-settings`}
           siteStatusEndpoint={`${base}/site-status`}

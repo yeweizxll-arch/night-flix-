@@ -48,6 +48,29 @@ describe('deployed runtime content/storage helper privileges', () => {
   }, 60000);
   afterAll(async () => { await db?.close(); });
 
+  it('permits App and referral CHECK predicates for runtime roles, not the host resolver', async () => {
+    for (const scope of ['tenant', 'platform'] as const) {
+      await db.transaction(async tx => {
+        await role(tx, scope);
+        const result = await tx.query<{ countries: boolean; locales: boolean; orders: boolean }>(
+          "select app.valid_country_codes(ARRAY['US']) as countries, app.valid_locale_codes(ARRAY['zh-CN']) as locales, app.valid_referral_order_types(ARRAY['membership']) as orders");
+        expect(result.rows[0]).toEqual({ countries: true, locales: true, orders: true });
+      });
+    }
+    for (const fn of ['valid_country_codes', 'valid_locale_codes']) {
+      const result = await db.query<{ allowed: boolean }>("select has_function_privilege('nf_resolver',$1,'EXECUTE') as allowed", [`app.${fn}(text[])`]);
+      expect(result.rows[0]?.allowed).toBe(false);
+    }
+  });
+
+  it('reproduces App configuration 500 when the country predicate privilege is missing', async () => {
+    await expect(db.transaction(async tx => {
+      await tx.exec('REVOKE EXECUTE ON FUNCTION app.valid_country_codes(text[]) FROM nf_tenant');
+      await role(tx, 'tenant');
+      await tx.exec("select app.valid_country_codes(ARRAY['US'])");
+    })).rejects.toThrow(/permission denied for function valid_country_codes/);
+  });
+
   it('allows guarded privacy predicates without granting erasure authority or resolver access', async () => {
     const account = randomUUID(), request = randomUUID();
     await db.query('insert into customer_accounts(id,tenant_id,username,password_hash) values ($1,$2,$3,$4)',

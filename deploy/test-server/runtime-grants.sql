@@ -12,6 +12,11 @@ GRANT EXECUTE ON FUNCTION app.scope_can_reference(text, uuid, text, uuid)
   TO nf_tenant, nf_platform;
 GRANT EXECUTE ON FUNCTION app.content_target_matches_scope(text, uuid, text, uuid)
   TO nf_tenant, nf_platform;
+-- Pure CHECK-constraint predicates for App configuration and public publication.
+-- They read no tables and do not grant cross-tenant access.
+GRANT EXECUTE ON FUNCTION app.valid_country_codes(text[]),
+  app.valid_locale_codes(text[])
+  TO nf_tenant, nf_platform;
 -- Privacy/account and moderation triggers call this guarded boolean predicate.
 -- It still requires a registered platform role and a matching pending request;
 -- granting EXECUTE does not authorize a tenant to perform an erasure.

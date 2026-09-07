@@ -455,7 +455,7 @@ export function PlatformAppBuildDrawer({ merchant, onClose, principal }: Props) 
       {!overviewLoading && prerequisites && !configurationReady ? (
         <Alert
           className="page-alert"
-          description="需先启用代理商客户站、准备已验证且 TLS 生效的域名，并上传通过服务端解码核验的 1024×1024 无透明 PNG 应用图标。"
+          description="请先启用代理商客户站、完成 HTTPS 域名验证，并上传 1024×1024、不含透明区域的 PNG 应用图标。"
           message="构建前置条件尚未满足"
           showIcon
           type="warning"
@@ -467,13 +467,13 @@ export function PlatformAppBuildDrawer({ merchant, onClose, principal }: Props) 
       {prerequisites && prerequisites.assetProviders.length === 0 ? (
         <Alert
           className="page-alert"
-          message="当前代理商没有可用于构建资产直传的 active S3 Provider，请先配置代理商存储或启用公共存储。"
+          message="暂无可用对象存储，请先配置代理商存储或启用公共存储。"
           showIcon
           type="warning"
         />
       ) : null}
       <Form<ProfileFormValue>
-        disabled={!canManage || overviewLoading}
+        name="platformappbuilddrawer-1" disabled={!canManage || overviewLoading}
         form={form}
         layout="vertical"
         onFinish={(values) => void saveProfile(values)}
@@ -533,7 +533,7 @@ export function PlatformAppBuildDrawer({ merchant, onClose, principal }: Props) 
               </Button>
             </Space.Compact>
           </Form.Item>
-          <Form.Item extra="可留空；仅列出已由服务端解码核验的应用构建启动图。" label="启动图" name="splashMediaAssetId">
+          <Form.Item extra="可留空；请选择已上传并通过校验的启动图。" label="启动图" name="splashMediaAssetId">
             <Space.Compact block>
               <Select
                 allowClear
@@ -798,7 +798,7 @@ function AppBuildAssetUploadModal({
 
   async function upload(): Promise<void> {
     if (!base || !purpose || !file || !isUuidValue(providerId)) {
-      setError(!file ? '请选择符合要求的图片文件' : '请选择有效的对象存储 Provider');
+      setError(!file ? '请选择符合要求的图片文件' : '请选择可用对象存储');
       clearFile();
       return;
     }
@@ -831,7 +831,7 @@ function AppBuildAssetUploadModal({
         signal: controller.signal,
       });
       validateContentUploadIntent(intent, file, isUuidValue);
-      setStage('正在直传对象存储，完成核验前不会作为构建资产使用');
+      setStage('正在上传构建图片，完成后将自动校验…');
       const uploadResponse = await fetch(intent.uploadUrl, {
         body: file,
         credentials: 'omit',
@@ -842,8 +842,8 @@ function AppBuildAssetUploadModal({
       });
       if (!uploadResponse.ok) throw new Error(`对象存储直传失败（HTTP ${uploadResponse.status}）`);
       setStage(purpose === 'app_icon'
-        ? '服务端正在解码并核验 1024×1024 尺寸与透明通道'
-        : '服务端正在解码并核验启动图格式与尺寸');
+        ? '正在校验应用图标尺寸和透明区域'
+        : '正在校验启动图格式与尺寸');
       const completed = await request<AppBuildAssetCompletion>(
         `${base}/assets/uploads/${encodeURIComponent(intent.id)}/complete`,
         { method: 'POST', signal: controller.signal },
@@ -883,8 +883,8 @@ function AppBuildAssetUploadModal({
       <Alert
         className="page-alert"
         message={purpose === 'app_icon'
-          ? '客户端仅预检 PNG 和 25 MiB 上限；服务端会重新下载并解码，只有 1024×1024 且无透明通道的 PNG 才会成为 ready。'
-          : '启动图支持 PNG、JPEG、WebP，最大 25 MiB；服务端最终解码通过后才会成为 ready。'}
+          ? '请上传 1024×1024、不含透明区域的 PNG 图标，最大 25 MiB。'
+          : '启动图支持 PNG、JPEG、WebP，最大 25 MiB。'}
         showIcon
         type="info"
       />
@@ -898,7 +898,7 @@ function AppBuildAssetUploadModal({
               label: `${provider.label}（${provider.ownerType === 'platform' ? '公共' : '代理商'}）`,
               value: provider.id,
             }))}
-            placeholder="选择 active S3 Provider"
+            placeholder="选择已启用的对象存储"
             style={{ display: 'block', marginTop: 6, width: '100%' }}
             value={providerId || undefined}
           />
@@ -931,7 +931,7 @@ function AppBuildAssetUploadModal({
           onClick={() => void upload()}
           type="primary"
         >
-          上传并由服务端核验
+          上传图片
         </Button>
       </Space>
     </Modal>

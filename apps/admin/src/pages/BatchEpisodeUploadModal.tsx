@@ -29,7 +29,8 @@ export function BatchEpisodeUploadModal({ scope, dramaId, onClose }: {
       `/api/v1/${scope}/storage/providers?pageSize=100`,
     ).then(result => {
       if (!active) return;
-      const available = result.items.filter(provider => provider.status === 'active' && provider.ownerType === scope);
+      const available = result.items.filter(provider => provider.status === 'active'
+        && (scope === 'tenant' || provider.ownerType === 'platform'));
       setProviders(available); setProviderId(available[0]?.id ?? '');
     }).catch(() => { if (active) setError('存储配置加载失败，请关闭后重新打开，或联系管理员'); });
     return () => { active = false; controllerRef.current?.abort(); };

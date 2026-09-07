@@ -303,8 +303,8 @@ export function StorageProviderPage({
             </Button>
             <Popconfirm
               description={provider.status === 'active'
-                ? '停用后不能再用于新的上传。'
-                : '启用后可用于新的上传。'}
+                ? '停用后不能上传新文件，依赖该存储的内容也可能无法播放。'
+                : '启用后可用于上传和内容播放。'}
               okButtonProps={{ loading: submitting === `status:${provider.id}` }}
               onConfirm={() => void changeStatus(provider)}
               title={provider.status === 'active' ? '停用该存储配置？' : '启用该存储配置？'}
@@ -415,6 +415,7 @@ function StorageProviderModal({
       width={760}
     >
       <Form<StorageProviderForm>
+        name="storageproviderpage-1"
         form={form}
         layout="vertical"
         onFinish={onFinish}

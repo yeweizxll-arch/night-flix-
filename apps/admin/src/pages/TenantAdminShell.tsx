@@ -20,6 +20,7 @@ import {
 } from '@ant-design/icons';
 import {
   Avatar,
+  message,
   Button,
   Drawer,
   Layout,
@@ -78,7 +79,17 @@ const pageTitles: Record<string, string> = {
 
 export function ScopedAdminShell({ principal }: { principal: AuthPrincipal }) {
   const { logout } = useAuth();
+  const [messages, messageContext] = message.useMessage();
+  const [loggingOut, setLoggingOut] = useState(false);
+  async function signOut() {
+    if (loggingOut) return;
+    setLoggingOut(true);
+    try { await logout(); }
+    catch { messages.error('退出未完成，请检查网络后重试'); }
+    finally { setLoggingOut(false); }
+  }
   const canReadContent = principal.permissions.includes('content.drama.read');
+  const canReadApp = canReadContent || principal.permissions.includes('tenant.site.read');
   const canReadStorage = principal.permissions.includes('tenant.storage.read');
   const canReadSite = [
     'tenant.site.read',
@@ -118,7 +129,7 @@ export function ScopedAdminShell({ principal }: { principal: AuthPrincipal }) {
       canReadContent
         ? { icon: <FileTextOutlined />, key: 'content', label: '内容管理' }
         : null,
-      canReadContent
+      canReadApp
         ? { icon: <VideoCameraOutlined />, key: 'public-pool', label: '公共剧池与 App' }
         : null,
       canReadStorage
@@ -174,6 +185,7 @@ export function ScopedAdminShell({ principal }: { principal: AuthPrincipal }) {
     return items;
   }, [
     canReadAudit,
+    canReadApp,
     canReadCatalog,
     canReadContent,
     canReadOrders,
@@ -195,7 +207,7 @@ export function ScopedAdminShell({ principal }: { principal: AuthPrincipal }) {
     const allowedPages = new Map<string, boolean>([
       ['dashboard', canReadAnalytics],
       ['content', canReadContent],
-      ['public-pool', canReadContent],
+      ['public-pool', canReadApp],
       ['storage', canReadStorage],
       ['site-settings', canReadSite],
       ['community', canReadInteractions],
@@ -218,6 +230,7 @@ export function ScopedAdminShell({ principal }: { principal: AuthPrincipal }) {
     return [...allowedPages].find(([, allowed]) => allowed)?.[0];
   }, [
     activePage,
+    canReadApp,
     canReadAudit,
     canReadCatalog,
     canReadContent,
@@ -265,6 +278,7 @@ export function ScopedAdminShell({ principal }: { principal: AuthPrincipal }) {
 
   return (
     <Layout className="app-shell tenant-admin-shell">
+      {messageContext}
       <Sider className="app-sider" width={248}>
         <div className="brand-block">
           <div className="brand-mark">NF</div>
@@ -295,7 +309,7 @@ export function ScopedAdminShell({ principal }: { principal: AuthPrincipal }) {
             <Tag className="environment-tag" color="blue">代理商空间</Tag>
             <Avatar className="account-avatar" size={30}>{principal.displayName.slice(0, 1)}</Avatar>
             <Typography.Text className="account-name">{principal.displayName}</Typography.Text>
-            <Button icon={<LogoutOutlined />} size="small" onClick={() => void logout()}>退出</Button>
+            <Button icon={<LogoutOutlined />} size="small" loading={loggingOut} onClick={() => void signOut()}>退出</Button>
           </Space>
         </Header>
         <Drawer
@@ -370,7 +384,7 @@ export function ScopedAdminShell({ principal }: { principal: AuthPrincipal }) {
           ) : effectivePage === 'payments' ? (
             <PaymentSettingsPage
               apiBase="/api/v1/tenant/commerce/payments"
-              description="选择平台公共代收或代理商独立直收；真实渠道需先安装对应支付适配器。"
+              description="选择收款方式并管理支付渠道。"
               managePermission="commerce.payment.manage"
               scope="tenant"
               title="支付与收款路由"
@@ -391,7 +405,7 @@ export function ScopedAdminShell({ principal }: { principal: AuthPrincipal }) {
           ) : effectivePage === 'roles' ? (
             <RoleManagementPage
               apiBase="/api/v1/tenant/access"
-              description="管理当前代理商的自定义角色；系统角色只读，当前数据范围仅支持 all。"
+              description="为员工分配工作权限。系统预设角色不可修改。"
               managePermission="tenant.role.manage"
               title="代理商角色权限"
             />

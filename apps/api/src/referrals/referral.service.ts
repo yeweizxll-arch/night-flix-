@@ -14,7 +14,7 @@ import {
   DatabaseService,
   type DatabaseTransaction,
 } from '../database/database.service';
-import { amountNumber, requireUuid } from '../commerce/commerce-validation';
+import { amountNumber, requireUuid, signedAmountNumber } from '../commerce/commerce-validation';
 
 const ORDER_TYPES = ['membership', 'drama', 'episode', 'points_topup'] as const;
 type ReferralOrderType = (typeof ORDER_TYPES)[number];
@@ -404,7 +404,7 @@ export class ReferralService {
           commissionId: row.commission_id,
           createdAt: row.created_at.toISOString(),
           currency: row.currency,
-          deltaMinor: amountNumber(row.delta_minor),
+          deltaMinor: signedAmountNumber(row.delta_minor),
           entryType: row.entry_type,
           id: row.id,
         })),

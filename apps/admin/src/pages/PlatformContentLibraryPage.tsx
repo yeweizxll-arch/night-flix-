@@ -24,6 +24,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { ApiError } from '../api/http';
 import { useAuth } from '../auth/AuthProvider';
+import { ContentScheduleFields as ScheduleFields } from './ContentScheduleFields';
 import { BatchEpisodeUploadModal } from './BatchEpisodeUploadModal';
 import { uploadEpisodeFile } from './batch-episodes';
 import { readVideoDuration } from './video-duration';
@@ -392,7 +393,7 @@ export function PlatformContentLibraryPage() {
         title: translation.title.trim(),
       }));
       if (values.coverMediaAssetId?.trim() && !isUuid(values.coverMediaAssetId.trim())) {
-        throw new Error('封面 Media Asset ID 必须是 UUID');
+        throw new Error('封面素材编号 必须是 UUID');
       }
     } catch (reason) {
       messageApi.error(localError(reason));
@@ -495,7 +496,7 @@ export function PlatformContentLibraryPage() {
     if (!episodeTrackEditor) return;
     const { drama, episode } = episodeTrackEditor;
     if (!isUuid(values.mediaAssetId.trim())) {
-      messageApi.error('字幕或配音 Media Asset ID 必须是 UUID');
+      messageApi.error('请选择已上传的字幕或配音文件，或填写有效的文件编号');
       return;
     }
     setSubmitting(`track:create:${episode.id}`);
@@ -729,8 +730,8 @@ export function PlatformContentLibraryPage() {
         method: 'DELETE',
       });
       messageApi.success(kind === 'drama'
-        ? '公共短剧已软删除，可在 30 天恢复期内恢复'
-        : `${taxonomyName(kind)}已软删除，可在 30 天恢复期内恢复`);
+        ? '公共短剧已删除，可在 30 天恢复期内恢复'
+        : `${taxonomyName(kind)}已删除，可在 30 天恢复期内恢复`);
       closeDelete();
       if (kind === 'drama') {
         closeDetail();
@@ -742,7 +743,7 @@ export function PlatformContentLibraryPage() {
         ]);
       }
     } catch (reason) {
-      messageApi.error(contentError(reason, '软删除失败'));
+      messageApi.error(contentError(reason, '删除失败'));
       if (isConflict(reason)) {
         closeDelete();
         if (kind === 'drama') await loadDramas(dramas.page, dramas.pageSize);
@@ -807,14 +808,14 @@ export function PlatformContentLibraryPage() {
         <div>
           <Typography.Title level={2}>公共内容管理</Typography.Title>
           <Typography.Text type="secondary">
-            管理平台自有短剧、剧集、分类与标签；平台内容直接发布，不经过代理商审核队列。
+            管理公共剧目。发布后，各代理商可自行挑选、审核并上架。
           </Typography.Text>
         </div>
       </div>
       <Alert
         className="page-alert"
-        description="可直接选择文件安全上传，也可填写平台对象存储中已就绪的 Media Asset ID；不支持 external URL。"
-        message="媒体安全边界"
+        description="上传封面和视频前，请先配置并启用公共对象存储。"
+        message="上传准备"
         showIcon
         type="info"
       />
@@ -920,8 +921,8 @@ export function PlatformContentLibraryPage() {
         title={revisionSource ? `创建新版本：${revisionSource.code}` : dramaEditor === 'create' ? '创建公共短剧' : '编辑公共短剧'}
         width={760}
       >
-        <Form form={dramaForm} layout="vertical" onFinish={(values) => void saveDrama(values)} preserve={false}>
-          <Form.Item label="短剧 Code" name="code" rules={[
+        <Form name="platformcontentlibrarypage-1" form={dramaForm} layout="vertical" onFinish={(values) => void saveDrama(values)} preserve={false}>
+          <Form.Item label="短剧编号" name="code" rules={[
             { max: 128, min: 2, required: true },
             { pattern: /^[a-z0-9][a-z0-9_-]{1,127}$/, message: '仅支持小写字母、数字、_、-' },
           ]}><Input maxLength={128} /></Form.Item>
@@ -936,10 +937,10 @@ export function PlatformContentLibraryPage() {
               </Space>
             </>
           ) : null}
-          <Form.Item label="封面 Media Asset ID（可选）">
+          <Form.Item label="封面素材编号（可选）">
             <Space.Compact block>
               <Form.Item name="coverMediaAssetId" noStyle>
-                <Input maxLength={36} placeholder="平台自有、image、ready 的 UUID" />
+                <Input maxLength={36} placeholder="上传图片后自动填入" />
               </Form.Item>
               <Button htmlType="button" onClick={() => setUploadTarget('cover')}>上传图片</Button>
             </Space.Compact>
@@ -987,7 +988,7 @@ export function PlatformContentLibraryPage() {
           size="small"
         />
         <Typography.Title level={5} style={{ marginTop: 24 }}>新增或更新轨道</Typography.Title>
-        <Form form={episodeTrackForm} layout="vertical" onFinish={(values) => void saveEpisodeTrack(values)} preserve={false}>
+        <Form name="platformcontentlibrarypage-2" form={episodeTrackForm} layout="vertical" onFinish={(values) => void saveEpisodeTrack(values)} preserve={false}>
           <Space align="start" wrap>
             <Form.Item label="类型" name="type" rules={[{ required: true }]}>
               <Select options={[{ label: '字幕', value: 'subtitle' }, { label: '配音', value: 'dubbing' }]} style={{ width: 120 }} />
@@ -1003,7 +1004,7 @@ export function PlatformContentLibraryPage() {
             </Form.Item>
             <Form.Item label="设为默认" name="isDefault" valuePropName="checked"><Switch /></Form.Item>
           </Space>
-          <Form.Item label="Media Asset ID" required>
+          <Form.Item label="媒体文件" required>
             <Space.Compact block>
               <Form.Item name="mediaAssetId" noStyle rules={[{ required: true, whitespace: true }]}>
                 <Input maxLength={36} placeholder="平台自有、ready 的字幕或音频 UUID" />
@@ -1024,7 +1025,7 @@ export function PlatformContentLibraryPage() {
         width={720}
       >
         <Alert className="page-alert" message="上传正片后自动读取本集时长，无需手填。整部剧请使用详情页的“批量添加剧集”。试看为可选独立视频，不会从正片自动复制。" showIcon type="info" />
-        <Form form={episodeForm} layout="vertical" onFinish={(values) => void saveEpisode(values)} preserve={false}>
+        <Form name="platformcontentlibrarypage-3" form={episodeForm} layout="vertical" onFinish={(values) => void saveEpisode(values)} preserve={false}>
           <Space align="start" wrap>
             <Form.Item label="集数" name="episodeNo" rules={[{ required: true }]}>
               <InputNumber max={1000} min={1} precision={0} />
@@ -1036,7 +1037,7 @@ export function PlatformContentLibraryPage() {
               <InputNumber max={86400} min={0} precision={0} />
             </Form.Item>
           </Space>
-          <Form.Item extra="必填；保存时验证为平台自有 ready 视频。" label="正片 Media Asset ID" required>
+          <Form.Item extra="上传本集正片后即可保存。" label="正片视频" required>
             <Space.Compact block>
               <Form.Item name="mediaAssetId" noStyle rules={[{ required: true }]}>
                 <Input readOnly maxLength={36} placeholder="上传正片后自动填入" />
@@ -1044,10 +1045,10 @@ export function PlatformContentLibraryPage() {
               {canUploadEpisode ? <Button htmlType="button" onClick={() => setUploadTarget('episode-main')}>单独上传正片</Button> : null}
             </Space.Compact>
           </Form.Item>
-          <Form.Item extra="可留空。编辑时清空并保存会 PATCH null；必须与正片 UUID 不同。" label="独立试看 Media Asset ID">
+          <Form.Item extra="可选。上传独立预告视频；清空后将取消独立试看。" label="独立试看视频">
             <Space.Compact block>
               <Form.Item name="previewMediaAssetId" noStyle>
-                <Input allowClear maxLength={36} placeholder="不配置则 H5 不提供试看" />
+                <Input allowClear maxLength={36} placeholder="未上传独立试看" />
               </Form.Item>
               {canUploadEpisode ? <Button htmlType="button" onClick={() => setUploadTarget('episode-preview')}>单独上传试看</Button> : null}
             </Space.Compact>
@@ -1067,8 +1068,8 @@ export function PlatformContentLibraryPage() {
         open={Boolean(taxonomyEditor)}
         title={`${taxonomyEditor?.record ? '编辑' : '创建'}${taxonomyName(taxonomyEditor?.type ?? 'categories')}`}
       >
-        <Form form={taxonomyForm} layout="vertical" onFinish={(values) => void saveTaxonomy(values)} preserve={false}>
-          <Form.Item label="Code" name="code" rules={[
+        <Form name="platformcontentlibrarypage-4" form={taxonomyForm} layout="vertical" onFinish={(values) => void saveTaxonomy(values)} preserve={false}>
+          <Form.Item label="业务编号" name="code" rules={[
             { max: 64, min: 2, required: true },
             { pattern: /^[a-z0-9][a-z0-9_-]{1,63}$/, message: '仅支持小写字母、数字、_、-' },
           ]}><Input maxLength={64} /></Form.Item>
@@ -1087,18 +1088,18 @@ export function PlatformContentLibraryPage() {
         </Form>
       </Modal>
 
-      <Modal destroyOnHidden footer={null} onCancel={closeDelete} open={Boolean(deleteTarget)} title="确认软删除">
+      <Modal destroyOnHidden footer={null} onCancel={closeDelete} open={Boolean(deleteTarget)} title="确认删除">
         <Alert className="page-alert" message={deleteTarget?.kind === 'drama'
-          ? '发布中或已排期的短剧必须先下架。短剧软删除后可在 30 天恢复期内恢复。'
-          : '被短剧引用的分类或标签不能删除；成功软删除后可在 30 天恢复期内恢复。'} showIcon type="warning" />
-        <Form form={deleteForm} layout="vertical" onFinish={(values) => void deleteContent(values)} preserve={false}>
+          ? '发布中或已排期的短剧必须先下架。短剧删除后可在 30 天恢复期内恢复。'
+          : '被短剧引用的分类或标签不能删除；成功删除后可在 30 天恢复期内恢复。'} showIcon type="warning" />
+        <Form name="platformcontentlibrarypage-5" form={deleteForm} layout="vertical" onFinish={(values) => void deleteContent(values)} preserve={false}>
           <Form.Item label="删除原因" name="reason" rules={[{ max: 2000, required: true, whitespace: true }]}>
             <Input.TextArea maxLength={2000} rows={3} showCount />
           </Form.Item>
           <Form.Item name="confirmed" rules={[{ validator: confirmDelete }]} valuePropName="checked">
-            <Checkbox>我确认软删除当前内容</Checkbox>
+            <Checkbox>我确认删除当前内容</Checkbox>
           </Form.Item>
-          <Button block danger htmlType="submit" loading={Boolean(deleteTarget && submitting === `delete:${deleteTarget.kind}:${deleteTarget.record.id}`)} type="primary">确认软删除</Button>
+          <Button block danger htmlType="submit" loading={Boolean(deleteTarget && submitting === `delete:${deleteTarget.kind}:${deleteTarget.record.id}`)} type="primary">确认删除</Button>
         </Form>
       </Modal>
 
@@ -1111,7 +1112,7 @@ export function PlatformContentLibraryPage() {
           else if (uploadTarget === 'episode-preview') episodeForm.setFieldValue('previewMediaAssetId', mediaId);
           else episodeTrackForm.setFieldValue('mediaAssetId', mediaId);
           setUploadTarget(undefined);
-          messageApi.success('文件已上传并由服务端验证为 ready，Media Asset ID 已填入表单');
+          messageApi.success('上传成功，已关联到当前表单');
         }}
         open={Boolean(uploadTarget)}
         purpose={uploadTarget}
@@ -1209,7 +1210,7 @@ function DramaList({
           { dataIndex: 'status', title: '状态', width: 110, render: (value: DramaStatus, record) => (
             <Space direction="vertical" size={2}>
               <DramaStatusTag status={value} />
-              {record.deletedAt ? <Tag color="red">已软删除</Tag> : null}
+              {record.deletedAt ? <Tag color="red">已删除</Tag> : null}
             </Space>
           ) },
           { dataIndex: 'totalEpisodes', title: '集数', width: 80 },
@@ -1244,7 +1245,7 @@ function DramaList({
                   <Button danger size="small" onClick={() => onEmergency(record)}>紧急全局下架</Button>
                 ) : null}
                 {canManage && !record.deletedAt && !['approved', 'published'].includes(record.status)
-                  ? <Button danger size="small" onClick={() => onDelete(record)}>软删除</Button> : null}
+                  ? <Button danger size="small" onClick={() => onDelete(record)}>删除</Button> : null}
                 {canManage && isDramaRestorable(record.deletedAt, record.restoreUntil) ? (
                   <Popconfirm onConfirm={() => onAction(record, 'restore')} title="确认在恢复期限内恢复该短剧？">
                     <Button loading={submitting === `restore:${record.id}`} size="small">恢复</Button>
@@ -1335,14 +1336,14 @@ function TaxonomyList({
           { dataIndex: 'version', title: '版本', width: 80 },
           { key: 'actions', title: '操作', width: 180, render: (_, record) => record.deletedAt
             ? canManage && (!record.restoreUntil || isDramaRestorable(record.deletedAt, record.restoreUntil)) ? (
-              <Popconfirm onConfirm={() => onRestore(record)} title={`确认恢复该${taxonomyName(type)}？恢复期由服务端最终校验。`}>
+              <Popconfirm onConfirm={() => onRestore(record)} title={`确认恢复该${taxonomyName(type)}？`}>
                 <Button loading={submitting === `restore:${type}:${record.id}`} size="small">恢复</Button>
               </Popconfirm>
-            ) : <Typography.Text type="secondary">已软删除（恢复期已过）</Typography.Text>
+            ) : <Typography.Text type="secondary">已删除（恢复期已过）</Typography.Text>
             : canManage ? (
               <Space>
                 <Button size="small" onClick={() => onEdit(record)}>编辑</Button>
-                <Button danger size="small" onClick={() => onDelete(record)}>软删除</Button>
+                <Button danger size="small" onClick={() => onDelete(record)}>删除</Button>
               </Space>
             ) : <Typography.Text type="secondary">只读</Typography.Text> },
         ]}
@@ -1383,14 +1384,14 @@ function DramaDetail({
     <Space direction="vertical" size="large" style={{ width: '100%' }}>
       <Descriptions bordered column={1} size="small">
         <Descriptions.Item label="短剧 ID"><Typography.Text copyable>{record.id}</Typography.Text></Descriptions.Item>
-        <Descriptions.Item label="Code">{record.code}</Descriptions.Item>
+        <Descriptions.Item label="业务编号">{record.code}</Descriptions.Item>
         <Descriptions.Item label="闪创作品 ID">{record.shanchuangWorkId ?? '非闪创公共剧'}</Descriptions.Item>
         <Descriptions.Item label="闪创创作者 ID">{record.shanchuangCreatorId ?? '—'}</Descriptions.Item>
         <Descriptions.Item label="公共版本">{record.publicRevision ?? '—'}</Descriptions.Item>
         <Descriptions.Item label="替代上一版本">{record.supersedesDramaId ?? '—'}</Descriptions.Item>
         <Descriptions.Item label="公共内容锁定时间">{formatDateTime(record.publicReleaseLockedAt)}</Descriptions.Item>
-        <Descriptions.Item label="状态"><DramaStatusTag status={record.status} /> {record.deletedAt ? <Tag color="red">已软删除</Tag> : null}</Descriptions.Item>
-        <Descriptions.Item label="封面 Media Asset ID">{record.coverMediaAssetId ? <Typography.Text copyable>{record.coverMediaAssetId}</Typography.Text> : '未设置'}</Descriptions.Item>
+        <Descriptions.Item label="状态"><DramaStatusTag status={record.status} /> {record.deletedAt ? <Tag color="red">已删除</Tag> : null}</Descriptions.Item>
+        <Descriptions.Item label="封面素材编号">{record.coverMediaAssetId ? <Typography.Text copyable>{record.coverMediaAssetId}</Typography.Text> : '未设置'}</Descriptions.Item>
         <Descriptions.Item label="分类 ID">{record.categoryId ?? '未设置'}</Descriptions.Item>
         <Descriptions.Item label="标签 ID">{record.tagIds.length ? record.tagIds.map((id) => <Tag key={id}>{id}</Tag>) : '未设置'}</Descriptions.Item>
         <Descriptions.Item label="发布计划">{formatDateTime(record.releaseAt)}</Descriptions.Item>
@@ -1420,14 +1421,14 @@ function DramaDetail({
           {editable ? <Space><Button onClick={onAddEpisode}>添加单集</Button>{onBatchEpisodes && <Button onClick={onBatchEpisodes} type="primary">批量添加剧集</Button>}</Space> : null}
         </div>
         {!editable ? <Alert className="page-alert" message="发布中、已排期或已删除的短剧不能编辑剧集，请先下架。" showIcon type="info" /> : null}
-        <Alert className="page-alert" message="媒体列显示绑定状态，不伪造实时转码状态；创建、更新和发布时服务端会重新验证正片与独立试看均为可用 ready 视频。" showIcon type="info" />
+        <Alert className="page-alert" message="确认剧集顺序及视频后，再发布剧目。" showIcon type="info" />
         <Table<EpisodeRecord>
           columns={[
             { dataIndex: 'episodeNo', title: '集数', width: 70 },
             { key: 'title', title: '标题', render: (_, episode) => translationValue(episode.translations, 'title') || `第 ${episode.episodeNo} 集` },
             { dataIndex: 'status', title: '状态', width: 100, render: (value) => <DramaStatusTag status={value as DramaStatus} /> },
             { key: 'time', title: '时长/试看', width: 120, render: (_, episode) => `${episode.durationSeconds}s / ${episode.previewSeconds}s` },
-            { dataIndex: 'mediaAssetId', title: '正片媒体（绑定状态）', width: 300, render: (value) => <Space direction="vertical" size={2}><Tag color="green">已绑定，保存时校验 ready</Tag><Typography.Text copyable>{value}</Typography.Text></Space> },
+            { dataIndex: 'mediaAssetId', title: '正片视频', width: 300, render: (value) => <Space direction="vertical" size={2}><Tag color="green">视频已关联</Tag><Typography.Text copyable>{value}</Typography.Text></Space> },
             { dataIndex: 'previewMediaAssetId', title: '独立试看媒体（绑定状态）', width: 300, render: (value?: string) => value ? <Space direction="vertical" size={2}><Tag color="blue">独立试看已绑定</Tag><Typography.Text copyable>{value}</Typography.Text></Space> : <Tag>未配置，不回退正片</Tag> },
             { dataIndex: 'releaseAt', title: '发布时间', width: 180, render: formatDateTime },
             { dataIndex: 'version', title: '版本', width: 70 },
@@ -1444,20 +1445,6 @@ function DramaDetail({
         />
       </div>
     </Space>
-  );
-}
-
-function ScheduleFields() {
-  return (
-    <>
-      <Alert className="page-alert" message="定时发布由 releaseAt 控制；unpublishAt 必须晚于 releaseAt。留空表示不排期。" showIcon type="info" />
-      <Form.Item label="发布时间（标准 ISO，可选）" name="releaseAt">
-        <Input placeholder="2026-08-22T12:00:00.000Z" />
-      </Form.Item>
-      <Form.Item label="下架时间（标准 ISO，可选）" name="unpublishAt">
-        <Input placeholder="2026-09-22T12:00:00.000Z" />
-      </Form.Item>
-    </>
   );
 }
 
@@ -1535,6 +1522,9 @@ function PlatformMediaUploadModal({
   const { principal, request } = useAuth();
   const [providerId, setProviderId] = useState('');
   const [providers, setProviders] = useState<PlatformStorageProvider[]>([]);
+  const [storageLoading, setStorageLoading] = useState(false);
+  const [storageError, setStorageError] = useState<string>();
+  const [storageReload, setStorageReload] = useState(0);
   const [file, setFile] = useState<File>();
   const [stage, setStage] = useState<string>();
   const [hashProgress, setHashProgress] = useState(0);
@@ -1544,11 +1534,15 @@ function PlatformMediaUploadModal({
 
   useEffect(() => {
     if (!open) return;
+    setProviderId('');
+    setProviders([]);
     setFile(undefined);
     setStage(undefined);
     setHashProgress(0);
     setError(undefined);
+    setStorageError(undefined);
     if (!canReadStorage) return;
+    setStorageLoading(true);
     let active = true;
     void request<PageResponse<PlatformStorageProvider>>(
       '/api/v1/platform/storage/providers?page=1&pageSize=100',
@@ -1556,12 +1550,12 @@ function PlatformMediaUploadModal({
       if (!active) return;
       const available = result.items.filter((provider) => provider.status === 'active');
       setProviders(available);
-      setProviderId((current) => current || available[0]?.id || '');
+      setProviderId(available[0]?.id || '');
     }).catch(() => {
-      if (active) setProviders([]);
-    });
+      if (active) setStorageError('对象存储加载失败，请重试');
+    }).finally(() => { if (active) setStorageLoading(false); });
     return () => { active = false; };
-  }, [canReadStorage, open, request]);
+  }, [canReadStorage, open, request, storageReload]);
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
@@ -1577,7 +1571,7 @@ function PlatformMediaUploadModal({
 
   async function upload(): Promise<void> {
     if (!file || !isUuid(providerId.trim())) {
-      setError(!file ? '请选择需要上传的文件' : 'Provider ID 必须是 UUID');
+      setError(!file ? '请选择需要上传的文件' : '请选择可用对象存储');
       return;
     }
     const validation = validateContentUploadFile(file, kind);
@@ -1598,7 +1592,7 @@ function PlatformMediaUploadModal({
         onReady(mediaId, durationSeconds);
         return;
       }
-      setStage('正在分块计算 SHA-256，不会把整个大文件一次载入内存');
+      setStage('正在校验文件，请稍候…');
       const checksumSha256 = await sha256Blob(file, {
         onProgress: (ratio) => setHashProgress(Math.round(ratio * 100)),
         signal: controller.signal,
@@ -1617,7 +1611,7 @@ function PlatformMediaUploadModal({
         method: 'POST',
       });
       validateContentUploadIntent(intent, file, isUuid);
-      setStage('正在直传对象存储；完成前不会把 Media ID 视为 ready');
+      setStage('正在上传，完成后将自动校验…');
       const uploadResponse = await fetch(intent.uploadUrl, {
         body: file,
         credentials: 'omit',
@@ -1629,13 +1623,13 @@ function PlatformMediaUploadModal({
       if (!uploadResponse.ok) {
         throw new Error(`对象存储直传失败（HTTP ${uploadResponse.status}）`);
       }
-      setStage('正在由服务端核验大小、类型和 SHA-256');
+      setStage('正在校验文件完整性');
       const completed = await request<{ id: string; status: string }>(
         `${API_BASE}/media/uploads/${encodeURIComponent(intent.id)}/complete`,
         { method: 'POST' },
       );
       if (completed.id !== intent.id || completed.status !== 'ready') {
-        throw new Error('服务端尚未把媒体验证为 ready');
+        throw new Error('文件尚未通过完整性校验，请稍后重试');
       }
       abortRef.current = undefined;
       onReady(completed.id);
@@ -1660,26 +1654,26 @@ function PlatformMediaUploadModal({
     >
       <Alert
         className="page-alert"
-        message="上传流程为：本地分块校验 → S3 条件直传 → 服务端 HEAD 核验 → ready。不会使用外链，也不会跳过完成核验。"
+        message="选择存储位置和文件，上传完成后会自动关联。"
         showIcon
         type="info"
       />
       <Space direction="vertical" size="middle" style={{ width: '100%' }}>
         <div>
-          <Typography.Text strong>平台对象存储 Provider ID</Typography.Text>
-          <Input
+          <Typography.Text strong>公共对象存储</Typography.Text>
+          {storageError ? <Alert type="error" message={storageError} action={<Button onClick={() => setStorageReload(value => value + 1)}>重试</Button>} /> : null}
+          {canReadStorage && !storageLoading && !storageError && !providers.length ? <Alert type="warning" showIcon message="暂无可用存储，请先在“公共对象存储”中启用存储配置。" /> : null}
+          {canReadStorage ? <Select disabled={Boolean(stage)} loading={storageLoading}
+            options={providers.map(provider => ({ label: provider.label, value: provider.id }))}
+            value={providerId || undefined} onChange={setProviderId} placeholder="请选择存储位置" style={{ width: '100%' }} /> : <Input
             disabled={Boolean(stage)}
-            list="platform-content-storage-providers"
             maxLength={36}
             onChange={(event) => setProviderId(event.target.value)}
-            placeholder="平台已启用 S3 Provider UUID"
+            placeholder="管理员提供的存储编号"
             value={providerId}
-          />
-          <datalist id="platform-content-storage-providers">
-            {providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.label}</option>)}
-          </datalist>
+          />}
           {!canReadStorage ? (
-            <Typography.Text type="secondary">当前账号没有存储配置读取权限，请输入管理员提供的平台 Provider UUID。</Typography.Text>
+            <Typography.Text type="secondary">当前账号无存储查看权限，请联系管理员提供存储编号。</Typography.Text>
           ) : null}
         </div>
         <div>
@@ -1706,7 +1700,7 @@ function PlatformMediaUploadModal({
           </div>
         ) : null}
         {error ? <Alert message={error} showIcon type="error" /> : null}
-        <Button block disabled={Boolean(stage)} onClick={() => void upload()} type="primary">
+        <Button block disabled={Boolean(stage) || !file || !isUuid(providerId) || (canReadStorage && (storageLoading || !providers.length))} onClick={() => void upload()} type="primary">
           开始安全上传
         </Button>
         {stage ? <Button block danger onClick={cancel}>取消上传</Button> : null}
@@ -1791,7 +1785,7 @@ function formatDateTime(value?: string): string {
 }
 
 async function confirmDelete(_: unknown, value: boolean): Promise<void> {
-  if (!value) throw new Error('请先确认软删除操作');
+  if (!value) throw new Error('请先确认删除操作');
 }
 
 function contentError(reason: unknown, fallback: string): string {

@@ -54,6 +54,12 @@ export class TenantCommerceCatalogController {
     return this.catalog.listTenantCatalog(requireStaffTenantId(principal));
   }
 
+  @Get('content-options')
+  @RequirePermissions({ mode: 'read', permissions: ['commerce.catalog.read'], scope: 'tenant' })
+  contentOptions(@Query() query: Record<string, unknown>, @CurrentPrincipal() principal: AccessPrincipal) {
+    return this.catalog.contentOptions(requireStaffTenantId(principal), query);
+  }
+
   @Post('membership-plans')
   @RequirePermissions({
     mode: 'write',

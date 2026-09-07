@@ -74,6 +74,7 @@ export function MerchantListPage() {
   const [submitting, setSubmitting] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [error, setError] = useState<string>();
+  const [createError, setCreateError] = useState<string>();
   const [settingsMerchant, setSettingsMerchant] = useState<MerchantRecord>();
   const [buildMerchant, setBuildMerchant] = useState<MerchantRecord>();
 
@@ -104,7 +105,7 @@ export function MerchantListPage() {
 
   async function createMerchant(values: CreateMerchantForm): Promise<void> {
     setSubmitting(true);
-    setError(undefined);
+    setCreateError(undefined);
     try {
       await request<MerchantRecord>('/api/v1/platform/merchants', {
         body: JSON.stringify({
@@ -117,7 +118,7 @@ export function MerchantListPage() {
       form.resetFields();
       await load(1);
     } catch (reason) {
-      setError(reason instanceof ApiError ? reason.message : '代理商创建失败');
+      setCreateError(reason instanceof ApiError ? reason.message : '代理商创建失败');
     } finally {
       setSubmitting(false);
     }
@@ -129,17 +130,17 @@ export function MerchantListPage() {
         <div>
           <Typography.Title level={2}>代理商管理</Typography.Title>
           <Typography.Text type="secondary">
-            代理商仅由总后台创建，账号、域名、数据和权限相互隔离。
+            管理代理商账号、站点配置与应用构建。
           </Typography.Text>
         </div>
         {canCreate ? (
-          <Button type="primary" onClick={() => setModalOpen(true)}>
+          <Button type="primary" onClick={() => { form.resetFields(); setCreateError(undefined); setModalOpen(true); }}>
             创建代理商
           </Button>
         ) : null}
       </div>
 
-      {error ? <Alert closable message={error} type="error" showIcon /> : null}
+      {error ? <Alert message={error} type="error" showIcon action={<Button onClick={() => void load(data.page, data.pageSize)}>重试</Button>} /> : null}
 
       <Table<MerchantRecord>
         dataSource={data.items}
@@ -217,13 +218,14 @@ export function MerchantListPage() {
       <Modal
         destroyOnHidden
         footer={null}
-        onCancel={() => setModalOpen(false)}
+        onCancel={() => { if (!submitting) { setModalOpen(false); form.resetFields(); setCreateError(undefined); } }}
         open={modalOpen}
         title="创建代理商"
         width={680}
       >
+        {createError ? <Alert className="page-alert" message={createError} type="error" showIcon /> : null}
         <Form<CreateMerchantForm>
-          form={form}
+          name="merchantlistpage-1" form={form}
           initialValues={{
             defaultCurrency: 'USD',
             defaultLocale: 'en-US',

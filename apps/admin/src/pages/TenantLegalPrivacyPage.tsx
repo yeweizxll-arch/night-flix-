@@ -2,6 +2,7 @@ import {
   Alert,
   Button,
   Checkbox,
+  DatePicker,
   Descriptions,
   Drawer,
   Empty,
@@ -20,11 +21,12 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 
 import { ApiError } from '../api/http';
 import { useAuth } from '../auth/AuthProvider';
+import { APP_LOCALE_OPTIONS } from '@drama/contracts';
+import { dateTimeFormProps } from './ContentScheduleFields';
 import {
   documentTypeLabel,
   isConflict,
   LEGAL_DOCUMENT_TYPES,
-  LEGAL_LOCALES,
   localDateTimeToIso,
   type LegalDocumentType,
   type LegalLocale,
@@ -33,6 +35,7 @@ import {
 const LEGAL_BASE = '/api/v1/tenant/legal/documents';
 const PRIVACY_BASE = '/api/v1/tenant/privacy/requests';
 const PAGE_SIZE = 20;
+const privacyStatusLabels: Record<string, string> = { submitted: '已提交', processing: '处理中', completed: '已完成', failed: '处理失败' };
 
 interface LegalDocumentRecord {
   bodyMarkdown: string;
@@ -274,7 +277,7 @@ export function TenantLegalPrivacyPage() {
       key: 'document', title: '文档', render: (_: unknown, row: LegalDocumentRecord) => (
         <Space direction="vertical" size={1}>
           <Space wrap><Typography.Text strong>{row.title}</Typography.Text><Tag>{documentTypeLabel(row.documentType)}</Tag><Tag>{row.locale}</Tag></Space>
-          <Typography.Text type="secondary">v{row.version} · CAS {row.rowVersion} · {row.id}</Typography.Text>
+          <Typography.Text type="secondary">第 {row.version} 版</Typography.Text>
         </Space>
       ),
     },
@@ -298,7 +301,7 @@ export function TenantLegalPrivacyPage() {
       <Space className="page-toolbar" wrap>
         <Select allowClear onChange={(value) => { setLegalPage(1); setLegalStatus(value); }} options={[{ label: '草稿', value: 'draft' }, { label: '已发布', value: 'published' }]} placeholder="状态" style={{ width: 130 }} value={legalStatus} />
         <Select allowClear onChange={(value) => { setLegalPage(1); setLegalType(value); }} options={LEGAL_DOCUMENT_TYPES.map((value) => ({ label: documentTypeLabel(value), value }))} placeholder="文档类型" style={{ width: 150 }} value={legalType} />
-        <Select allowClear onChange={(value) => { setLegalPage(1); setLegalLocale(value); }} options={LEGAL_LOCALES.map((value) => ({ label: value, value }))} placeholder="语言" style={{ width: 130 }} value={legalLocale} />
+        <Select allowClear onChange={(value) => { setLegalPage(1); setLegalLocale(value); }} options={APP_LOCALE_OPTIONS} placeholder="语言" style={{ width: 150 }} value={legalLocale} />
         <Button loading={legalLoading} onClick={() => void loadLegal()}>刷新</Button>
         {canManageLegal ? <Button onClick={openCreate} type="primary">新建草稿</Button> : null}
       </Space>
@@ -323,9 +326,9 @@ export function TenantLegalPrivacyPage() {
 
   const privacyPanel = (
     <>
-      <Alert className="page-alert" description="本页仅查看服务端记录的处理进度、法定保留范围和第三方跟进边界，不提供手动“完成删除”按钮。" message="隐私请求只读监管" showIcon type="info" />
+      <Alert className="page-alert" description="查看处理进度与依法保留的信息；删除由系统流程执行。" message="隐私请求进度" showIcon type="info" />
       <Space className="page-toolbar" wrap>
-        <Select allowClear onChange={(value) => { setPrivacyPage(1); setPrivacyStatus(value); }} options={['submitted', 'processing', 'completed', 'failed'].map((value) => ({ label: value, value }))} placeholder="状态" style={{ width: 150 }} value={privacyStatus} />
+        <Select allowClear onChange={(value) => { setPrivacyPage(1); setPrivacyStatus(value); }} options={Object.entries(privacyStatusLabels).map(([value, label]) => ({ label, value }))} placeholder="状态" style={{ width: 150 }} value={privacyStatus} />
         <Button loading={privacyLoading} onClick={() => void loadPrivacy()}>刷新</Button>
       </Space>
       {privacyError ? <Alert action={<Button onClick={() => void loadPrivacy()} size="small">重试</Button>} message={privacyError} showIcon type="error" /> : null}
@@ -333,7 +336,7 @@ export function TenantLegalPrivacyPage() {
         columns={[
           { dataIndex: 'id', title: '请求 ID', render: (value: string) => <Typography.Text copyable>{value}</Typography.Text> },
           { dataIndex: 'accountSubjectId', title: '账户主体', render: (value: string) => <Typography.Text copyable>{value}</Typography.Text> },
-          { dataIndex: 'status', title: '状态', width: 120, render: (value: string) => <Tag>{value}</Tag> },
+          { dataIndex: 'status', title: '状态', width: 120, render: (value: string) => <Tag>{privacyStatusLabels[value] ?? value}</Tag> },
           { dataIndex: 'submittedAt', title: '提交时间', width: 180, render: (value: string) => new Date(value).toLocaleString('zh-CN') },
           { key: 'action', title: '操作', width: 100, render: (_: unknown, row: PrivacyRequestRecord) => <Button loading={privacyDetailLoading} onClick={() => void openPrivacyDetail(row)} size="small">详情</Button> },
         ]}
@@ -363,11 +366,11 @@ export function TenantLegalPrivacyPage() {
       <div className="page-heading"><div><Typography.Title level={2}>法律与隐私</Typography.Title><Typography.Text type="secondary">管理当前代理商的法律文档版本，并只读查看用户擦除请求。</Typography.Text></div></div>
       <Tabs items={tabs} />
       <Modal cancelText="取消" destroyOnHidden confirmLoading={legalSubmitting === 'save'} okText={editing === 'create' ? '创建草稿' : '保存草稿'} onCancel={() => { if (!legalSubmitting) closeEditor(); }} onOk={() => legalForm.submit()} open={Boolean(editing)} title={editing === 'create' ? '新建法律文档草稿' : '编辑草稿'} width={760}>
-        <Alert className="page-alert" message="Markdown 不允许原始 HTML；客户端也不会使用 innerHTML 渲染。" showIcon type="info" />
-        <Form<LegalFormValue> form={legalForm} layout="vertical" onFinish={(values) => void saveDocument(values)} preserve={false} requiredMark={false}>
+        <Alert className="page-alert" message="支持 Markdown 标题、列表和链接，不支持 HTML 标签。" showIcon type="info" />
+        <Form<LegalFormValue> name="tenantlegalprivacypage-1" form={legalForm} layout="vertical" onFinish={(values) => void saveDocument(values)} preserve={false} requiredMark={false}>
           <Space align="start" wrap>
             <Form.Item label="类型" name="documentType" rules={[{ required: true }]}><Select disabled={editing !== 'create'} options={LEGAL_DOCUMENT_TYPES.map((value) => ({ label: documentTypeLabel(value), value }))} style={{ width: 180 }} /></Form.Item>
-            <Form.Item label="语言" name="locale" rules={[{ required: true }]}><Select disabled={editing !== 'create'} options={LEGAL_LOCALES.map((value) => ({ label: value, value }))} style={{ width: 150 }} /></Form.Item>
+            <Form.Item label="语言" name="locale" rules={[{ required: true }]}><Select disabled={editing !== 'create'} options={APP_LOCALE_OPTIONS} style={{ width: 150 }} /></Form.Item>
             <Form.Item name="requiredForRegistration" valuePropName="checked"><Checkbox>注册必须同意</Checkbox></Form.Item>
           </Space>
           <Form.Item label="标题" name="title" rules={[{ required: true, whitespace: true }, { max: 200 }]}><Input maxLength={200} /></Form.Item>
@@ -376,10 +379,10 @@ export function TenantLegalPrivacyPage() {
       </Modal>
       <Modal cancelText="取消" destroyOnHidden confirmLoading={Boolean(publishing && legalSubmitting === `publish:${publishing.id}`)} okButtonProps={{ danger: true }} okText="确认发布" onCancel={() => { if (!legalSubmitting) { setPublishing(undefined); publishForm.resetFields(); } }} onOk={() => publishForm.submit()} open={Boolean(publishing)} title="发布法律文档">
         <Alert className="page-alert" description="发布后该版本不可编辑或删除；已产生的用户同意将持续绑定原版本。" message="请确认生效时间" showIcon type="warning" />
-        <Form form={publishForm} layout="vertical" onFinish={(values) => void publishDocument(values as { effectiveAt: string })}><Form.Item label="生效时间" name="effectiveAt" rules={[{ required: true }]}><Input type="datetime-local" /></Form.Item></Form>
+        <Form name="tenantlegalprivacypage-2" form={publishForm} layout="vertical" onFinish={(values) => void publishDocument(values as { effectiveAt: string })}><Form.Item label="生效时间" name="effectiveAt" {...dateTimeFormProps} rules={[{ required: true, message: '请选择生效时间' }]}><DatePicker showTime format="YYYY-MM-DD HH:mm" style={{ width: '100%' }} /></Form.Item></Form>
       </Modal>
       <Drawer destroyOnHidden onClose={() => setPrivacyDetail(undefined)} open={Boolean(privacyDetail)} title="隐私请求详情" width={640}>
-        {privacyDetail ? <Space direction="vertical" size="large" style={{ width: '100%' }}><Descriptions bordered column={1} size="small"><Descriptions.Item label="请求 ID">{privacyDetail.id}</Descriptions.Item><Descriptions.Item label="账户主体">{privacyDetail.accountSubjectId}</Descriptions.Item><Descriptions.Item label="状态">{privacyDetail.status}</Descriptions.Item><Descriptions.Item label="本地擦除已执行">{privacyDetail.dataErasurePerformed ? '是' : '否'}</Descriptions.Item><Descriptions.Item label="提交时间">{new Date(privacyDetail.submittedAt).toLocaleString('zh-CN')}</Descriptions.Item><Descriptions.Item label="完成时间">{privacyDetail.completedAt ? new Date(privacyDetail.completedAt).toLocaleString('zh-CN') : '—'}</Descriptions.Item></Descriptions><Typography.Title level={5}>法定保留项</Typography.Title>{privacyDetail.retainedItems.length ? privacyDetail.retainedItems.map((item) => <Alert key={`${item.category}:${item.reason}`} description={`${item.reason} · ${item.recordCount} 条 · 保留至 ${new Date(item.retainedUntil).toLocaleString('zh-CN')}`} message={item.category} type="info" />) : <Empty description="尚无实际保留项记录" image={Empty.PRESENTED_IMAGE_SIMPLE} />}<Typography.Title level={5}>第三方处理边界</Typography.Title>{privacyDetail.subprocessorStatus.length ? privacyDetail.subprocessorStatus.map((item) => <Alert key={`${item.provider}:${item.boundary}`} description={item.boundary} message={`${item.provider} · 需运营跟进`} type="warning" />) : <Typography.Text type="secondary">未记录需要第三方跟进的边界。</Typography.Text>}</Space> : null}
+        {privacyDetail ? <Space direction="vertical" size="large" style={{ width: '100%' }}><Descriptions bordered column={1} size="small"><Descriptions.Item label="请求 ID">{privacyDetail.id}</Descriptions.Item><Descriptions.Item label="账户主体">{privacyDetail.accountSubjectId}</Descriptions.Item><Descriptions.Item label="状态">{privacyStatusLabels[privacyDetail.status] ?? privacyDetail.status}</Descriptions.Item><Descriptions.Item label="本地擦除已执行">{privacyDetail.dataErasurePerformed ? '是' : '否'}</Descriptions.Item><Descriptions.Item label="提交时间">{new Date(privacyDetail.submittedAt).toLocaleString('zh-CN')}</Descriptions.Item><Descriptions.Item label="完成时间">{privacyDetail.completedAt ? new Date(privacyDetail.completedAt).toLocaleString('zh-CN') : '—'}</Descriptions.Item></Descriptions><Typography.Title level={5}>法定保留项</Typography.Title>{privacyDetail.retainedItems.length ? privacyDetail.retainedItems.map((item) => <Alert key={`${item.category}:${item.reason}`} description={`${item.reason} · ${item.recordCount} 条 · 保留至 ${new Date(item.retainedUntil).toLocaleString('zh-CN')}`} message={item.category} type="info" />) : <Empty description="尚无实际保留项记录" image={Empty.PRESENTED_IMAGE_SIMPLE} />}<Typography.Title level={5}>第三方处理边界</Typography.Title>{privacyDetail.subprocessorStatus.length ? privacyDetail.subprocessorStatus.map((item) => <Alert key={`${item.provider}:${item.boundary}`} description={item.boundary} message={`${item.provider} · 需运营跟进`} type="warning" />) : <Typography.Text type="secondary">未记录需要第三方跟进的边界。</Typography.Text>}</Space> : null}
       </Drawer>
     </>
   );

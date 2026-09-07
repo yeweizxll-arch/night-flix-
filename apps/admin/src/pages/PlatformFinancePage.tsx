@@ -24,6 +24,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { ApiError } from '../api/http';
 import { useAuth } from '../auth/AuthProvider';
+import { MerchantSelect } from './MerchantSelect';
 import {
   currencies,
   type Currency,
@@ -289,7 +290,7 @@ export function PlatformFinancePage() {
         }),
         method: 'POST',
       });
-      messageApi.success('打款已确认，真实余额账本已更新');
+      messageApi.success('打款已确认，余额记录已更新');
       setTransferTarget(undefined);
       transferForm.resetFields();
       if (detailIdRef.current === target.id) {
@@ -366,7 +367,7 @@ export function PlatformFinancePage() {
         <div>
           <Typography.Title level={2}>财务与提现</Typography.Title>
           <Typography.Text type="secondary">
-            审核、打款确认和结算均操作真实财务记录，不提供模拟打款。
+            处理提现审核、打款登记和到期结算。
           </Typography.Text>
         </div>
       </div>
@@ -386,28 +387,13 @@ export function PlatformFinancePage() {
               style={{ width: 140 }}
               value={status}
             />
-            <Input.Search
-              allowClear
-              onChange={(event) => {
-                setTenantIdInput(event.target.value);
-                if (!event.target.value) {
-                  listSequence.current += 1;
-                  setWithdrawals([]);
-                  setTenantIdFilter('');
-                }
-              }}
-              onSearch={(value) => {
-                const normalized = value.trim();
-                if (normalized && !UUID_PATTERN.test(normalized)) {
-                  messageApi.error('请输入正确的代理商 UUID');
-                  return;
-                }
+            <MerchantSelect
+              onChange={(value) => {
+                setTenantIdInput(value);
                 listSequence.current += 1;
                 setWithdrawals([]);
-                setTenantIdFilter(normalized);
+                setTenantIdFilter(value);
               }}
-              placeholder="代理商 Tenant UUID"
-              style={{ width: 310 }}
               value={tenantIdInput}
             />
             <Button loading={loading} onClick={() => void loadWithdrawals()}>刷新</Button>
@@ -492,7 +478,7 @@ export function PlatformFinancePage() {
             <Alert
               closable
               className="page-alert"
-              message={`策略已保存：${lastPolicy.tenantId} · ${lastPolicy.currency} · T+${lastPolicy.delayDays} 天 · 版本 ${lastPolicy.version}`}
+              message={`结算规则已保存：${lastPolicy.currency} · 收款后 ${lastPolicy.delayDays} 天可结算`}
               onClose={() => setLastPolicy(undefined)}
               showIcon
               type="success"
@@ -502,19 +488,19 @@ export function PlatformFinancePage() {
             <Col xs={24} xl={12}>
               <Typography.Title level={5}>手动运行到期结算</Typography.Title>
               <Typography.Paragraph type="secondary">
-                只处理 eligibleAt 已到期的 pending 结算，不创造测试数据。
+                处理已到结算日期的待结算记录。
               </Typography.Paragraph>
               <Form<SettlementRunFormValues>
-                form={settlementForm}
+                name="platformfinancepage-1" form={settlementForm}
                 initialValues={{ limit: 50 }}
                 layout="vertical"
                 onFinish={confirmRunSettlements}
                 requiredMark={false}
               >
-                <Form.Item label="代理商 Tenant UUID（可选）" name="tenantId" rules={[
+                <Form.Item label="代理商（可选）" name="tenantId" rules={[
                   { pattern: UUID_PATTERN, message: '请输入正确 UUID' },
                 ]}>
-                  <Input maxLength={36} />
+                  <MerchantSelect placeholder="全部代理商；可按名称筛选" />
                 </Form.Item>
                 <Row gutter={16}>
                   <Col span={12}>
@@ -539,17 +525,17 @@ export function PlatformFinancePage() {
                 按代理商和币种设置 T+N 天（0–90），再次保存会更新现有策略。
               </Typography.Paragraph>
               <Form<SettlementPolicyFormValues>
-                form={policyForm}
+                name="platformfinancepage-2" form={policyForm}
                 initialValues={{ currency: 'USD', delayDays: 0 }}
                 layout="vertical"
                 onFinish={(values) => void savePolicy(values)}
                 requiredMark={false}
               >
-                <Form.Item label="代理商 Tenant UUID" name="tenantId" rules={[
-                  { required: true, message: '请输入代理商 UUID' },
+                <Form.Item label="代理商" name="tenantId" rules={[
+                  { required: true, message: '请选择代理商' },
                   { pattern: UUID_PATTERN, message: '请输入正确 UUID' },
                 ]}>
-                  <Input maxLength={36} />
+                  <MerchantSelect />
                 </Form.Item>
                 <Row gutter={16}>
                   <Col span={12}>
@@ -666,7 +652,7 @@ export function PlatformFinancePage() {
         title={reviewDecision === 'approve' ? '批准提现' : '驳回提现'}
       >
         <Form<ReviewFormValues>
-          form={reviewForm}
+          name="platformfinancepage-3" form={reviewForm}
           layout="vertical"
           onFinish={(values) => void submitReview(values)}
           requiredMark={false}
@@ -690,7 +676,7 @@ export function PlatformFinancePage() {
             </Form.Item>
           ) : (
             <Alert
-              message={`将按版本 ${reviewTarget?.version ?? '—'} 批准，后续仍需独立确认真实打款。`}
+              message="批准后仍需完成实际打款，再登记凭证并确认打款结果。"
               showIcon
               type="info"
             />
@@ -709,23 +695,23 @@ export function PlatformFinancePage() {
           }
         }}
         open={Boolean(transferTarget)}
-        title="确认真实银行打款"
+        title="确认银行打款"
       >
         <Alert
           className="page-alert"
-          description="必须先完成真实打款，并提供状态为 ready 的图片或文件 Media Asset。服务端会再次验证凭证状态和归属。"
-          message="这不是模拟打款按钮"
+          description="请先完成打款，再上传打款凭证并确认。此操作会将申请标记为已支付。"
+          message="确认打款结果"
           showIcon
           type="error"
         />
         <Form<TransferFormValues>
-          form={transferForm}
+          name="platformfinancepage-4" form={transferForm}
           layout="vertical"
           onFinish={confirmTransfer}
           requiredMark={false}
         >
           <Form.Item
-            label="已 ready 打款凭证 Media Asset ID"
+            label="打款凭证素材编号"
             name="mediaAssetId"
             rules={[
               { required: true, message: '请输入凭证 Media Asset ID' },

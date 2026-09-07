@@ -73,7 +73,7 @@ export function LoginPage() {
           {error ? <Alert message={error} type="error" showIcon /> : null}
 
           <Form<LoginForm>
-            layout="vertical"
+            name="loginpage-1" layout="vertical"
             onFinish={(values) => void submit(values)}
             requiredMark={false}
             size="large"

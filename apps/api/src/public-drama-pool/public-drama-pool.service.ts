@@ -8,6 +8,7 @@ import {
 import type postgres from 'postgres';
 
 import { uuidV7 } from '../common/uuid-v7';
+import { amountNumber } from '../commerce/commerce-validation';
 import {
   DatabaseService,
   type DatabaseTransaction,
@@ -63,6 +64,9 @@ export class PublicDramaPoolService {
         title: string;
         total_count: number;
         total_episodes: number;
+        allowed_countries: string[] | null;
+        blocked_countries: string[] | null;
+        drama_points: string | number | bigint | null;
       }>>`
         select
           drama.id as drama_id,
@@ -75,6 +79,9 @@ export class PublicDramaPoolService {
           translation.summary,
           publication.status as publication_status,
           publication.version as publication_version,
+          publication.allowed_countries,
+          publication.blocked_countries,
+          point_price.points_amount as drama_points,
           count(*) over()::integer as total_count
         from dramas as drama
         inner join lateral (
@@ -87,6 +94,9 @@ export class PublicDramaPoolService {
         left join tenant_public_drama_publications as publication
           on publication.drama_id = drama.id
           and publication.tenant_id = ${tenantId}
+        left join content_point_prices as point_price
+          on point_price.tenant_id = ${tenantId} and point_price.target_type = 'drama'
+          and point_price.target_id = drama.id and point_price.status = 'active'
         where drama.owner_type = 'platform'
           and drama.owner_tenant_id is null
           and drama.status = 'published'
@@ -106,6 +116,9 @@ export class PublicDramaPoolService {
           summary: row.summary,
           title: row.title,
           totalEpisodes: row.total_episodes,
+          allowedCountries: row.allowed_countries ?? [],
+          blockedCountries: row.blocked_countries ?? [],
+          dramaPoints: row.drama_points == null ? undefined : amountNumber(row.drama_points),
         })),
         page,
         pageSize,
@@ -481,24 +494,50 @@ function publishInput(input: PublishPublicDramaInput) {
   };
 }
 
-function runtimeConfigInput(input: TenantAppRuntimeConfigInput) {
+export function runtimeConfigInput(input: TenantAppRuntimeConfigInput) {
   if (!input) throw new BadRequestException('Request body is required');
   const supportedLocales = input.supportedLocales ?? ['en-US'];
-  if (supportedLocales.length < 1 || supportedLocales.length > 50
-      || supportedLocales.some((locale) => !LOCALE_PATTERN.test(locale))) {
-    throw new BadRequestException('supportedLocales is invalid');
+  if (!Array.isArray(supportedLocales) || supportedLocales.length < 1 || supportedLocales.length > 50
+      || supportedLocales.some((locale) => typeof locale !== 'string' || !LOCALE_PATTERN.test(locale))) {
+    throw new BadRequestException('请选择有效的支持语言');
   }
   const deepLinkHost = input.deepLinkHost ?? null;
-  if (deepLinkHost !== null && !HOST_PATTERN.test(deepLinkHost)) {
-    throw new BadRequestException('deepLinkHost is invalid');
+  if (deepLinkHost !== null && (typeof deepLinkHost !== 'string' || !HOST_PATTERN.test(deepLinkHost))) {
+    throw new BadRequestException('分享域名格式不正确');
+  }
+  const admob = jsonObject(input.admob);
+  if (admob.enabled !== undefined && typeof admob.enabled !== 'boolean') throw new BadRequestException('广告启用状态必须为开或关');
+  for (const platform of ['android', 'ios']) {
+    if (admob[platform] === undefined) continue;
+    const units = jsonObject(admob[platform]);
+    for (const format of ['appOpen', 'native', 'interstitial', 'rewardedEpisode']) {
+      const unit = units[format];
+      if (unit !== undefined && (typeof unit !== 'string' || !/^ca-app-pub-\d{16}\/\d{10}$/.test(unit))) {
+        throw new BadRequestException('广告位 ID 格式不正确');
+      }
+    }
+  }
+  const storeProducts = jsonObject(input.storeProducts);
+  for (const platform of ['apple', 'google']) {
+    const entries = storeProducts[platform];
+    if (entries === undefined) continue;
+    if (!Array.isArray(entries) || entries.length > 200) throw new BadRequestException('商店商品必须是列表，最多 200 个');
+    const ids = new Set<string>();
+    for (const entry of entries) {
+      const product = jsonObject(entry);
+      if (typeof product.id !== 'string' || !product.id.trim() || product.id.length > 200
+        || !['points_topup', 'membership'].includes(String(product.kind))) throw new BadRequestException('请完整填写商店商品 ID 和类型');
+      if (ids.has(product.id.trim())) throw new BadRequestException('同一商店不能重复配置商品 ID');
+      ids.add(product.id.trim());
+    }
   }
   return {
-    admob: jsonObject(input.admob),
+    admob,
     allowedCountries: countryCodes(input.allowedCountries ?? []),
     deepLinkHost,
     expectedVersion: versionValue(input.expectedVersion),
     featureFlags: jsonObject(input.featureFlags),
-    storeProducts: jsonObject(input.storeProducts),
+    storeProducts,
     supportedLocales: [...new Set(supportedLocales)],
   };
 }

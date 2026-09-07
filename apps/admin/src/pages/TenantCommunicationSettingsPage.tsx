@@ -199,7 +199,7 @@ export function TenantCommunicationSettingsPage() {
             version: response.version,
           }
         : item));
-      messageApi.success('测试任务已提交，当前为 pending；请稍后刷新查看真实投递结果');
+      messageApi.success('测试已提交，请稍后刷新查看投递结果');
       setTestChannel(undefined);
       testForm.resetFields();
     } catch (reason) {
@@ -247,7 +247,7 @@ export function TenantCommunicationSettingsPage() {
       </div>
       <Alert
         className="page-alert"
-        description="凭据只写入加密存储，后台永不回显。每次替换凭据都会自动停用渠道，必须等待真实测试结果为通过后才能重新启用。"
+        description="更换凭据后渠道会暂停发送，请测试通过后再启用。已保存的密钥不会回显。"
         message="安全提示"
         showIcon
         type="info"
@@ -282,7 +282,6 @@ export function TenantCommunicationSettingsPage() {
                 <Space size={[8, 8]} wrap>
                   <Tag color={config ? 'blue' : undefined}>{config ? '凭据已配置·不回显' : '未配置'}</Tag>
                   {pending ? <Tag color="processing">测试 pending</Tag> : <TestStatusTag config={config} />}
-                  {config ? <Typography.Text type="secondary">版本 {config.version}</Typography.Text> : null}
                   {config?.lastTestedAt && !pending ? (
                     <Typography.Text type="secondary">测试时间 {formatDateTime(config.lastTestedAt)}</Typography.Text>
                   ) : null}
@@ -315,7 +314,7 @@ export function TenantCommunicationSettingsPage() {
                   {!canManage ? <Typography.Text type="secondary">只读</Typography.Text> : null}
                 </Space>
                 {canManage && config?.status === 'disabled' && !enableAllowed ? (
-                  <Typography.Text type="secondary">启用按钮会在当前版本真实测试通过后开放。</Typography.Text>
+                  <Typography.Text type="secondary">请先测试连接，通过后即可启用。</Typography.Text>
                 ) : null}
               </Space>
             </Card>
@@ -332,7 +331,7 @@ export function TenantCommunicationSettingsPage() {
       >
         <Alert className="page-alert" message="已有密钥不会回显。本次提交必须填写完整的新凭据，关闭窗口即清空输入。" showIcon type="warning" />
         <Form
-          form={credentialForm}
+          name="tenantcommunicationsettingspage-1" form={credentialForm}
           layout="vertical"
           onFinish={(values) => void saveCredentials(values)}
           preserve={false}
@@ -395,10 +394,10 @@ export function TenantCommunicationSettingsPage() {
         footer={null}
         onCancel={closeTest}
         open={Boolean(testChannel)}
-        title={testChannel === 'email' ? '发送真实邮件测试' : '发送真实短信测试'}
+        title={testChannel === 'email' ? '发送测试邮件' : '发送测试短信'}
       >
-        <Alert className="page-alert" message="测试会真实调用当前渠道并发送一次验证码，提交后结果先显示为 pending。" showIcon type="warning" />
-        <Form form={testForm} layout="vertical" onFinish={(values) => void requestTest(values)} preserve={false}>
+        <Alert className="page-alert" message="测试会发送一条验证码，可能产生渠道费用。提交后请稍候查看结果。" showIcon type="warning" />
+        <Form name="tenantcommunicationsettingspage-2" form={testForm} layout="vertical" onFinish={(values) => void requestTest(values)} preserve={false}>
           <Form.Item
             label={testChannel === 'email' ? '测试邮箱' : '测试手机号'}
             name="destination"

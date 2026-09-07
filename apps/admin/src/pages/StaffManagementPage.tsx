@@ -20,6 +20,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { ApiError } from '../api/http';
 import { useAuth } from '../auth/AuthProvider';
+import { roleName } from './permission-ui';
 
 type StaffStatus = 'active' | 'disabled' | 'locked';
 
@@ -191,7 +192,6 @@ export function StaffManagementPage({
 
   function openCreate(): void {
     createForm.resetFields();
-    createForm.setFieldsValue({ roleId: activeRoles[0]?.id });
     setCreateOpen(true);
   }
 
@@ -419,7 +419,7 @@ export function StaffManagementPage({
             title: '角色',
             render: (value: RoleSummary[]) => value.length ? (
               <Space size={[4, 4]} wrap>
-                {value.map((role) => <Tag key={role.id}>{role.name}{role.status === 'disabled' ? '·停用' : ''}</Tag>)}
+                {value.map((role) => <Tag key={role.id}>{roleName(role.name)}{role.status === 'disabled' ? '·停用' : ''}</Tag>)}
               </Space>
             ) : <Typography.Text type="danger">未分配</Typography.Text>,
           },
@@ -494,7 +494,7 @@ export function StaffManagementPage({
         open={createOpen}
         title="创建员工账号"
       >
-        <Form form={createForm} layout="vertical" onFinish={(values) => void create(values)}>
+        <Form name="staffmanagementpage-1" form={createForm} layout="vertical" onFinish={(values) => void create(values)}>
           <AccountFields roles={activeRoles} />
           <Form.Item label="初始密码" name="password" rules={[{ min: 12, max: 4096, required: true }]}>
             <Input.Password autoComplete="new-password" maxLength={4096} />
@@ -509,7 +509,7 @@ export function StaffManagementPage({
         open={Boolean(profileTarget)}
         title="修改员工资料与角色"
       >
-        <Form form={profileForm} layout="vertical" onFinish={(values) => void saveProfile(values)}>
+        <Form name="staffmanagementpage-2" form={profileForm} layout="vertical" onFinish={(values) => void saveProfile(values)}>
           <Form.Item label="用户名" name="username" rules={[{ min: 3, max: 64, required: true, whitespace: true }]}>
             <Input maxLength={64} />
           </Form.Item>
@@ -534,7 +534,7 @@ export function StaffManagementPage({
 
       <Modal destroyOnHidden footer={null} onCancel={() => setPasswordTarget(undefined)} open={Boolean(passwordTarget)} title="重置员工密码">
         <Alert className="page-alert" message="提交后该员工的现有登录会话会全部失效。" showIcon type="warning" />
-        <Form form={passwordForm} layout="vertical" onFinish={(values) => void resetPassword(values)}>
+        <Form name="staffmanagementpage-3" form={passwordForm} layout="vertical" onFinish={(values) => void resetPassword(values)}>
           <Form.Item label="新密码" name="password" rules={[{ min: 12, max: 4096, required: true }]}>
             <Input.Password autoComplete="new-password" maxLength={4096} />
           </Form.Item>
@@ -559,7 +559,7 @@ export function StaffManagementPage({
       </Modal>
 
       <Modal destroyOnHidden footer={null} onCancel={() => setRevokeTarget(undefined)} open={Boolean(revokeTarget)} title="撤销员工会话">
-        <Form form={revokeForm} layout="vertical" onFinish={(values) => void revokeSessions(values)}>
+        <Form name="staffmanagementpage-4" form={revokeForm} layout="vertical" onFinish={(values) => void revokeSessions(values)}>
           <Form.Item label="撤销原因" name="reason" rules={[{ max: 200, required: true, whitespace: true }]}>
             <Input.TextArea maxLength={200} rows={3} showCount />
           </Form.Item>
@@ -585,8 +585,8 @@ function AccountFields({ roles }: { roles: RoleSummary[] }) {
       <Form.Item label="手机号（可选）" name="phone" rules={[{ pattern: /^\+[1-9][0-9]{7,14}$/, message: '请输入 E.164 手机号' }]}>
         <Input autoComplete="off" maxLength={16} placeholder="+12025550123" />
       </Form.Item>
-      <Form.Item label="单一角色" name="roleId" rules={[{ required: true }]}>
-        <Select options={roleOptions(roles)} />
+      <Form.Item label="单一角色" name="roleId" rules={[{ required: true, message: '请选择员工角色' }]}>
+        <Select placeholder="请选择员工角色" options={roleOptions(roles)} />
       </Form.Item>
     </>
   );
@@ -601,7 +601,7 @@ function StaffDetail({ record }: { record: StaffRecord }) {
       <Descriptions.Item label="手机号（脱敏）">{record.phone ?? '—'}</Descriptions.Item>
       <Descriptions.Item label="状态"><StatusTag status={record.status} /></Descriptions.Item>
       <Descriptions.Item label="角色">
-        {record.roles.length ? record.roles.map((role) => <Tag key={role.id}>{role.name}</Tag>) : '未分配'}
+        {record.roles.length ? record.roles.map((role) => <Tag key={role.id}>{roleName(role.name)}</Tag>) : '未分配'}
       </Descriptions.Item>
       <Descriptions.Item label="版本">{record.version}</Descriptions.Item>
       <Descriptions.Item label="创建时间">{formatDateTime(record.createdAt)}</Descriptions.Item>
@@ -625,7 +625,7 @@ function StatusTag({ status }: { status: StaffStatus }) {
 
 function roleOptions(roles: RoleSummary[]) {
   return roles.map((role) => ({
-    label: `${role.name}${role.isSystem ? '（系统）' : ''}`,
+    label: `${roleName(role.name)}${role.isSystem ? '（系统）' : ''}`,
     value: role.id,
   }));
 }

@@ -39,7 +39,7 @@ export class MerchantController {
     permissions: ['platform.merchant.read'],
   })
   list(@Query() query: Record<string, unknown>) {
-    return this.merchants.list(Number(query.page ?? 1), Number(query.pageSize ?? 20));
+    return this.merchants.list(Number(query.page ?? 1), Number(query.pageSize ?? 20), query.q);
   }
 
   @Post()

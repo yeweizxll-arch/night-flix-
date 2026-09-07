@@ -72,7 +72,7 @@ export class MerchantService {
         ) as exists
       `;
       if (duplicate[0]?.exists) {
-        throw new ConflictException('Merchant code or platform domain already exists');
+        throw new ConflictException('代理商代码或对应子域名已存在，请更换代理商代码');
       }
 
       await transaction`
@@ -230,12 +230,14 @@ export class MerchantService {
     });
   }
 
-  async list(page: number, pageSize: number): Promise<{
+  async list(page: number, pageSize: number, search?: unknown): Promise<{
     items: MerchantRecord[];
     page: number;
     pageSize: number;
     total: number;
   }> {
+    if (search !== undefined && (typeof search !== 'string' || search.length > 100)) throw new BadRequestException('代理商搜索条件过长或格式不正确');
+    const query = typeof search === 'string' ? search.trim() : '';
     const safePage = Number.isInteger(page) && page > 0
       ? Math.min(page, 10_000)
       : 1;
@@ -264,11 +266,15 @@ export class MerchantService {
           from tenants as tenant
           left join tenant_domains as domain
             on domain.tenant_id = tenant.id and domain.is_primary
+          where (${query} = '' or strpos(lower(tenant.name), lower(${query})) > 0
+            or strpos(lower(tenant.code::text), lower(${query})) > 0 or tenant.id::text = ${query})
           order by tenant.created_at desc, tenant.id desc
           limit ${safePageSize}
           offset ${(safePage - 1) * safePageSize}
         `,
-        transaction<{ total: string }[]>`select count(*)::text as total from tenants`,
+        transaction<{ total: string }[]>`select count(*)::text as total from tenants as tenant
+          where (${query} = '' or strpos(lower(tenant.name), lower(${query})) > 0
+            or strpos(lower(tenant.code::text), lower(${query})) > 0 or tenant.id::text = ${query})`,
       ]);
       return {
         items: rows.map(mapMerchantRow),

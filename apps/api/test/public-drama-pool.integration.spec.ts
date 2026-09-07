@@ -146,8 +146,8 @@ describe('shared public drama pool', () => {
   it('keeps tenant publication state isolated and uses compare-and-swap versions', async () => {
     const firstPool = await service.listPool(tenantOneId, 1, 20);
     const secondPool = await service.listPool(tenantTwoId, 1, 20);
-    expect(firstPool.items[0]).toMatchObject({ publicationStatus: 'published', publicationVersion: 1 });
-    expect(secondPool.items[0]).toMatchObject({ publicationStatus: 'published', publicationVersion: 1 });
+    expect(firstPool.items[0]).toMatchObject({ publicationStatus: 'published', publicationVersion: 1, dramaPoints: 30, allowedCountries: ['US'], blockedCountries: [] });
+    expect(secondPool.items[0]).toMatchObject({ publicationStatus: 'published', publicationVersion: 1, dramaPoints: 50, allowedCountries: ['SG'], blockedCountries: [] });
     await expect(service.unpublish(
       tenantOneId, publicDramaId, { expectedVersion: 0 }, metadata(tenantOneStaffId),
     )).rejects.toBeInstanceOf(ConflictException);

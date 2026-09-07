@@ -170,6 +170,19 @@ describe('commerce catalog, pending orders, points, and entitlements', () => {
     await database?.close();
   });
 
+  it('searches selectable content without leaking private, draft or unlicensed dramas', async () => {
+    const choices = await catalog.contentOptions(tenantA, {});
+    expect(choices.items.map(row => row.value).sort()).toEqual([tenantDrama, platformDrama].sort());
+    expect((await catalog.contentOptions(tenantB, { selected: tenantDrama })).items.map(row => row.value)).toEqual([tenantBDrama]);
+    expect((await catalog.contentOptions(tenantA, { q: 'own published' })).items.map(row => row.value)).toEqual([tenantDrama]);
+    expect((await catalog.contentOptions(tenantA, { type: 'episode' })).items).toEqual([
+      { value: tenantEpisode, label: 'Own Published Drama · 第 1 集（commerce-own）' },
+    ]);
+    expect((await catalog.contentOptions(tenantA, { q: "' OR 1=1 --" })).items).toEqual([]);
+    await expect(catalog.contentOptions(tenantA, { type: 'unknown' })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(catalog.contentOptions(tenantA, { q: ['invalid'] })).rejects.toBeInstanceOf(BadRequestException);
+  });
+
   it('creates localized membership and points catalogs with manual currency prices', async () => {
     const plan = await catalog.createMembershipPlan(
       tenantA,

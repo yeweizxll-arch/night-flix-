@@ -82,7 +82,6 @@ export function WithdrawalDetail({ withdrawal }: { withdrawal: WithdrawalRecord 
         </Descriptions.Item>
         <Descriptions.Item label="金额">
           {formatMoney(withdrawal.amountMinor, withdrawal.currency)}
-          <Typography.Text type="secondary"> · {withdrawal.amountMinor} minor</Typography.Text>
         </Descriptions.Item>
         <Descriptions.Item label="手续费">
           {formatMoney(withdrawal.feeMinor, withdrawal.currency)}
@@ -173,3 +172,11 @@ export function formatDateTime(value: string): string {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString();
 }
+const ledgerLabels: Record<string, string> = {
+  pending: '待结算', available: '可用余额', frozen: '冻结金额', withdrawn: '已提现',
+  payment_pending: '收款待结算', settlement_available: '结算入账', freeze: '提现冻结',
+  unfreeze: '解除冻结', withdrawal: '提现', refund: '退款', adjustment: '余额调整',
+  payment_transaction: '支付流水', merchant_settlement: '结算记录', settlement: '结算记录',
+  withdrawal_request: '提现申请', refund_transaction: '退款流水',
+};
+export function ledgerLabel(value: string): string { return ledgerLabels[value] ?? '其他'; }

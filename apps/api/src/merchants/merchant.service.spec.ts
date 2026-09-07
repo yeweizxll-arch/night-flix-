@@ -10,6 +10,25 @@ const metadata = {
 };
 
 describe('MerchantService input boundary', () => {
+  it('rejects malformed or oversized merchant searches without querying storage', async () => {
+    const database = { inPlatformContext: vi.fn() };
+    const service = new MerchantService(database as unknown as DatabaseService);
+    for (const query of [[], {}, 12, 'a'.repeat(101)]) {
+      await expect(service.list(1, 30, query)).rejects.toBeInstanceOf(BadRequestException);
+    }
+    expect(database.inPlatformContext).not.toHaveBeenCalled();
+  });
+  it('binds search text as parameters in both merchant rows and total queries', async () => {
+    const transaction = vi.fn(async () => []);
+    const service = new MerchantService({ inPlatformContext: (run: (value: unknown) => unknown) => run(transaction) } as unknown as DatabaseService);
+    const query = "' OR 1=1 --";
+    await service.list(1, 30, query);
+    expect(transaction).toHaveBeenCalledTimes(2);
+    for (const [strings, ...values] of transaction.mock.calls as unknown as [TemplateStringsArray, ...unknown[]][]) {
+      expect(strings.join('')).not.toContain(query);
+      expect(values).toContain(query);
+    }
+  });
   it('rejects a missing owner object before touching storage', async () => {
     const database = { inPlatformContext: vi.fn() };
     const service = new MerchantService(database as unknown as DatabaseService);

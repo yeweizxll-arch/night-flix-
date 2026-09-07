@@ -234,7 +234,7 @@ export function CommerceOrderPage() {
         <div>
           <Typography.Title level={2}>订单管理</Typography.Title>
           <Typography.Text type="secondary">
-            只读查看当前代理商的服务端订单快照，不在后台模拟支付或改价。
+            查询用户订单、付款与退款进度。
           </Typography.Text>
         </div>
       </div>
@@ -398,7 +398,7 @@ export function CommerceOrderPage() {
         ) : detail ? (
           <Space direction="vertical" size={16} style={{ width: '100%' }}>
             {canManageRefunds && detail.status === 'paid' && !detail.collectionMode ? (
-              <Alert message="订单尚无已成功收款模式快照，不能安全发起退款。" showIcon type="warning" />
+              <Alert message="订单收款信息不完整，暂不能发起退款。" showIcon type="warning" />
             ) : null}
             {detail.collectionMode === 'platform_collect' ? (
               <Alert message="该订单由平台代收，需由总后台发起退款。" showIcon type="info" />
@@ -409,10 +409,10 @@ export function CommerceOrderPage() {
       </Drawer> : null}
 
       {canReadOrders ? <Modal destroyOnHidden footer={null} onCancel={closeRefund} open={Boolean(refundTarget)} title="代理商直收订单全额退款">
-        <Alert className="page-alert" description="不提供金额输入；退款金额仅使用服务端订单实付快照。"
+        <Alert className="page-alert" description="本次退还订单的全部实付金额。"
           message={refundTarget ? `${refundTarget.orderNo} · ${formatMoney(refundTarget.totalMinor, refundTarget.currency)}` : '—'}
           showIcon type="warning" />
-        <Form form={refundForm} layout="vertical" onFinish={confirmRefund} requiredMark={false}>
+        <Form name="commerceorderpage-1" form={refundForm} layout="vertical" onFinish={confirmRefund} requiredMark={false}>
           <Form.Item label="退款原因" name="reason" rules={[
             { required: true, message: '请输入退款原因', whitespace: true },
             { min: 2, max: 2000, message: '2–2000 字' },
@@ -438,7 +438,7 @@ function NativeOrderPanel() {
   useEffect(() => { void load(); }, [load]);
   return <Card title="Apple / Google 商店交易（最近 100 笔）" className="page-card"
     extra={<Button loading={loading} onClick={() => void load()}>刷新商店交易</Button>}>
-    <Typography.Paragraph type="secondary">商店退款由商店处理，服务端验签后回收权益并冲正；与下方渠道订单分开记录。金额为各币种最小单位。</Typography.Paragraph>
+    <Typography.Paragraph type="secondary">App Store 和 Google Play 退款由商店处理，退款结果将自动同步。</Typography.Paragraph>
     {error ? <Alert type="error" showIcon message={error} /> : null}
     <Table<NativeOrder> size="small" rowKey="id" loading={loading} dataSource={rows} scroll={{ x: 800 }} pagination={{ pageSize: 10 }}
       columns={[
@@ -464,7 +464,7 @@ function OrderDetail({ detail }: { detail: TenantOrderDetail }) {
         <Descriptions.Item label="商品类型">{typeLabels[detail.orderType]}</Descriptions.Item>
         <Descriptions.Item label="收款模式" span={2}>
           {detail.collectionMode === 'tenant_direct' ? '代理商直收'
-            : detail.collectionMode === 'platform_collect' ? '平台代收' : '尚无成功收款快照'}
+            : detail.collectionMode === 'platform_collect' ? '平台代收' : '收款方式待核实'}
         </Descriptions.Item>
         <Descriptions.Item label="小计">{formatMoney(detail.subtotalMinor, detail.currency)}</Descriptions.Item>
         <Descriptions.Item label="优惠">{formatMoney(detail.discountMinor, detail.currency)}</Descriptions.Item>
@@ -480,7 +480,7 @@ function OrderDetail({ detail }: { detail: TenantOrderDetail }) {
       </Descriptions>
 
       <div>
-        <Typography.Title level={5}>客户快照</Typography.Title>
+        <Typography.Title level={5}>下单时的客户信息</Typography.Title>
         <Descriptions bordered column={1} size="small">
           <Descriptions.Item label="用户名">{customerText(detail.customer, 'username') || '—'}</Descriptions.Item>
           <Descriptions.Item label="邮箱">{customerText(detail.customer, 'email') || '—'}</Descriptions.Item>
@@ -490,7 +490,7 @@ function OrderDetail({ detail }: { detail: TenantOrderDetail }) {
       </div>
 
       <div>
-        <Typography.Title level={5}>商品快照</Typography.Title>
+        <Typography.Title level={5}>下单时的商品信息</Typography.Title>
         <Table
           columns={[
             { dataIndex: 'lineNo', title: '#', width: 50 },

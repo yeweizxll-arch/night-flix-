@@ -32,16 +32,16 @@ export function CustomerFeedbackPanel({ canManage }: { canManage: boolean }) {
 
   return <>{holder}<Button onClick={() => void load()} loading={busy}>刷新反馈</Button>
     {error ? <Alert type="error" message={error} /> : null}
-    <Table rowKey="id" dataSource={items} loading={busy} pagination={{ current: page, pageSize: 30,
+    <Table rowKey="id" dataSource={items} loading={busy} pagination={{ current: page, pageSize: 30, showSizeChanger: false,
       total: (page - 1) * 30 + items.length + (items.length === 30 ? 1 : 0), onChange: setPage }} columns={[
       { title: '反馈内容', dataIndex: 'body', render: value => <span style={{ whiteSpace: 'pre-wrap' }}>{value}</span> },
-      { title: '时间', dataIndex: 'createdAt' },
+      { title: '时间', dataIndex: 'createdAt', render: (value: string) => new Date(value).toLocaleString() },
       { title: '回复', render: (_, item) => item.reply ? <span style={{ whiteSpace: 'pre-wrap' }}>{item.reply}</span> : <Tag>待回复</Tag> },
       { title: '操作', render: (_, item) => canManage && !item.reply ? <Button onClick={() => { setTarget(item); setReply(''); }}>回复</Button> : null },
     ]} />
     <Modal title="回复用户反馈" open={!!target} onCancel={() => { if (!busy) setTarget(undefined); }} onOk={() => void submit()}
       confirmLoading={busy} okButtonProps={{ disabled: !reply.trim() }}>
       <p style={{ whiteSpace: 'pre-wrap' }}>{target?.body}</p>
-      <Input.TextArea rows={5} maxLength={2000} showCount value={reply} onChange={event => setReply(event.target.value)} />
+      <Input.TextArea aria-label="回复内容" placeholder="请输入回复内容" rows={5} maxLength={2000} showCount value={reply} onChange={event => setReply(event.target.value)} />
     </Modal></>;
 }

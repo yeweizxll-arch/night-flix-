@@ -67,7 +67,7 @@ const orderTypeOptions = [
   { label: '会员', value: 'membership' },
   { label: '整剧购买', value: 'drama' },
   { label: '单集购买', value: 'episode' },
-  { label: '积分充值', value: 'points_topup' },
+  { label: '金币充值', value: 'points_topup' },
 ];
 const emptyCommissions: CommissionResponse = { items: [], page: 1, pageSize: 20 };
 
@@ -193,7 +193,7 @@ export function TenantReferralPage() {
       ) : null}
       <Card loading={configLoading} title="分销规则">
         <Form<ReferralConfigForm>
-          disabled={!canManage || submitting}
+          name="tenantreferralpage-1" disabled={!canManage || submitting}
           form={form}
           layout="vertical"
           onFinish={(values) => void saveConfig(values)}
@@ -207,7 +207,7 @@ export function TenantReferralPage() {
             </Col>
             <Col md={8} xs={24}>
               <Form.Item
-                extra="精确到 0.01%，服务端按 bps 存储。"
+                extra="最多保留两位小数。"
                 label="佣金比例（%）"
                 name="commissionPercent"
                 rules={[{ required: true }]}
@@ -235,7 +235,7 @@ export function TenantReferralPage() {
       <Card className="todo-card" title="佣金应付账">
         <Alert
           className="page-alert"
-          message="pending 为待结算，available 为已进入应付余额，reversed 为已冲正；此处不执行提现。"
+          message="查看待结算、可结算和已冲正的邀请佣金。"
           showIcon
           type="info"
         />
@@ -276,7 +276,7 @@ export function TenantReferralPage() {
             onChange: (page, pageSize) => void loadCommissions(page, pageSize),
             pageSize: commissions.pageSize,
             showSizeChanger: true,
-            total: commissions.page * commissions.pageSize + (commissions.items.length === commissions.pageSize ? 1 : 0),
+            total: (commissions.page - 1) * commissions.pageSize + commissions.items.length + (commissions.items.length === commissions.pageSize ? 1 : 0),
           }}
           rowKey="id"
           scroll={{ x: 1450 }}
@@ -316,7 +316,7 @@ function CommissionStatus({ status }: { status: CommissionRecord['status'] }) {
 }
 
 function orderTypeLabel(value: OrderType): string {
-  return ({ drama: '整剧购买', episode: '单集购买', membership: '会员', points_topup: '积分充值' } as const)[value];
+  return ({ drama: '整剧购买', episode: '单集购买', membership: '会员', points_topup: '金币充值' } as const)[value];
 }
 
 function errorMessage(reason: unknown, fallback: string): string {

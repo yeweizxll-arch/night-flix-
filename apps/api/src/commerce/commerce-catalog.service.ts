@@ -42,6 +42,41 @@ export class CommerceCatalogService {
     private readonly database: DatabaseService,
   ) {}
 
+  async contentOptions(tenantId: string, query: Record<string, unknown>) {
+    requireUuid(tenantId, 'tenantId');
+    const type = query.type ?? 'drama';
+    if (type !== 'drama' && type !== 'episode') throw new BadRequestException('请选择短剧或剧集');
+    if (query.q !== undefined && (typeof query.q !== 'string' || query.q.length > 100)) throw new BadRequestException('搜索词最多 100 字');
+    const search = typeof query.q === 'string' ? query.q.trim() : '';
+    const selected = query.selected ? requireUuid(query.selected, 'selected') : null;
+    return this.database.inTenantContext(tenantId, async sql => {
+      const items = await sql<{ id: string; title: string; code: string; episode_no: number | null }[]>`
+        select case when ${type} = 'episode' then episode.id else drama.id end as id,
+          coalesce(translation.title, drama.code::text) as title, drama.code::text as code, episode.episode_no
+        from dramas drama
+        left join episodes episode on ${type} = 'episode' and episode.drama_id = drama.id
+        left join lateral (select title from drama_translations where drama_id = drama.id
+          order by (locale = 'zh-CN') desc, locale limit 1) translation on true
+        where drama.status = 'published' and drama.deleted_at is null and drama.emergency_takedown_at is null
+          and (${type} = 'drama' or (episode.status = 'published' and episode.deleted_at is null))
+          and ((drama.owner_type = 'tenant' and drama.owner_tenant_id = ${tenantId})
+            or (drama.owner_type = 'platform' and app.tenant_has_drama_license(drama.id)
+              and not exists (select 1 from tenant_public_drama_publications publication
+                where publication.tenant_id = ${tenantId} and publication.drama_id = drama.id
+                  and publication.status not in ('approved', 'published', 'unpublished'))))
+          and (${search} = '' or strpos(lower(coalesce(translation.title, '')), lower(${search})) > 0
+            or strpos(lower(drama.code::text), lower(${search})) > 0
+            or drama.id::text = ${search} or episode.id::text = ${search}
+            or (case when ${type} = 'episode' then episode.id else drama.id end) = ${selected}::uuid)
+        order by ((case when ${type} = 'episode' then episode.id else drama.id end) = ${selected}::uuid) desc nulls last,
+          drama.created_at desc, drama.id, episode.episode_no
+        limit 50
+      `;
+      return { items: items.map(item => ({ value: item.id,
+        label: `${item.title}${item.episode_no == null ? '' : ` · 第 ${item.episode_no} 集`}（${item.code}）` })) };
+    });
+  }
+
   async listTenantCatalog(tenantId: string) {
     requireUuid(tenantId, 'tenantId');
     return this.database.inTenantContext(tenantId, async (transaction) => {
@@ -89,11 +124,16 @@ export class CommerceCatalogService {
         status: string;
         target_id: string;
         target_type: string;
+        target_title: string | null;
         version: number;
       }>>`
-        select id, target_type, target_id, currency, amount_minor, status, version
-        from content_prices
-        where tenant_id = ${tenantId}
+        select price.id, target_type, target_id, currency, amount_minor, price.status, price.version,
+          coalesce(translation.title, drama.code::text) || case when target_type = 'episode' then ' · 第 ' || episode.episode_no::text || ' 集' else '' end as target_title
+        from content_prices price
+        left join episodes episode on target_type = 'episode' and episode.id = target_id
+        left join dramas drama on drama.id = case when target_type = 'drama' then target_id else episode.drama_id end
+        left join lateral (select title from drama_translations where drama_id = drama.id order by (locale = 'zh-CN') desc, locale limit 1) translation on true
+        where price.tenant_id = ${tenantId}
         order by target_type, target_id, currency
       `;
       const contentPointPrices = await transaction<Array<{
@@ -102,11 +142,16 @@ export class CommerceCatalogService {
         status: string;
         target_id: string;
         target_type: string;
+        target_title: string | null;
         version: number;
       }>>`
-        select id, target_type, target_id, points_amount, status, version
-        from content_point_prices
-        where tenant_id = ${tenantId}
+        select price.id, target_type, target_id, points_amount, price.status, price.version,
+          coalesce(translation.title, drama.code::text) || case when target_type = 'episode' then ' · 第 ' || episode.episode_no::text || ' 集' else '' end as target_title
+        from content_point_prices price
+        left join episodes episode on target_type = 'episode' and episode.id = target_id
+        left join dramas drama on drama.id = case when target_type = 'drama' then target_id else episode.drama_id end
+        left join lateral (select title from drama_translations where drama_id = drama.id order by (locale = 'zh-CN') desc, locale limit 1) translation on true
+        where price.tenant_id = ${tenantId}
         order by target_type, target_id
       `;
       const topups = await transaction<Array<{
@@ -155,6 +200,7 @@ export class CommerceCatalogService {
           status: price.status,
           targetId: price.target_id,
           targetType: price.target_type,
+          targetTitle: price.target_title ?? '内容已不可用',
           version: price.version,
         })),
         contentPrices: contentPrices.map((price) => ({
@@ -164,6 +210,7 @@ export class CommerceCatalogService {
           status: price.status,
           targetId: price.target_id,
           targetType: price.target_type,
+          targetTitle: price.target_title ?? '内容已不可用',
           version: price.version,
         })),
         membershipPlans: plans.map((plan) => ({

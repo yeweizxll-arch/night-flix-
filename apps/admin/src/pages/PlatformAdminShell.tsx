@@ -14,6 +14,7 @@ import {
 } from '@ant-design/icons';
 import {
   Avatar,
+  message,
   Button,
   Drawer,
   Layout,
@@ -70,6 +71,15 @@ const navigation = [
 
 export function ScopedAdminShell({ principal }: { principal: AuthPrincipal }) {
   const { logout } = useAuth();
+  const [messages, messageContext] = message.useMessage();
+  const [loggingOut, setLoggingOut] = useState(false);
+  async function signOut() {
+    if (loggingOut) return;
+    setLoggingOut(true);
+    try { await logout(); }
+    catch { messages.error('退出未完成，请检查网络后重试'); }
+    finally { setLoggingOut(false); }
+  }
   const [activePage, setActivePage] = useState(() => readInitialPage());
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
   const canOpenFinance = [
@@ -172,6 +182,7 @@ export function ScopedAdminShell({ principal }: { principal: AuthPrincipal }) {
 
   return (
     <Layout className="app-shell">
+      {messageContext}
       <Sider width={248} className="app-sider">
         <div className="brand-block">
           <div className="brand-mark">NF</div>
@@ -199,10 +210,10 @@ export function ScopedAdminShell({ principal }: { principal: AuthPrincipal }) {
             </div>
           </div>
           <Space className="app-header-account" size={12}>
-            <Tag className="environment-tag" color="green">开发环境</Tag>
+            <Tag className="environment-tag" color="green">总部空间</Tag>
             <Avatar className="account-avatar" size={30}>{principal.displayName.slice(0, 1)}</Avatar>
             <Typography.Text className="account-name">{principal.displayName}</Typography.Text>
-            <Button icon={<LogoutOutlined />} size="small" onClick={() => void logout()}>退出</Button>
+            <Button icon={<LogoutOutlined />} size="small" loading={loggingOut} onClick={() => void signOut()}>退出</Button>
           </Space>
         </Header>
         <Drawer
@@ -249,7 +260,7 @@ export function ScopedAdminShell({ principal }: { principal: AuthPrincipal }) {
           ) : effectivePage === 'roles' ? (
             <RoleManagementPage
               apiBase="/api/v1/platform/access"
-              description="按角色分配总后台功能；当前数据范围仅支持 all。"
+              description="为总部员工分配工作权限。系统预设角色不可修改。"
               managePermission="platform.role.manage"
               title="平台角色权限"
             />
@@ -272,7 +283,7 @@ export function ScopedAdminShell({ principal }: { principal: AuthPrincipal }) {
           ) : effectivePage === 'payments' ? (
             <PaymentSettingsPage
               apiBase="/api/v1/platform/payments/configs"
-              description="查看平台公共支付配置；真实渠道需先在服务端安装对应适配器。"
+              description="管理平台公共收款渠道。"
               managePermission="platform.payment.manage"
               scope="platform"
               title="平台支付配置"

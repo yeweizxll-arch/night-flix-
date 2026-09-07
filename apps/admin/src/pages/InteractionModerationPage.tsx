@@ -391,7 +391,7 @@ export function InteractionModerationPage({
           onChange: (page, pageSize) => void loadQueue(page, pageSize),
           pageSize: queue.pageSize,
           showSizeChanger: true,
-          total: queue.page * queue.pageSize + (queue.items.length === queue.pageSize ? 1 : 0),
+          total: (queue.page - 1) * queue.pageSize + queue.items.length + (queue.items.length === queue.pageSize ? 1 : 0),
         }}
         rowKey="id"
         scroll={{ x: 1100 }}
@@ -422,7 +422,7 @@ export function InteractionModerationPage({
           onChange: (page, pageSize) => void loadWords(page, pageSize),
           pageSize: words.pageSize,
           showSizeChanger: true,
-          total: words.page * words.pageSize + (words.items.length === words.pageSize ? 1 : 0),
+          total: (words.page - 1) * words.pageSize + words.items.length + (words.items.length === words.pageSize ? 1 : 0),
         }}
         rowKey="id"
         columns={[
@@ -434,11 +434,11 @@ export function InteractionModerationPage({
             key: 'action',
             title: '操作',
             width: 100,
-            render: (_, word) => canManageWords && word.status === 'active' ? (
+            render: (_, word) => canManageWords && word.scope === (platformScope ? 'platform' : 'tenant') ? (word.status === 'active' ? (
               <Popconfirm title="停用该敏感词？" onConfirm={() => void disableWord(word)}>
                 <Button loading={submitting === `word:${word.id}`} size="small">停用</Button>
               </Popconfirm>
-            ) : <Typography.Text type="secondary">只读</Typography.Text>,
+            ) : <Button loading={submitting === 'create-word'} size="small" onClick={() => void createWord({ term: word.term })}>启用</Button>) : <Typography.Text type="secondary">只读</Typography.Text>,
           },
         ]}
       />
@@ -452,7 +452,7 @@ export function InteractionModerationPage({
         <div>
           <Typography.Title level={2}>{title}</Typography.Title>
           <Typography.Text type="secondary">
-            审核评论、弹幕和举报；正文始终按纯文本展示，不解析用户 HTML。
+            处理评论、弹幕、举报与用户反馈。
           </Typography.Text>
         </div>
       </div>
@@ -477,7 +477,7 @@ export function InteractionModerationPage({
           showIcon
           type="warning"
         />
-        <Form form={reasonForm} layout="vertical" onFinish={(values) => void submitAction(values)}>
+        <Form name="interactionmoderationpage-1" form={reasonForm} layout="vertical" onFinish={(values) => void submitAction(values)}>
           <Form.Item
             label="操作原因"
             name="reason"
@@ -503,7 +503,7 @@ export function InteractionModerationPage({
         open={wordModalOpen}
         title="新增敏感词"
       >
-        <Form form={wordForm} layout="vertical" onFinish={(values) => void createWord(values)}>
+        <Form name="interactionmoderationpage-2" form={wordForm} layout="vertical" onFinish={(values) => void createWord(values)}>
           <Form.Item label="词语" name="term" rules={[{ min: 2, max: 64, required: true, whitespace: true }]}>
             <Input maxLength={64} />
           </Form.Item>
@@ -564,7 +564,7 @@ function actionLabel(action: InteractionAction): string {
     hide: '隐藏',
     reject: '驳回举报',
     resolve: '解决举报',
-    restore: '一级恢复',
+    restore: '恢复',
   } as const)[action];
 }
 

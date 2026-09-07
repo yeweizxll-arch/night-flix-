@@ -1,4 +1,4 @@
-import { Alert, Button, Form, InputNumber, message, Modal, Typography } from 'antd';
+import { Alert, Button, Form, InputNumber, message, Modal } from 'antd';
 import { useRef, useState } from 'react';
 import { useAuth } from '../auth/AuthProvider';
 
@@ -48,9 +48,9 @@ export function DramaRankingButton({ dramaId }: { dramaId: string }) {
       onOk={() => void save()} onCancel={() => { if (!busy) { revision.current++; setOpen(false); } }}>
       <Alert showIcon type="info" message="仅影响本代理商 App；不会修改真实热度。新剧榜仍按发布时间排序。" />
       {error ? <Alert type="error" message={error} action={<Button onClick={() => void load()}>重新加载</Button>} /> : null}
-      <Form form={form} layout="vertical" style={{ marginTop: 16 }}>
+      <Form name="dramarankingbutton-1" form={form} layout="vertical" style={{ marginTop: 16 }}>
         <Form.Item label="推荐权重" name="weight" rules={[{ required: true, type: 'integer', min: -100000, max: 100000 }]}
-          extra="默认 0；正数提升、负数降低。在真实热度和观看偏好得分上加权。">
+          extra="默认 0；正数提高推荐优先级，负数降低。">
           <InputNumber min={-100000} max={100000} precision={0} style={{ width: '100%' }} />
         </Form.Item>
         <Form.Item label="置顶顺序" name="pinnedRank" rules={[{ required: true, type: 'integer', min: 0, max: 1000 }]}
@@ -58,6 +58,5 @@ export function DramaRankingButton({ dramaId }: { dramaId: string }) {
           <InputNumber min={0} max={1000} precision={0} style={{ width: '100%' }} />
         </Form.Item>
       </Form>
-      <Typography.Text type="secondary">顺序：置顶 → 真实热度 + 权重（首页另加观看偏好）→ 发布时间。下架和地域限制始终优先。</Typography.Text>
     </Modal></>;
 }

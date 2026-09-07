@@ -461,7 +461,7 @@ export function PaymentSettingsPage({
       {FAKE_PAYMENT_ENABLED ? (
         <Alert
           className="page-alert"
-          description="Fake 渠道仅用于本地联调，不得用于真实收款；生产构建不会显示创建入口。"
+          description="模拟支付仅用于本地测试，不可收取真实款项。"
           message="本地测试功能已显式开启"
           showIcon
           type="warning"
@@ -470,7 +470,7 @@ export function PaymentSettingsPage({
 
       <Alert
         className="page-alert"
-        description="TEST 和 LIVE 配置完全独立，不会自动回退或切换。密钥只能写入，后台永不回显；新建或轮换后会强制停用。连接测试验证当前账户凭据，不代表 Webhook 已在 Stripe Dashboard 配置；启用前还必须使用列表中的回调路径配置对应模式的 Webhook。"
+        description="测试与正式收款分别配置。保存密钥后，请先测试连接，并在 Stripe 控制台配置对应回调地址，再启用收款。"
         message="Stripe 配置安全边界"
         showIcon
         type="info"
@@ -586,7 +586,7 @@ export function PaymentSettingsPage({
           type="warning"
         />
         <Form<StripeConfigForm>
-          form={stripeForm}
+          name="paymentsettingspage-1" form={stripeForm}
           initialValues={{ mode: 'test' }}
           layout="vertical"
           onFinish={(values) => void createStripe(values)}
@@ -675,7 +675,7 @@ export function PaymentSettingsPage({
           />
         ) : null}
         <Form<StripeRotateForm>
-          form={rotateForm}
+          name="paymentsettingspage-2" form={rotateForm}
           layout="vertical"
           onFinish={(values) => void rotateStripe(values)}
           preserve={false}
@@ -721,7 +721,7 @@ export function PaymentSettingsPage({
             type="error"
           />
           <Form<FakeConfigForm>
-            form={fakeForm}
+            name="paymentsettingspage-3" form={fakeForm}
             layout="vertical"
             onFinish={(values) => void createFake(values)}
             requiredMark={false}

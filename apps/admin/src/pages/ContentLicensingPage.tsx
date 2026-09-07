@@ -20,6 +20,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { ApiError } from '../api/http';
 import { useAuth } from '../auth/AuthProvider';
+import { MerchantSelect } from './MerchantSelect';
 
 interface DateValue {
   toISOString(): string;
@@ -286,7 +287,7 @@ export function ContentLicensingPage() {
           method: 'PUT',
         },
       );
-      messageApi.success('授权包内容已原子替换');
+      messageApi.success('授权包内容已更新');
       setPackageTarget(undefined);
       itemsForm.resetFields();
       await loadPackages(packages.page, packages.pageSize);
@@ -407,8 +408,8 @@ export function ContentLicensingPage() {
 
       <Alert
         className="page-alert"
-        description="选择器只查询平台自有、已发布且未删除的公共剧。发放授权时服务端会再次校验剧集和代理商的有效性。"
-        message="公共剧目录已按发布状态过滤"
+        description="选择公共剧和代理商，设置授权有效期。"
+        message="公共内容授权"
         showIcon
         type="info"
       />
@@ -547,7 +548,7 @@ function PackagePanel({
   return (
     <>
       <div className="licensing-panel-toolbar">
-        <Typography.Text type="secondary">授权包内容更新为全量原子替换。</Typography.Text>
+        <Typography.Text type="secondary">维护授权包内的剧目。</Typography.Text>
         {canManage ? <Button onClick={onCreate}>创建授权包</Button> : null}
       </div>
       {error ? (
@@ -652,14 +653,7 @@ function LicensePanel({
     <>
       <div className="licensing-panel-toolbar">
         <Space.Compact>
-          <Input
-            allowClear
-            onChange={(event) => onFilterInput(event.target.value)}
-            onPressEnter={onApplyFilter}
-            placeholder="按代理商 UUID 筛选"
-            style={{ width: 330 }}
-            value={filterInput}
-          />
+          <MerchantSelect onChange={onFilterInput} value={filterInput} />
           <Button loading={loading} onClick={onApplyFilter} type="primary">筛选</Button>
           {filter ? <Button onClick={onClearFilter}>清除</Button> : null}
         </Space.Compact>
@@ -814,7 +808,7 @@ function PublicDramaMultiSelect({
       onChange={(nextValue) => onChange?.(nextValue)}
       onSearch={onSearch}
       options={options}
-      placeholder="搜索标题/代码，或输入 UUID 后回车"
+      placeholder="搜索剧名或代码，可多选"
       showSearch
       tokenSeparators={[',', ';', '\n']}
       value={value}
@@ -841,7 +835,7 @@ function PublicDramaAutoComplete({
       onChange={onChange}
       onSearch={onSearch}
       options={mergePublicDramaOptions(dramas, value ? [value] : [])}
-      placeholder="搜索标题/代码，或输入公共剧 UUID"
+      placeholder="搜索并选择公共剧"
       value={value}
     />
   );
@@ -852,7 +846,7 @@ function mergePublicDramaOptions(
   selectedIds: string[],
 ): Array<{ label: string; value: string }> {
   const options = dramas.map((drama) => ({
-    label: `${drama.title} · ${drama.code} · ${drama.id} · ${drama.totalEpisodes} 集`,
+    label: `${drama.title} · ${drama.code} · ${drama.totalEpisodes} 集`,
     value: drama.id,
   }));
   const loadedIds = new Set(dramas.map((drama) => drama.id));
@@ -904,7 +898,7 @@ function CreatePackageModal({
       title="创建授权包"
     >
       <Form<CreatePackageForm>
-        form={form}
+        name="contentlicensingpage-1" form={form}
         layout="vertical"
         onFinish={onFinish}
         requiredMark={false}
@@ -966,7 +960,7 @@ function PackageItemsModal({
     <Modal
       cancelText="取消"
       destroyOnHidden
-      okText="原子替换"
+      okText="保存授权内容"
       confirmLoading={loading}
       onCancel={onCancel}
       onOk={() => form.submit()}
@@ -976,20 +970,20 @@ function PackageItemsModal({
     >
       <Alert
         className="page-alert"
-        description="可按短剧代码或多语言标题搜索。提交会使用当前版本全量替换；手工输入 UUID 的已选项在搜索切换时也会保留。"
+        description="按剧目编号或标题搜索，选中后保存。"
         message="仅可选择已发布的平台公共剧"
         showIcon
         type="warning"
       />
       <LibraryError error={libraryError} onRetry={onLibraryRetry} />
       <Form<PackageItemsForm>
-        form={form}
+        name="contentlicensingpage-2" form={form}
         layout="vertical"
         onFinish={onFinish}
         requiredMark={false}
       >
         <Form.Item
-          label={`公共剧（当前版本 ${target?.version ?? '—'}）`}
+          label="公共剧"
           name="dramaIds"
           rules={[{
             validator: async (_, value?: string[]) => {
@@ -1054,21 +1048,21 @@ function GrantLicenseModal({
       />
       <LibraryError error={libraryError} onRetry={onLibraryRetry} />
       <Form<GrantLicenseForm>
-        form={form}
+        name="contentlicensingpage-3" form={form}
         initialValues={{ licenseType: 'drama' }}
         layout="vertical"
         onFinish={onFinish}
         requiredMark={false}
       >
         <Form.Item
-          label="代理商 UUID"
+          label="代理商"
           name="tenantId"
           rules={[
-            { required: true, message: '请输入代理商 UUID' },
-            { message: '请输入有效的 UUID', pattern: UUID_PATTERN },
+            { required: true, message: '请选择代理商' },
+            { message: '请选择有效的代理商', pattern: UUID_PATTERN },
           ]}
         >
-          <Input />
+          <MerchantSelect />
         </Form.Item>
         <Form.Item label="授权方式" name="licenseType" rules={[{ required: true }]}>
           <Select options={[
@@ -1091,12 +1085,12 @@ function GrantLicenseModal({
             </Form.Item>
           ) : (
             <Form.Item
-              extra="可按短剧代码或标题搜索；也可手工输入真实 UUID 作为受控兜底"
+              extra="按剧目编号或标题搜索。"
               label="已发布公共剧"
               name="dramaId"
               rules={[
-                { required: true, message: '请输入公共剧 UUID' },
-                { message: '请输入有效的 UUID', pattern: UUID_PATTERN },
+                { required: true, message: '请选择公共剧' },
+                { message: '请从搜索结果中选择有效的公共剧', pattern: UUID_PATTERN },
               ]}
             >
               <PublicDramaAutoComplete
@@ -1149,13 +1143,13 @@ function RevokeLicenseModal({
         撤销「{target?.tenantName}」的当前授权后，对应公共剧将不再对该代理商可用。
       </Typography.Paragraph>
       <Form<RevokeLicenseForm>
-        form={form}
+        name="contentlicensingpage-4" form={form}
         layout="vertical"
         onFinish={onFinish}
         requiredMark={false}
       >
         <Form.Item
-          label={`撤销原因（当前版本 ${target?.version ?? '—'}）`}
+          label="撤销原因"
           name="reason"
           rules={[
             { required: true, message: '请填写撤销原因', whitespace: true },

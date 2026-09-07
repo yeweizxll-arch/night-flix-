@@ -10,7 +10,7 @@ import type postgres from 'postgres';
 
 import { uuidV7 } from '../common/uuid-v7';
 import { DatabaseService, type DatabaseTransaction } from '../database/database.service';
-import { amountNumber, requireUuid } from '../commerce/commerce-validation';
+import { amountNumber, requireUuid, signedAmountNumber } from '../commerce/commerce-validation';
 import { FinancePayoutCipher, type PayoutAccountSnapshot } from './finance-payout-cipher';
 
 type Currency = 'CNY' | 'USD' | 'EUR' | 'JPY' | 'KRW';
@@ -91,6 +91,7 @@ export class FinanceService {
     const currency = optionalCurrency(rawQuery.currency);
     const limit = listLimit(rawQuery.limit);
     const before = optionalDate(rawQuery.before);
+    const beforeId = rawQuery.beforeId === undefined ? undefined : requireUuid(rawQuery.beforeId, 'beforeId');
     return this.database.inTenantContext(tenantId, async (transaction) => {
       const rows = await transaction<Array<{
         balance_after_minor: string | number | bigint;
@@ -108,7 +109,11 @@ export class FinanceService {
         from merchant_balance_ledger
         where tenant_id = ${tenantId}
           and (${currency ?? null}::text is null or currency = ${currency ?? null})
-          and (${before ?? null}::timestamptz is null or created_at < ${before ?? null})
+          and (${beforeId ?? null}::uuid is not null or ${before ?? null}::timestamptz is null or created_at < ${before ?? null})
+          and (${beforeId ?? null}::uuid is null or (created_at, id) < (
+            select created_at, id from merchant_balance_ledger
+            where id = ${beforeId ?? null}::uuid and tenant_id = ${tenantId}
+          ))
         order by created_at desc, id desc
         limit ${limit}
       `;
@@ -117,7 +122,7 @@ export class FinanceService {
         bucket: row.bucket,
         createdAt: row.created_at.toISOString(),
         currency: row.currency,
-        deltaMinor: amountNumber(row.delta_minor),
+        deltaMinor: signedAmountNumber(row.delta_minor),
         entryType: row.entry_type,
         id: row.id,
         referenceId: row.reference_id,

@@ -5,6 +5,7 @@ import {
   Card,
   Checkbox,
   Col,
+  DatePicker,
   Descriptions,
   Drawer,
   Empty,
@@ -25,6 +26,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { ApiError } from '../api/http';
 import { useAuth } from '../auth/AuthProvider';
+import { dateTimeFormProps } from './ContentScheduleFields';
 import {
   canEnableNotificationProvider,
   providerConfigPayload,
@@ -215,7 +217,7 @@ export function TenantNotificationPage() {
       });
       credentialForm.resetFields();
       setCredentialProvider(undefined);
-      messageApi.success('凭据已安全替换，需重新通过真实测试后才能启用');
+      messageApi.success('凭据已更新，请重新测试后启用');
       await loadConfigs();
     } catch (reason) {
       messageApi.error(errorMessage(reason, '凭据保存失败'));
@@ -235,7 +237,7 @@ export function TenantNotificationPage() {
       );
       if (action === 'test') {
         messageApi.info(result.status === 'pending'
-          ? '真实测试任务已提交；请稍后刷新查看结果，此处不预先判定成功。'
+          ? '测试已提交，请稍后刷新查看结果。'
           : '测试状态已更新。');
       } else {
         messageApi.success(action === 'enable' ? '渠道已启用' : '渠道已停用');
@@ -308,6 +310,24 @@ export function TenantNotificationPage() {
     if (campaignSubmitting) return;
     campaignForm.resetFields();
     setEditorTarget(undefined);
+  }
+
+  async function editCampaign(record: CampaignSummary | CampaignDetail): Promise<void> {
+    if ('translations' in record) { openEdit(record); return; }
+    setCampaignSubmitting(`edit:${record.id}`);
+    try {
+      const target = await request<CampaignDetail>(`${API_BASE}/campaigns/${encodeURIComponent(record.id)}`);
+      if (target.status !== 'draft') {
+        messageApi.warning('活动状态已变化，请刷新后查看');
+        await loadCampaigns(campaignPage, campaignPageSize);
+        return;
+      }
+      openEdit(target);
+    } catch (reason) {
+      messageApi.error(errorMessage(reason, '活动加载失败，请重试'));
+    } finally {
+      setCampaignSubmitting(undefined);
+    }
   }
 
   async function saveCampaign(values: CampaignFormValues): Promise<void> {
@@ -427,13 +447,8 @@ export function TenantNotificationPage() {
     <Space size={6} wrap>
       <Button size="small" onClick={() => openDetail(record.id)}>详情</Button>
       {canManageCampaign && record.status === 'draft' ? (
-        <Button size="small" onClick={() => {
-          if ('translations' in record) openEdit(record);
-          else {
-            openDetail(record.id);
-            messageApi.info('正在加载详情，可在抽屉中编辑。');
-          }
-        }}>编辑</Button>
+        <Button size="small" disabled={Boolean(campaignSubmitting)} loading={campaignSubmitting === `edit:${record.id}`}
+          onClick={() => void editCampaign(record)}>编辑</Button>
       ) : null}
       {canManageCampaign && record.status === 'draft' ? (
         <Button size="small" type="primary" onClick={() => openSchedule(record)}>排期</Button>
@@ -450,13 +465,13 @@ export function TenantNotificationPage() {
       <div className="page-heading">
         <div>
           <Typography.Title level={2}>通知运营</Typography.Title>
-          <Typography.Text type="secondary">管理真实推送渠道与多语言群发活动。</Typography.Text>
+          <Typography.Text type="secondary">配置 App 推送渠道，创建多语言通知活动。</Typography.Text>
         </div>
       </div>
       <Alert
         className="page-alert"
-        description="提交测试只会创建真实测试任务；未安装对应适配器、未配置或未通过测试的渠道都不会推送。"
-        message="不伪造测试成功"
+        description="填写渠道凭据后先测试连接，通过后再启用推送。"
+        message="启用前请先测试"
         showIcon
         type="warning"
       />
@@ -492,14 +507,12 @@ export function TenantNotificationPage() {
                   { dataIndex: 'name', title: '活动名称', render: (value, record) => (
                     <Space direction="vertical" size={0}>
                       <Button className="table-link-button" type="link" onClick={() => openDetail(record.id)}>{value}</Button>
-                      <Typography.Text className="secondary-id" type="secondary">{record.id}</Typography.Text>
                     </Space>
                   ) },
                   { dataIndex: 'channels', title: '渠道', render: (value: Channel[]) => value.map(channelLabel).join(' + ') },
                   { dataIndex: 'targetType', title: '人群', render: (value) => value === 'all' ? '全部用户' : '条件人群' },
                   { dataIndex: 'status', title: '状态', render: (value: CampaignStatus) => <StatusTag status={value} /> },
                   { dataIndex: 'scheduledAt', title: '排期', render: (value?: string) => value ? formatDateTime(value) : '—' },
-                  { dataIndex: 'version', title: '版本', width: 75 },
                   { key: 'action', title: '操作', render: (_, record) => campaignActions(record), width: 260 },
                 ]}
                 dataSource={campaigns}
@@ -547,11 +560,11 @@ export function TenantNotificationPage() {
       <Modal destroyOnHidden confirmLoading={Boolean(campaignSubmitting?.startsWith('schedule:'))}
         onCancel={() => { if (!campaignSubmitting) { scheduleForm.resetFields(); setScheduleTarget(undefined); } }}
         onOk={() => scheduleForm.submit()} open={Boolean(scheduleTarget)} title="排期群发活动">
-        <Alert className="page-alert" message={`当前活动版本 ${scheduleTarget?.version ?? '—'}。服务端只允许草稿进入排期。`}
+        <Alert className="page-alert" message="按当前电脑时区选择发送时间。排期前请确认内容和受众。"
           showIcon type="info" />
-        <Form form={scheduleForm} layout="vertical" onFinish={(values) => void scheduleCampaign(values)}>
-          <Form.Item label="发送时间" name="scheduledAt" rules={[{ required: true, message: '请选择发送时间' }]}>
-            <Input type="datetime-local" />
+        <Form name="tenantnotificationpage-1" form={scheduleForm} layout="vertical" onFinish={(values) => void scheduleCampaign(values)}>
+          <Form.Item label="发送时间" name="scheduledAt" {...dateTimeFormProps} rules={[{ required: true, message: '请选择发送时间' }]}>
+            <DatePicker showTime format="YYYY-MM-DD HH:mm" style={{ width: '100%' }} />
           </Form.Item>
         </Form>
       </Modal>
@@ -562,7 +575,7 @@ export function TenantNotificationPage() {
         onOk={() => cancelForm.submit()} open={Boolean(cancelTarget)} title="取消群发活动">
         <Alert className="page-alert" description="发送中活动只会停止尚未发送的部分；已投递的站内消息不会撤回。"
           message="请确认影响范围" showIcon type="warning" />
-        <Form form={cancelForm} layout="vertical" onFinish={(values) => void cancelCampaign(values)}>
+        <Form name="tenantnotificationpage-2" form={cancelForm} layout="vertical" onFinish={(values) => void cancelCampaign(values)}>
           <Form.Item label="取消原因" name="reason" rules={[
             { required: true, message: '请输入取消原因', whitespace: true },
             { max: 1000, message: '最多 1000 字' },
@@ -606,7 +619,7 @@ function ProviderConfigs(props: {
                     </Descriptions.Item>
                     <Descriptions.Item label="状态"><Tag color={config?.status === 'active' ? 'green' : undefined}>
                       {config?.status === 'active' ? '已启用' : '已停用'}</Tag></Descriptions.Item>
-                    <Descriptions.Item label="真实测试">{testResult(config)}</Descriptions.Item>
+                    <Descriptions.Item label="连接测试">{testResult(config)}</Descriptions.Item>
                     <Descriptions.Item label="测试时间">{config?.lastTestedAt ? formatDateTime(config.lastTestedAt) : '—'}</Descriptions.Item>
                     <Descriptions.Item label="版本">{config?.version ?? '—'}</Descriptions.Item>
                   </Descriptions>
@@ -615,7 +628,7 @@ function ProviderConfigs(props: {
                     <Space wrap>
                       <Button disabled={busy} onClick={() => props.onCredentials(provider)}>{config ? '替换凭据' : '录入凭据'}</Button>
                       <Button disabled={!config || busy} loading={props.mutating === `test:${provider}`}
-                        onClick={() => props.onMutate(provider, 'test')}>提交真实测试</Button>
+                        onClick={() => props.onMutate(provider, 'test')}>测试连接</Button>
                       {config?.status === 'active' ? (
                         <Button danger disabled={busy} loading={props.mutating === `disable:${provider}`}
                           onClick={() => props.onMutate(provider, 'disable')}>停用</Button>
@@ -651,9 +664,9 @@ function CredentialModal(props: {
   return (
     <Modal destroyOnHidden confirmLoading={props.loading} onCancel={props.onCancel}
       onOk={() => props.form.submit()} open={Boolean(props.provider)} title={`${props.provider === 'apns' ? 'APNs' : 'FCM'} 凭据`}>
-      <Alert className="page-alert" description="凭据仅在本次提交时写入，后端与本页都不会回显。关闭窗口会立即清空输入。"
+      <Alert className="page-alert" description="已保存的密钥不会再次显示。关闭窗口会清空尚未保存的输入。"
         message="敏感凭据" showIcon type="warning" />
-      <Form autoComplete="off" form={props.form} layout="vertical" onFinish={props.onFinish}>
+      <Form name="tenantnotificationpage-3" autoComplete="off" form={props.form} layout="vertical" onFinish={props.onFinish}>
         {props.provider === 'apns' ? (
           <>
             <Form.Item label="APNs 环境" name="environment" rules={[{ required: true }]}>
@@ -679,7 +692,7 @@ function CredentialModal(props: {
           </>
         ) : (
           <>
-            <Alert className="page-alert" description="FCM 后端固定使用 Production，不提供可切换环境。"
+            <Alert className="page-alert" description="FCM 使用正式环境，请确认项目与当前应用一致。"
               message="FCM Production" showIcon type="info" />
             <Form.Item label="Project ID" name="projectId" rules={[{ required: true, whitespace: true }]}><Input autoComplete="off" maxLength={200} /></Form.Item>
             <Form.Item label="Client Email" name="clientEmail" rules={[{ required: true, type: 'email' }]}><Input autoComplete="off" maxLength={320} /></Form.Item>
@@ -708,7 +721,7 @@ function CampaignEditor(props: {
   return (
     <Modal destroyOnHidden confirmLoading={props.loading} onCancel={props.onCancel}
       onOk={() => props.form.submit()} open={props.open} title={props.title} width={820}>
-      <Form form={props.form} layout="vertical" onFinish={props.onFinish} requiredMark={false}>
+      <Form name="tenantnotificationpage-4" form={props.form} layout="vertical" onFinish={props.onFinish} requiredMark={false}>
         <Form.Item label="活动名称" name="name" rules={[{ required: true, whitespace: true }, { max: 200 }]}><Input maxLength={200} /></Form.Item>
         <Form.Item label="投递渠道" name="channels" rules={[{ required: true, message: '至少选择一个渠道' }]}>
           <Checkbox.Group options={[{ label: '站内信', value: 'in_app' }, { label: '移动推送', value: 'push' }]} />
@@ -721,11 +734,11 @@ function CampaignEditor(props: {
           <Select options={[{ label: '全部用户', value: 'all' }, { label: '条件人群', value: 'conditions' }]} />
         </Form.Item>
         {targetType === 'conditions' ? (
-          <Card size="small" title="受控人群条件">
+          <Card size="small" title="目标用户条件">
             <Form.Item label="用户语言" name="targetLocales"><Checkbox.Group options={locales} /></Form.Item>
             <Row gutter={12}>
-              <Col span={12}><Form.Item label="注册时间不早于" name="registeredAfter"><Input type="datetime-local" /></Form.Item></Col>
-              <Col span={12}><Form.Item label="注册时间早于" name="registeredBefore"><Input type="datetime-local" /></Form.Item></Col>
+              <Col span={12}><Form.Item label="注册时间不早于" name="registeredAfter" {...dateTimeFormProps}><DatePicker showTime format="YYYY-MM-DD HH:mm" style={{ width: '100%' }} /></Form.Item></Col>
+              <Col span={12}><Form.Item label="注册时间早于" name="registeredBefore" {...dateTimeFormProps}><DatePicker showTime format="YYYY-MM-DD HH:mm" style={{ width: '100%' }} /></Form.Item></Col>
             </Row>
           </Card>
         ) : null}
@@ -792,7 +805,7 @@ function StatusTag({ status }: { status: CampaignStatus }) {
 
 function testResult(config?: ProviderConfig): string {
   if (!config?.lastTestStatus) return '未测试';
-  return config.lastTestStatus === 'passed' ? '真实测试已通过' : '真实测试未通过';
+  return config.lastTestStatus === 'passed' ? '测试通过' : '测试未通过';
 }
 
 function channelLabel(channel: Channel): string {
