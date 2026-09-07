@@ -77,6 +77,17 @@ Future<void> tap(WidgetTester tester, String label) async {
   await ready(tester);
 }
 
+Future<void> fill(WidgetTester tester, Finder field, String value) async {
+  await tester.ensureVisible(field);
+  await tester.showKeyboard(field);
+  // Wait for Android's previous input connection to close before injecting
+  // text; otherwise a stale IME update can replace the new test value.
+  await tester.pump(const Duration(milliseconds: 500));
+  await ready(tester);
+  await tester.enterText(field, value);
+  await tester.pump(const Duration(milliseconds: 200));
+}
+
 Future<void> setting(WidgetTester tester, String label) async {
   await tester.scrollUntilVisible(
     find.text(label).last,
@@ -246,9 +257,9 @@ void main() {
         of: find.byType(AccountSheet),
         matching: find.byType(TextField),
       );
-      await tester.enterText(fields.at(0), 'signup@example.test');
-      await tester.enterText(fields.at(1), 'signup');
-      await tester.enterText(fields.at(2), initialPassword);
+      await fill(tester, fields.at(0), 'signup@example.test');
+      await fill(tester, fields.at(1), 'signup');
+      await fill(tester, fields.at(2), initialPassword);
       await qa('fail-next', {'path': '/api/v1/customer/auth/otp/challenges'});
       await tap(tester, 'Send code');
       expect(find.text('Send code'), findsOneWidget);
@@ -258,10 +269,7 @@ void main() {
                 'code?email=signup%40example.test&purpose=verify_email',
               ))['code']
               as String;
-      await tester.enterText(
-        fields.at(3),
-        code == '000000' ? '111111' : '000000',
-      );
+      await fill(tester, fields.at(3), code == '000000' ? '111111' : '000000');
       await tap(tester, 'QA Privacy Policy');
       expect(
         find.textContaining('Local test document: privacy.'),
@@ -273,7 +281,7 @@ void main() {
       await ready(tester);
       await tap(tester, 'Create account');
       expect(controller.session, isNull);
-      await tester.enterText(fields.at(3), code);
+      await fill(tester, fields.at(3), code);
       await ready(tester);
       expect(tester.widget<TextField>(fields.at(3)).controller!.text, code);
       await tap(tester, 'Create account');
@@ -374,18 +382,18 @@ void main() {
       await back(tester);
       await setting(tester, 'Change password');
       final fields = find.byType(TextFormField);
-      await tester.enterText(fields.at(0), 'wrong-password');
-      await tester.enterText(fields.at(1), 'Local-new-password-456');
-      await tester.enterText(fields.at(2), 'mismatch');
+      await fill(tester, fields.at(0), 'wrong-password');
+      await fill(tester, fields.at(1), 'Local-new-password-456');
+      await fill(tester, fields.at(2), 'mismatch');
       await tap(tester, 'Change password');
       expect(find.text('Passwords do not match'), findsOneWidget);
-      await tester.enterText(fields.at(2), 'Local-new-password-456');
+      await fill(tester, fields.at(2), 'Local-new-password-456');
       await tap(tester, 'Change password');
       expect(
         find.textContaining('Current password is incorrect'),
         findsOneWidget,
       );
-      await tester.enterText(fields.at(0), initialPassword);
+      await fill(tester, fields.at(0), initialPassword);
       await tap(tester, 'Change password');
       await capture(tester, '06-password-success');
       expect(
@@ -417,8 +425,8 @@ void main() {
       expect(code, matches(RegExp(r'^\d{6}$')));
       final fields = find.byType(TextField).hitTestable();
       // Hidden password-change page fields are not part of this bottom sheet.
-      await tester.enterText(fields.at(1), '新密码');
-      await tester.enterText(fields.at(2), '$code');
+      await fill(tester, fields.at(1), '新密码');
+      await fill(tester, fields.at(2), '$code');
       await tap(tester, 'Reset password');
       expect(find.text('Send code'), findsNothing);
       expect(controller.session?.email, 'reset@example.test');
@@ -443,7 +451,7 @@ void main() {
     (tester) async {
       final controller = await open(tester, account: 'export');
       await setting(tester, 'Export personal data');
-      await tester.enterText(find.byType(TextFormField).last, initialPassword);
+      await fill(tester, find.byType(TextFormField).last, initialPassword);
       await tap(tester, 'Export personal data');
       expect(find.textContaining('export@example.test'), findsOneWidget);
       await capture(tester, '08-export');
@@ -494,7 +502,8 @@ void main() {
         await tap(tester, question);
       }
       await tap(tester, 'Contact support / My feedback');
-      await tester.enterText(
+      await fill(
+        tester,
         find.byType(TextField),
         'Emulator feedback: settings end-to-end verified.',
       );
@@ -539,7 +548,7 @@ void main() {
       expect(find.text('System notification permission'), findsOneWidget);
       await back(tester);
       await setting(tester, 'Export personal data');
-      await tester.enterText(find.byType(TextFormField), initialPassword);
+      await fill(tester, find.byType(TextFormField), initialPassword);
       await tap(tester, 'Export personal data');
       await nativeCheckpoint(
         tester,
@@ -556,7 +565,7 @@ void main() {
     (tester) async {
       final controller = await open(tester, account: 'erase');
       await setting(tester, 'Delete account');
-      await tester.enterText(find.byType(TextFormField), initialPassword);
+      await fill(tester, find.byType(TextFormField), initialPassword);
       expect(
         tester
             .widget<FilledButton>(

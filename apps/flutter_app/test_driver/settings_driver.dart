@@ -41,12 +41,14 @@ Future<void> main() async {
             .split('\n')
             .any(
               (line) =>
-              line.contains('ResumedActivity') && line.contains(expected),
+                  line.contains('ResumedActivity') && line.contains(expected),
             );
         if (visible) break;
         await Future<void>.delayed(const Duration(milliseconds: 250));
       }
       if (!visible) throw StateError('Native $action did not open');
+      // Activity lifecycle can advance before its first window is drawn.
+      await Future<void>.delayed(const Duration(milliseconds: 700));
       final shot = await Process.run(adb, [
         '-s',
         serial,
