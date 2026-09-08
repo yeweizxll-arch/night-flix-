@@ -1084,6 +1084,8 @@ class AppController extends ChangeNotifier {
   Future<void> _settingsWrite = Future.value();
   Future<void> _localeWrite = Future.value();
   final Set<String> _interactionCommands = {};
+  int _libraryRevision = 0;
+  int _libraryReads = 0;
 
   Future<void> _interaction(
     String operation,
@@ -1092,10 +1094,12 @@ class AppController extends ChangeNotifier {
   ) async {
     final key = '$_scope:$operation:$id';
     if (!_interactionCommands.add(key)) return;
+    _libraryRevision++;
     try {
       await run();
     } finally {
       _interactionCommands.remove(key);
+      _libraryRevision++;
     }
   }
 
@@ -1185,11 +1189,19 @@ class AppController extends ChangeNotifier {
     final user = session;
     if (user == null || repository.demoMode) return;
     final scope = _scope;
+    final revision = _libraryRevision;
+    final read = ++_libraryReads;
     try {
       final watched = await repository.watchHistory(user.accessToken);
       final saved = await repository.savedDramas(user.accessToken);
       final follows = await repository.followedDramas(user.accessToken);
-      if (scope != _scope) return;
+      // A list snapshot started before a write/newer refresh must not undo it.
+      if (scope != _scope ||
+          revision != _libraryRevision ||
+          read != _libraryReads ||
+          _interactionCommands.isNotEmpty) {
+        return;
+      }
       favorites
         ..clear()
         ..addAll(saved);
@@ -1233,7 +1245,7 @@ class AppController extends ChangeNotifier {
       final savedFavorites = favorites.toList();
       final savedHistory = history.toList();
       await preferences.setStringList('$scope:favorites', savedFavorites);
-      await preferences.setStringList('$scope:following', follows);
+      await preferences.setStringList('$scope:following', following.toList());
       await preferences.setStringList('$scope:history', savedHistory);
       if (scope != _scope) return;
       await _persistProgress(scope);
@@ -1490,9 +1502,7 @@ class AppController extends ChangeNotifier {
     final followed = !following.contains(dramaId);
     await repository.setFollowing(dramaId, followed);
     if (scope != _scope) return;
-    following.contains(dramaId)
-        ? following.remove(dramaId)
-        : following.add(dramaId);
+    followed ? following.add(dramaId) : following.remove(dramaId);
     final saved = following.toList();
     await (await SharedPreferences.getInstance()).setStringList(
       '$scope:following',

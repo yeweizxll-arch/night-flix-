@@ -52,9 +52,13 @@ export class DatabaseService implements OnApplicationShutdown {
     return postgres(databaseUrl, {
       connect_timeout: 10,
       idle_timeout: 20,
-      max: Number(process.env.DATABASE_POOL_MAX ?? 10),
+      max: databaseInteger('DATABASE_POOL_MAX', 10, 1000),
       prepare: true,
       ssl: resolveDatabaseSsl(databaseUrl),
+      connection: {
+        statement_timeout: databaseInteger('DATABASE_STATEMENT_TIMEOUT_MS', 30_000, 300_000),
+        lock_timeout: databaseInteger('DATABASE_LOCK_TIMEOUT_MS', 5_000, 60_000),
+      },
     });
   }
 
@@ -172,6 +176,14 @@ export class DatabaseService implements OnApplicationShutdown {
     )];
     await Promise.all(clients.map((client) => client.end({ timeout: 5 })));
   }
+}
+
+function databaseInteger(name: string, fallback: number, maximum: number): number {
+  const value = Number(process.env[name] ?? fallback);
+  if (!Number.isInteger(value) || value < 1 || value > maximum) {
+    throw new Error(`${name} must be an integer between 1 and ${maximum}`);
+  }
+  return value;
 }
 
 interface DatabaseRoleInspection {

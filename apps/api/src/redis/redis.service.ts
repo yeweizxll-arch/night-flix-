@@ -20,7 +20,12 @@ export class RedisService implements OnModuleInit, OnApplicationShutdown {
     if (process.env.NODE_ENV === 'production' && !url.startsWith('rediss://')) {
       throw new Error('Production REDIS_URL must use rediss:// TLS');
     }
-    this.client = createClient({ url });
+    this.client = createClient({
+      url,
+      disableOfflineQueue: true,
+      commandsQueueMaxLength: 1000,
+      commandOptions: { timeout: 3000 },
+    });
     this.client.on('error', () => {
       // Connection state is reported by readiness; never log credentials from URLs.
     });

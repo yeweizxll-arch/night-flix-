@@ -15,6 +15,21 @@ function Probe() {
 }
 afterEach(() => { cleanup(); vi.mocked(requestJson).mockReset(); outcomes.length = 0; });
 describe('admin session renewal', () => {
+  it('does not restore a logged-out session when an in-flight refresh completes', async () => {
+    let finish!: (value: ReturnType<typeof session>) => void;
+    const pending = new Promise<ReturnType<typeof session>>(resolve => { finish = resolve; });
+    vi.mocked(requestJson).mockResolvedValueOnce(session('old'))
+      .mockRejectedValueOnce(new ApiError('expired', 401)).mockReturnValueOnce(pending)
+      .mockResolvedValueOnce(undefined).mockResolvedValue({});
+    render(<AuthProvider><Probe /></AuthProvider>);
+    await screen.findByText('测试员'); fireEvent.click(screen.getByText('请求'));
+    await waitFor(() => expect(requestJson).toHaveBeenCalledTimes(3));
+    fireEvent.click(screen.getByText('退出')); await screen.findByText('未登录');
+    finish(session('renewed'));
+    await waitFor(() => expect(outcomes).toHaveLength(1));
+    expect(screen.getByText('未登录')).toBeTruthy();
+    expect(requestJson).toHaveBeenCalledTimes(4);
+  });
   it('does not pretend logout succeeded on network failure and allows a successful retry', async () => {
     const error = new ApiError('network', 0);
     vi.mocked(requestJson).mockResolvedValueOnce(session('current')).mockRejectedValueOnce(error).mockResolvedValueOnce(undefined);

@@ -14,21 +14,130 @@ import { CustomerPlaybackAccessService } from '../src/playback/customer-playback
 import { InteractionService } from '../src/interactions/interaction.service';
 import type { InteractionRateLimiterService } from '../src/interactions/interaction-rate-limiter.service';
 import { ContentService } from '../src/content/content.service';
+import { PointUnlockService } from '../src/commerce/point-unlock.service';
+import { OutboxPublisherService } from '../src/outbox/outbox-publisher.service';
+import type { RedisService } from '../src/redis/redis.service';
 
 const url = process.env.NIGHTFLIX_PG_TEST_URL;
 const suffix = uuidV7().replaceAll('-', '');
 const dbName = `nf_features_${suffix}`;
 const role = `nf_runtime_${suffix}`;
+const platformRole = `${role}_p`;
 const tenantA = uuidV7(), tenantB = uuidV7(), privateA = uuidV7(), privateB = uuidV7(), shared = uuidV7();
 const accountA = uuidV7(), accountB = uuidV7(), staff = uuidV7();
 const principal = { tenantId: tenantA, accountId: accountA, username: 'viewer', deviceId: uuidV7(), sessionId: uuidV7() };
 let owner: Sql, admin: Sql, database: DatabaseService;
 let discovery: TenantDramaDiscoveryService, catalog: CustomerContentCatalogService, playback: PlaybackService, interactions: InteractionService;
-let created = false, roleCreated = false;
+let created = false, roleCreated = false, platformRoleCreated = false;
 const savedEnvironment = { DATABASE_URL: process.env.DATABASE_URL, PLATFORM_DATABASE_URL: process.env.PLATFORM_DATABASE_URL,
   TENANT_RESOLVER_DATABASE_URL: process.env.TENANT_RESOLVER_DATABASE_URL };
 
 describe.skipIf(!url)('real PostgreSQL discovery and interaction boundary', () => {
+  it('charges once for 40 concurrent unlocks with repeated and distinct request keys', async () => {
+    const wallet = uuidV7();
+    await owner`insert into point_accounts (id, tenant_id, account_id) values (${wallet}, ${tenantA}, ${accountA})`;
+    await owner`insert into point_ledger (id, tenant_id, account_id, point_account_id, entry_type, delta,
+      balance_after, reference_type, reference_id, idempotency_key, created_by_type, created_by)
+      values (${uuidV7()}, ${tenantA}, ${accountA}, ${wallet}, 'adjustment', 1000, 0,
+      'manual_adjustment', ${uuidV7()}, ${uuidV7()}, 'platform_staff', ${staff})`;
+    await owner`insert into content_point_prices (id, tenant_id, target_type, target_id, points_amount)
+      values (${uuidV7()}, ${tenantA}, 'drama', ${privateA}, 300)`;
+    const unlock = new PointUnlockService(database);
+    const key = uuidV7();
+    const results = await Promise.all(Array.from({ length: 40 }, (_, i) =>
+      unlock.unlock(principal, 'drama', privateA, {}, i < 20 ? key : uuidV7(), uuidV7())));
+    expect(new Set(results.map(row => row.entitlementId)).size).toBe(1);
+    expect((await owner`select balance::integer as balance from point_accounts where id = ${wallet}`)[0]?.balance).toBe(700);
+    expect((await owner`select count(*)::integer as n from point_unlocks where account_id = ${accountA}`)[0]?.n).toBe(1);
+    expect((await owner`select count(*)::integer as n from point_ledger where point_account_id = ${wallet} and entry_type = 'purchase'`)[0]?.n).toBe(1);
+  });
+
+  it('isolates 200 concurrent tenant transactions across pooled connections', async () => {
+    const started = performance.now();
+    await Promise.all(Array.from({ length: 200 }, async (_, index) => {
+      const tenant = index % 2 ? tenantA : tenantB;
+      const expected = index % 2 ? accountA : accountB;
+      await database.inTenantContext(tenant, async tx => {
+        const accounts = await tx<{ id: string }[]>`select id from customer_accounts`;
+        expect(accounts.map(row => row.id)).toEqual([expected]);
+        const [context] = await tx`select current_setting('app.tenant_id') as tenant`;
+        expect(context?.tenant).toBe(tenant);
+      });
+    }));
+    console.info(`200 tenant transactions: ${Math.round(performance.now() - started)}ms; local only, not a production capacity claim`);
+  });
+
+  it('cancels slow SQL and lock waits, rolls back, and reuses the pool', async () => {
+    const names = ['DATABASE_STATEMENT_TIMEOUT_MS', 'DATABASE_LOCK_TIMEOUT_MS'] as const;
+    const previous = names.map(name => process.env[name]);
+    process.env.DATABASE_STATEMENT_TIMEOUT_MS = '500';
+    process.env.DATABASE_LOCK_TIMEOUT_MS = '100';
+    const bounded = new DatabaseService();
+    names.forEach((name, i) => { if (previous[i] === undefined) delete process.env[name]; else process.env[name] = previous[i]; });
+    try {
+      await expect(bounded.inTenantContext(tenantA, async tx => {
+        await tx`update customer_accounts set username = 'must-rollback' where id = ${accountA}`;
+        await tx`select pg_sleep(1)`;
+      })).rejects.toMatchObject({ code: '57014' });
+      expect((await owner`select username from customer_accounts where id = ${accountA}`)[0]?.username).toBe('viewer-a');
+      await owner.begin(async tx => {
+        await tx`select id from customer_accounts where id = ${accountA} for update`;
+        await expect(bounded.inTenantContext(tenantA, q => q`select id from customer_accounts where id = ${accountA} for update`))
+          .rejects.toMatchObject({ code: '55P03' });
+      });
+      expect(await bounded.ping()).toBe(true);
+    } finally { await bounded.onApplicationShutdown(); }
+  });
+
+  it('handles 30 buyers and 300 duplicate purchases without mixing balances or overspending', async () => {
+    const buyers = Array.from({ length: 30 }, () => ({ account: uuidV7(), wallet: uuidV7(), key: uuidV7() }));
+    for (const buyer of buyers) {
+      await owner`insert into customer_accounts (id, tenant_id, username, password_hash)
+        values (${buyer.account}, ${tenantA}, ${buyer.account}, ${'x'.repeat(64)})`;
+      await owner`insert into point_accounts (id, tenant_id, account_id) values (${buyer.wallet}, ${tenantA}, ${buyer.account})`;
+      await owner`insert into point_ledger (id, tenant_id, account_id, point_account_id, entry_type, delta,
+        balance_after, reference_type, reference_id, idempotency_key, created_by_type, created_by)
+        values (${uuidV7()}, ${tenantA}, ${buyer.account}, ${buyer.wallet}, 'adjustment', 500, 0,
+        'manual_adjustment', ${uuidV7()}, ${uuidV7()}, 'platform_staff', ${staff})`;
+    }
+    const unlock = new PointUnlockService(database);
+    const started = performance.now();
+    const results = await Promise.all(buyers.flatMap(buyer => Array.from({ length: 10 }, () =>
+      unlock.unlock({ ...principal, accountId: buyer.account }, 'drama', privateA, {}, buyer.key, uuidV7()))));
+    expect(new Set(results.map(row => row.entitlementId)).size).toBe(30);
+    const balances = await owner`select balance::integer as balance from point_accounts where id in ${owner(buyers.map(b => b.wallet))}`;
+    expect(balances).toHaveLength(30);
+    expect(balances.every(row => row.balance === 200)).toBe(true);
+    console.info(`30 buyers / 300 unlock calls: ${Math.round(performance.now() - started)}ms; local DB only`);
+    // Each buyer now has only 200 coins: a different 300-coin target must fail.
+    const other = uuidV7();
+    await owner`insert into dramas (id, owner_type, owner_tenant_id, code, status) values (${other}, 'tenant', ${tenantA}, 'insufficient', 'published')`;
+    await owner`insert into content_point_prices (id, tenant_id, target_type, target_id, points_amount) values (${uuidV7()}, ${tenantA}, 'drama', ${other}, 300)`;
+    const rejected = await Promise.allSettled(buyers.map(buyer =>
+      unlock.unlock({ ...principal, accountId: buyer.account }, 'drama', other, {}, uuidV7(), uuidV7())));
+    expect(rejected.every(result => result.status === 'rejected' && result.reason instanceof ConflictException)).toBe(true);
+    expect((await owner`select count(*)::integer as n from point_unlocks where target_id = ${other}`)[0]?.n).toBe(0);
+  });
+
+  it('concurrent workers claim each pending event once in the healthy delivery path', async () => {
+    const deliveries = new Map<string, number>();
+    const redis = { appendStream: async (_stream: string, fields: Record<string, string>) => {
+      deliveries.set(fields.eventId!, (deliveries.get(fields.eventId!) ?? 0) + 1);
+      return '1-0';
+    } } as unknown as RedisService;
+    const workers = Array.from({ length: 4 }, () => new OutboxPublisherService(database, redis));
+    await Promise.all(workers.map(async worker => {
+      while (true) {
+        const result = await worker.publishAvailable();
+        expect(result.failed).toBe(0);
+        if (!result.claimed) break;
+      }
+    }));
+    expect(deliveries.size).toBeGreaterThanOrEqual(30);
+    expect([...deliveries.values()].every(count => count === 1)).toBe(true);
+    // Transport crash/retry remains at-least-once; consumers must deduplicate eventId.
+  });
+
   it('categorizes exactly the 90 test shows without changing another tenant', async () => {
     const targetTenant = '01a076ee-40c2-7cfe-8fc9-ce03682a286e';
     await owner`insert into tenants (id, code, name, expires_at) values (${targetTenant}, 'category-seed-qa', 'Category QA', now() + interval '1 year')`;
@@ -113,9 +222,13 @@ describe.skipIf(!url)('real PostgreSQL discovery and interaction boundary', () =
     }
     await owner.unsafe(`create role ${role} login password 'local-test-only' nosuperuser nobypassrls;`); roleCreated = true;
     await owner.unsafe(`grant usage on schema app, public to ${role}; grant select, insert, update, delete on all tables in schema public to ${role};`);
+    await owner.unsafe(`create role ${platformRole} login password 'local-test-only' nosuperuser nobypassrls`); platformRoleCreated = true;
+    await owner.unsafe(`grant usage on schema app, public to ${platformRole}; grant select, insert, update, delete on all tables in schema public to ${platformRole}`);
+    await owner`insert into app.database_access_principals (role_name, access_scope) values (${platformRole}, 'platform')`;
+    source.username = platformRole; source.password = 'local-test-only';
+    process.env.PLATFORM_DATABASE_URL = source.toString();
     source.username = role; source.password = 'local-test-only';
     process.env.DATABASE_URL = source.toString();
-    delete process.env.PLATFORM_DATABASE_URL;
     delete process.env.TENANT_RESOLVER_DATABASE_URL;
     database = new DatabaseService();
     discovery = new TenantDramaDiscoveryService(database);
@@ -131,6 +244,7 @@ describe.skipIf(!url)('real PostgreSQL discovery and interaction boundary', () =
     await owner?.end();
     if (created) await admin.unsafe(`drop database ${dbName}`);
     if (roleCreated) await admin.unsafe(`drop role ${role}`);
+    if (platformRoleCreated) await admin.unsafe(`drop role ${platformRole}`);
     await admin?.end();
     for (const [key, value] of Object.entries(savedEnvironment)) {
       if (value === undefined) delete process.env[key]; else process.env[key] = value;

@@ -42,8 +42,13 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const [loading, setLoading] = useState(true);
   const sessionRef = useRef<SessionResponse | undefined>(undefined);
   const refreshPromiseRef = useRef<Promise<SessionResponse> | undefined>(undefined);
+  const sessionEpoch = useRef(0);
 
   const updateSession = useCallback((value: SessionResponse | undefined) => {
+    if (value?.principal.id !== sessionRef.current?.principal.id ||
+        value?.principal.tenantId !== sessionRef.current?.principal.tenantId) {
+      sessionEpoch.current++;
+    }
     sessionRef.current = value;
     setSession(value);
   }, []);
@@ -52,70 +57,85 @@ export function AuthProvider({ children }: PropsWithChildren) {
     if (refreshPromiseRef.current) {
       return refreshPromiseRef.current;
     }
+    const epoch = sessionEpoch.current;
     const operation = requestJson<SessionResponse>(
       `${AUTH_API_BASE}/refresh`,
       { method: 'POST' },
     )
       .then((result) => validateSessionScope(result))
       .then((result) => {
+        if (epoch !== sessionEpoch.current) throw new ApiError('登录状态已变更', 401);
         updateSession(result);
         return result;
       })
       .finally(() => {
-        refreshPromiseRef.current = undefined;
+        if (refreshPromiseRef.current === operation) refreshPromiseRef.current = undefined;
       });
     refreshPromiseRef.current = operation;
     return operation;
   }, [updateSession]);
 
   useEffect(() => {
+    const epoch = sessionEpoch.current;
     void refreshSession()
-      .catch(() => updateSession(undefined))
+      .catch(() => { if (epoch === sessionEpoch.current) updateSession(undefined); })
       .finally(() => setLoading(false));
   }, [refreshSession, updateSession]);
 
   const login = useCallback(async (username: string, password: string) => {
+    const epoch = ++sessionEpoch.current;
+    refreshPromiseRef.current = undefined;
     const result = await requestJson<SessionResponse>(`${AUTH_API_BASE}/login`, {
       body: JSON.stringify({ password, username }),
       method: 'POST',
     });
-    updateSession(validateSessionScope(result));
+    if (epoch === sessionEpoch.current) updateSession(validateSessionScope(result));
   }, [updateSession]);
 
   const request = useCallback(
     async <T,>(path: string, init: RequestInit = {}): Promise<T> => {
       const current = sessionRef.current;
+      const epoch = sessionEpoch.current;
       if (!current) {
         throw new ApiError('登录状态已失效', 401);
       }
       const preparedInit = withIdempotencyKey(init);
       try {
-        return await requestJson<T>(path, preparedInit, current.accessToken);
+        const result = await requestJson<T>(path, preparedInit, current.accessToken);
+        if (epoch !== sessionEpoch.current) throw new ApiError('登录状态已变更', 401);
+        return result;
       } catch (error) {
+        if (epoch !== sessionEpoch.current) throw new ApiError('登录状态已变更', 401);
         if (!(error instanceof ApiError) || error.status !== 401) {
           throw error;
         }
         let renewed: SessionResponse;
         try {
-          renewed = await refreshSession();
+          renewed = sessionRef.current && sessionRef.current.accessToken !== current.accessToken
+            ? sessionRef.current : await refreshSession();
         } catch (refreshError) {
-          updateSession(undefined);
+          if (epoch === sessionEpoch.current) updateSession(undefined);
           throw refreshError;
         }
         // A business error after renewal must not discard the valid login.
-        return requestJson<T>(path, preparedInit, renewed.accessToken);
+        if (epoch !== sessionEpoch.current) throw new ApiError('登录状态已变更', 401);
+        const result = await requestJson<T>(path, preparedInit, renewed.accessToken);
+        if (epoch !== sessionEpoch.current) throw new ApiError('登录状态已变更', 401);
+        return result;
       }
     },
     [refreshSession, updateSession],
   );
 
   const logout = useCallback(async () => {
+    const epoch = ++sessionEpoch.current;
+    refreshPromiseRef.current = undefined;
     await requestJson<void>(
       `${AUTH_API_BASE}/logout`,
       { method: 'POST' },
       session?.accessToken,
     );
-    updateSession(undefined);
+    if (epoch === sessionEpoch.current) updateSession(undefined);
   }, [session?.accessToken, updateSession]);
 
   const value = useMemo<AuthContextValue>(
