@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -422,6 +423,23 @@ void main() {
     expect(repo.feedbackItems.single['body'], 'Playback needs help');
     expect(find.text('Operator response'), findsOneWidget);
   });
+
+  testWidgets(
+    'Chinese scanner search action uses the existing translated label',
+    (tester) async {
+      await tester.pumpWidget(
+        const MaterialApp(
+          locale: Locale('zh', 'CN'),
+          supportedLocales: [Locale('zh', 'CN')],
+          localizationsDelegates: GlobalMaterialLocalizations.delegates,
+          home: DramaScanner(locale: 'zh-CN'),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.widgetWithText(FilledButton, '搜索短剧'), findsOneWidget);
+      expect(find.widgetWithText(FilledButton, 'Search'), findsNothing);
+    },
+  );
 
   testWidgets(
     'screenshot recognition suggests searchable text and surfaces permission errors',

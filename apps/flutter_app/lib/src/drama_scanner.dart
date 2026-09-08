@@ -120,7 +120,7 @@ class _DramaScannerState extends State<DramaScanner> {
           onPressed: query.text.trim().isEmpty
               ? null
               : () => Navigator.pop(context, query.text.trim()),
-          child: Text(context.tr('search', 'Search')),
+          child: Text(context.tr('searchDramas', 'Search dramas')),
         ),
         for (final text in candidates)
           ListTile(
