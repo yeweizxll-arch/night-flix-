@@ -55,7 +55,8 @@ try {
     const code = drama.code;
     assert.ok(code.startsWith(`batch-test-${scope}-`) && drama.status === 'draft' && !(drama.episodes?.length));
     console.log(`Testing ${scope} candidate with dedicated draft ${drama.id}`);
-    await page.goto(`${base}/?page=${scope === 'tenant' ? 'content' : 'content-library'}`, { waitUntil: 'networkidle' });
+    // Readiness is the actual menu below, not an idle network with media requests.
+    await page.goto(`${base}/?page=${scope === 'tenant' ? 'content' : 'content-library'}`, { waitUntil: 'domcontentloaded' });
     await page.getByRole('menuitem').filter({ hasText: scope === 'tenant' ? '内容管理' : '公共内容管理' }).waitFor();
     console.log(`Opened ${scope} content page`);
     const row = page.getByRole('row').filter({ hasText: code });
