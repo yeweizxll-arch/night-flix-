@@ -126,13 +126,13 @@ class _AccountRecordsPageState extends State<_AccountRecordsPage> {
                       child: ListTile(
                         title: Text(
                           widget.entitlements
-                              ? '${item['title'] ?? item['type']}'
+                              ? '${item['title'] ?? _recordType(context, item['type'])}'
                               : '${item['deltaPoints']} ${context.tr('coins', 'Coins')}',
                         ),
                         subtitle: Text(
                           widget.entitlements
-                              ? '${item['type']} · ${item['expiresAt'] == null ? (context.isChinese ? '永久有效' : 'No expiry') : _recordDate(item['expiresAt'])}'
-                              : '${item['entryType']} · ${_recordDate(item['createdAt'])}\n${context.tr('coinBalance', 'Balance')}: ${item['balanceAfterPoints']}',
+                              ? '${_recordType(context, item['type'])} · ${item['expiresAt'] == null ? (context.isChinese ? '永久有效' : 'No expiry') : _recordDate(item['expiresAt'])}'
+                              : '${_recordType(context, item['entryType'])} · ${_recordDate(item['createdAt'])}\n${context.tr('coinBalance', 'Balance')}: ${item['balanceAfterPoints']}',
                         ),
                         onTap: () => showDialog<void>(
                           context: context,
@@ -142,11 +142,21 @@ class _AccountRecordsPageState extends State<_AccountRecordsPage> {
                             ),
                             content: SingleChildScrollView(
                               child: SelectableText(
-                                item.entries
-                                    .map(
-                                      (entry) => '${entry.key}: ${entry.value}',
-                                    )
-                                    .join('\n'),
+                                [
+                                  '${context.isChinese ? '类型' : 'Type'}: ${_recordType(context, item['type'] ?? item['entryType'])}',
+                                  if (item['title'] != null)
+                                    '${context.isChinese ? '剧名' : 'Title'}: ${item['title']}',
+                                  if (item['deltaPoints'] != null)
+                                    '${context.tr('coins', 'Coins')}: ${item['deltaPoints']}',
+                                  if (item['balanceAfterPoints'] != null)
+                                    '${context.tr('coinBalance', 'Balance')}: ${item['balanceAfterPoints']}',
+                                  if (item['createdAt'] != null)
+                                    '${context.isChinese ? '时间' : 'Date'}: ${_recordDate(item['createdAt'])}',
+                                  if (widget.entitlements)
+                                    '${context.isChinese ? '有效期至' : 'Expires'}: ${item['expiresAt'] == null ? (context.isChinese ? '永久有效' : 'No expiry') : _recordDate(item['expiresAt'])}',
+                                  if (item['id'] != null)
+                                    '${context.isChinese ? '记录编号' : 'Record ID'}: ${item['id']}',
+                                ].join('\n'),
                               ),
                             ),
                             actions: [
@@ -175,6 +185,22 @@ class _AccountRecordsPageState extends State<_AccountRecordsPage> {
             ),
     ),
   );
+}
+
+String _recordType(BuildContext context, dynamic value) {
+  const labels = {
+    'topup': ['充值', 'Top-up'],
+    'purchase': ['购买', 'Purchase'],
+    'refund': ['退款', 'Refund'],
+    'adjustment': ['余额调整', 'Balance adjustment'],
+    'refund_reserve': ['退款处理中', 'Refund pending'],
+    'refund_release': ['退款冻结解除', 'Refund hold released'],
+    'episode': ['单集权益', 'Episode access'],
+    'drama': ['整剧权益', 'Series access'],
+    'membership': ['会员权益', 'Membership'],
+  };
+  return labels[value]?[context.isChinese ? 0 : 1] ??
+      (context.isChinese ? '账户记录' : 'Account record');
 }
 
 String _recordDate(dynamic value) =>

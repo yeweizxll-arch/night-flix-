@@ -29,6 +29,23 @@ const savedEnvironment = { DATABASE_URL: process.env.DATABASE_URL, PLATFORM_DATA
   TENANT_RESOLVER_DATABASE_URL: process.env.TENANT_RESOLVER_DATABASE_URL };
 
 describe.skipIf(!url)('real PostgreSQL discovery and interaction boundary', () => {
+  it('categorizes exactly the 90 test shows without changing another tenant', async () => {
+    const targetTenant = '01a076ee-40c2-7cfe-8fc9-ce03682a286e';
+    await owner`insert into tenants (id, code, name, expires_at) values (${targetTenant}, 'category-seed-qa', 'Category QA', now() + interval '1 year')`;
+    for (let n = 1; n <= 90; n++) {
+      const id = uuidV7();
+      await owner`insert into dramas (id, owner_type, owner_tenant_id, code, status)
+        values (${id}, 'tenant', ${targetTenant}, ${`scv2-show-${String(n).padStart(2, '0')}`}, 'published')`;
+      await owner`insert into drama_translations (id, drama_id, locale, title)
+        values (${uuidV7()}, ${id}, 'zh-CN', ${`${['校园爱情', '古风伤感', '中式玄幻', '废土近未来战争', '测试剧情'][n % 5]} · ${n}`})`;
+    }
+    const script = (await readFile(resolve(process.cwd(), '../../deploy/test-server/seed-test-categories-20260908.sql'), 'utf8'))
+      .replace(/^\\set.*$/gm, '');
+    await owner.unsafe(script);
+    expect((await owner`select count(*)::integer as n from dramas where owner_tenant_id = ${targetTenant} and category_id is not null`)[0]?.n).toBe(90);
+    expect((await catalog.listDramas(targetTenant, { category: 'romance', pageSize: 50 })).items).toHaveLength(18);
+    expect((await owner`select category_id from dramas where id = ${privateA}`)[0]?.category_id).toBeNull();
+  });
   it('allows only private tenant track writes under actual non-owner RLS', async () => {
     const provider = uuidV7(), asset = uuidV7(), privateDrama = uuidV7(), episode = uuidV7();
     const publicEpisode = uuidV7(), publicAsset = uuidV7();

@@ -377,6 +377,12 @@ void main() {
     await tester.pumpAndSettle();
     expect(repo.records.last, isFalse);
     expect(find.text('25 Coins'), findsOneWidget);
+    await tester.tap(find.text('25 Coins'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('deltaPoints:'), findsNothing);
+    expect(find.textContaining('Record ID:'), findsOneWidget);
+    await tester.tap(find.text('Close'));
+    await tester.pumpAndSettle();
     await tester.pageBack();
     await tester.pumpAndSettle();
     await tester.tap(find.text('Membership'));

@@ -49,9 +49,31 @@ describe.skipIf(!enabled)('local Android settings with real API and PostgreSQL',
       (${staff}, 'settings-fixture', ${await hashPassword('Local-fixture-only-123')})`;
     await owner`insert into tenant_domains (id, tenant_id, host, type, verification_token, verified_at, tls_status, is_primary, created_by)
       values (${uuidV7()}, ${tenant}, '127.0.0.1', 'custom', 'local-fixture-verified-domain', statement_timestamp(), 'active', true, ${staff})`;
-    for (const name of ['viewer', 'notifications', 'password', 'reset', 'export', 'erase']) {
+    for (const name of ['viewer', 'records', 'notifications', 'password', 'reset', 'export', 'erase']) {
       await owner`insert into customer_accounts (id, tenant_id, username, email, email_verified_at, password_hash)
         values (${uuidV7()}, ${tenant}, ${name}, ${`${name}@example.test`}, statement_timestamp(), ${await hashPassword('Local-password-123')})`;
+    }
+    const walletId = uuidV7();
+    await owner`insert into point_accounts (id, tenant_id, account_id)
+      select ${walletId}, ${tenant}, id from customer_accounts where tenant_id = ${tenant} and username = 'records'`;
+    await owner`insert into point_ledger (id, tenant_id, account_id, point_account_id, entry_type, delta, balance_after,
+      reference_type, reference_id, idempotency_key, created_by_type)
+      select ${uuidV7()}, ${tenant}, id, ${walletId}, 'adjustment', 250, 250, 'local_qa', ${uuidV7()}, 'local-qa-records-topup', 'system'
+      from customer_accounts where tenant_id = ${tenant} and username = 'records'`;
+    await owner`insert into customer_inbox_messages (id, tenant_id, account_id, category, source_type, locale, title, body)
+      select gen_random_uuid(), ${tenant}, id, 'transactional', 'system', 'en-US',
+        'Local QA message', 'Complete local message body. Second sentence stays visible.'
+      from customer_accounts where tenant_id = ${tenant} and username = 'viewer'`;
+    for (const [code, title] of [['romance', 'QA Romance'], ['fantasy', 'QA Fantasy']]) {
+      const category = uuidV7(), drama = uuidV7();
+      await owner`insert into categories (id, owner_type, owner_tenant_id, code)
+        values (${category}, 'tenant', ${tenant}, ${code!})`;
+      await owner`insert into category_translations (id, category_id, locale, name)
+        values (${uuidV7()}, ${category}, 'en-US', ${title!})`;
+      await owner`insert into dramas (id, owner_type, owner_tenant_id, code, category_id, status)
+        values (${drama}, 'tenant', ${tenant}, ${`qa-${code}`}, ${category}, 'published')`;
+      await owner`insert into drama_translations (id, drama_id, locale, title)
+        values (${uuidV7()}, ${drama}, 'en-US', ${`${title} Series`})`;
     }
     await owner`insert into customer_feedback (id, tenant_id, account_id, locale, body, created_at)
       select gen_random_uuid(), ${tenant}, account.id, 'en-US', 'Fixture feedback ' || lpad(n::text, 3, '0'),
@@ -132,6 +154,8 @@ describe.skipIf(!enabled)('local Android settings with real API and PostgreSQL',
       preferences: await owner`select marketing_in_app_enabled, marketing_push_enabled from customer_notification_preferences where tenant_id = ${tenant}`,
       feedback: await owner`select body from customer_feedback where tenant_id = ${tenant}`,
       erasures: await owner`select status from customer_privacy_requests where tenant_id = ${tenant}`,
+      messages: await owner`select title, status, read_at is not null as read from customer_inbox_messages where tenant_id = ${tenant}`,
+      reports: await owner`select status from interaction_reports where tenant_id = ${tenant}`,
     }));
     server.post('/__qa/finish', async () => { setTimeout(finish, 100); return { ok: true }; });
     await app.listen(4326, '127.0.0.1');

@@ -19,6 +19,7 @@ Future<bool> showAccountSheet(
       isScrollControlled: true,
       useSafeArea: true,
       backgroundColor: Colors.white,
+      clipBehavior: Clip.antiAlias,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
@@ -26,10 +27,13 @@ Future<bool> showAccountSheet(
       // is still open. Only the sheet's own context remains valid then.
       builder: (sheetContext) => Theme(
         data: _accountTheme(sheetContext),
-        child: AccountSheet(
-          controller: controller,
-          reason: reason,
-          resetPassword: resetPassword,
+        child: Material(
+          color: Colors.white,
+          child: AccountSheet(
+            controller: controller,
+            reason: reason,
+            resetPassword: resetPassword,
+          ),
         ),
       ),
     ) ==

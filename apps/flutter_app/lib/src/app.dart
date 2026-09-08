@@ -1520,9 +1520,21 @@ class _DramaPageState extends State<DramaPage>
       if (context.mounted) _message(context, friendlyError(context, cause));
       return;
     }
-    if (!context.mounted) return;
-    await showModalBottomSheet<void>(
-      context: context,
+    if (!context.mounted) {
+      input.dispose();
+      return;
+    }
+    final navigator = Navigator.of(context);
+    if (!navigator.mounted) {
+      input.dispose();
+      return;
+    }
+    final route = ModalBottomSheetRoute<void>(
+      capturedThemes: InheritedTheme.capture(
+        from: context,
+        to: navigator.context,
+      ),
+      barrierLabel: MaterialLocalizations.of(context).modalBarrierDismissLabel,
       isScrollControlled: true,
       useSafeArea: true,
       builder: (context) => StatefulBuilder(
@@ -1534,12 +1546,30 @@ class _DramaPageState extends State<DramaPage>
             MediaQuery.viewInsetsOf(context).bottom + 12,
           ),
           child: SizedBox(
-            height: MediaQuery.sizeOf(context).height * .68,
+            height: (MediaQuery.sizeOf(context).height * .68).clamp(
+              0.0,
+              (MediaQuery.sizeOf(context).height -
+                      MediaQuery.viewInsetsOf(context).bottom -
+                      MediaQuery.paddingOf(context).vertical -
+                      20)
+                  .clamp(0.0, double.infinity),
+            ),
             child: Column(
               children: [
-                Text(
-                  '${context.tr('comments', 'Comments')} · ${comments.length}',
-                  style: Theme.of(context).textTheme.titleLarge,
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        '${context.tr('comments', 'Comments')} · ${comments.length}',
+                        style: Theme.of(context).textTheme.titleLarge,
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: context.tr('close', 'Close'),
+                      onPressed: () => Navigator.pop(context),
+                      icon: const Icon(Icons.close),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 10),
                 Expanded(
@@ -1562,9 +1592,25 @@ class _DramaPageState extends State<DramaPage>
                               ),
                               title: Text(
                                 comment.username ??
-                                    context.tr('viewer', 'Viewer'),
+                                    (comment.isOwn
+                                        ? (context.isChinese ? '我' : 'You')
+                                        : context.tr('viewer', 'Viewer')),
                               ),
-                              subtitle: Text(comment.body),
+                              subtitle: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(comment.body),
+                                  if (comment.createdAt.year > 1970) ...[
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      '${MaterialLocalizations.of(context).formatMediumDate(comment.createdAt.toLocal())} ${MaterialLocalizations.of(context).formatTimeOfDay(TimeOfDay.fromDateTime(comment.createdAt.toLocal()))}',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodySmall,
+                                    ),
+                                  ],
+                                ],
+                              ),
                               trailing: PopupMenuButton<String>(
                                 onSelected: (action) async {
                                   if (!await _requireLogin(
@@ -1699,6 +1745,7 @@ class _DramaPageState extends State<DramaPage>
                     Expanded(
                       child: TextField(
                         controller: input,
+                        onChanged: (_) => setSheetState(() {}),
                         maxLength: 2000,
                         decoration: InputDecoration(
                           hintText: context.tr('addComment', 'Add a comment'),
@@ -1708,7 +1755,8 @@ class _DramaPageState extends State<DramaPage>
                     ),
                     IconButton.filled(
                       icon: const Icon(Icons.send),
-                      onPressed: sending
+                      tooltip: context.isChinese ? '发送评论' : 'Send comment',
+                      onPressed: sending || input.text.trim().isEmpty
                           ? null
                           : () async {
                               final body = input.text.trim();
@@ -1762,6 +1810,9 @@ class _DramaPageState extends State<DramaPage>
         ),
       ),
     );
+    await navigator.push(route);
+    // Pop completes before the closing animation removes the text field.
+    await route.completed;
     input.dispose();
   }
 
@@ -2039,29 +2090,40 @@ class _TheaterScreenState extends State<TheaterScreen> {
           child: ListView(
             shrinkWrap: true,
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
-            children:
-                {'trending': context.tr('allDramas', 'All dramas'), ...genres}
-                    .entries
-                    .map(
-                      (item) => ListTile(
-                        textColor: Colors.black87,
-                        iconColor: const Color(0xffff6b35),
-                        leading: Icon(
-                          item.key == selected
-                              ? Icons.check_circle_rounded
-                              : Icons.circle_outlined,
-                        ),
-                        title: Text(
-                          item.key == 'trending'
-                              ? item.value
-                              : controller.repository.demoMode
-                              ? context.tr(item.key, item.value)
-                              : item.value,
-                        ),
-                        onTap: () => Navigator.pop(context, item.key),
-                      ),
-                    )
-                    .toList(),
+            children: [
+              if (genres.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Text(
+                    context.isChinese
+                        ? '暂无可筛选的分类，当前显示全部短剧'
+                        : 'No categories available. Showing all dramas.',
+                    style: const TextStyle(color: Colors.black54),
+                  ),
+                ),
+              ...{
+                'trending': context.tr('allDramas', 'All dramas'),
+                ...genres,
+              }.entries.map(
+                (item) => ListTile(
+                  textColor: Colors.black87,
+                  iconColor: const Color(0xffff6b35),
+                  leading: Icon(
+                    item.key == selected
+                        ? Icons.check_circle_rounded
+                        : Icons.circle_outlined,
+                  ),
+                  title: Text(
+                    item.key == 'trending'
+                        ? item.value
+                        : controller.repository.demoMode
+                        ? context.tr(item.key, item.value)
+                        : item.value,
+                  ),
+                  onTap: () => Navigator.pop(context, item.key),
+                ),
+              ),
+            ],
           ),
         ),
       ),
